@@ -585,7 +585,9 @@ class RAGInput(BaseModel):
         default=None,
         description="Optional end-user id, recorded on trace spans (user.id) "
         "when observability is enabled and in the query's audit record "
-        "(user_id); pass an opaque id, not an e-mail address or name",
+        "(user_id); pass an opaque id, not an e-mail address or name. The "
+        "MCP HTTP server and the console set it from a trusted proxy's "
+        "header (--trusted-identity-header)",
     )
     use_memory: bool = Field(
         default=False, description="Whether to use conversation memory"

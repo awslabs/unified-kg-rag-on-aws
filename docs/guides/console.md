@@ -382,6 +382,16 @@ The next question and job use the saved file.
   authenticating proxy. The console has no accounts: a per-launch access
   token, in the printed address and then an HttpOnly, SameSite=Strict
   cookie, is required on every request.
+- Behind a proxy that names the authenticated caller in a header (an
+  Application Load Balancer with OIDC sets `x-amzn-oidc-identity`),
+  `--trusted-identity-header x-amzn-oidc-identity` makes the questions take
+  it as their `user_id` (their spans' `user.id` and their
+  [audit record](../reference/telemetry.md#audit-record)'s `user_id`); every
+  request then needs exactly one non-blank value of at most 255 characters
+  (401 otherwise). Off by default, a client's copy ignored. The header is
+  trusted as it arrives: turn it on only behind a proxy that authenticates
+  every request and removes or overwrites any copy the client sent, with
+  the console reachable from that proxy alone.
 - Requests that change anything need a header a cross-site form cannot
   send, and one from another origin is refused; on loopback a request for
   another host name is refused (DNS rebinding). No response carries a CORS

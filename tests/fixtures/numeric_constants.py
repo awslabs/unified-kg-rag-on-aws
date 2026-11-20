@@ -204,6 +204,7 @@ ALLOWED: dict[str, str] = {
     ),
     **_reason(
         CAP,
+        "application/cli/trusted_identity.py:MAX_IDENTITY_CHARS",
         "adapters/graph_query/sqlite.py:MAX_BRANCHES",
         "adapters/schema_sources/file.py:MAX_S3_BYTES",
         "adapters/seed_sources/property_graph.py:MAX_LINE_BYTES",

@@ -158,7 +158,10 @@ which the chain's `kg_rag.query` span nests. Its arguments are recorded as
 `observability.redact_patterns`, the policy every other span follows;
 INFO logs carry a digest of the query (`text_digest`), never its text, and
 the chain writes each query's audit record (`query_audit`, from
-`GraphRAGChain._record_query`, the one place every surface's query ends). A
+`GraphRAGChain._record_query`, the one place every surface's query ends),
+with the caller of the HTTP request when `--trusted-identity-header` names
+the header a proxy sets (`application/cli/trusted_identity.py`, an ASGI
+middleware the console mounts too). A
 caller-correctable error (an invalid argument or filter, a strategy the
 namespace does not hold, the deadline) is returned as a tool error with its
 message, also under `processing.ignore_errors`, whose error answer names

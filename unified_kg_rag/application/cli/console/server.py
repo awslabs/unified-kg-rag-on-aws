@@ -69,6 +69,7 @@ from unified_kg_rag.application.cli.console.settings_api import (
 )
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.cli.conventions import host_without_port, is_loopback
+from unified_kg_rag.application.cli.trusted_identity import TrustedIdentity
 from unified_kg_rag.application.config import get_config
 from unified_kg_rag.application.plugins import load_plugins
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
@@ -135,6 +136,10 @@ class ConsoleOptions:
     # tokenised URL sets, or the X-Console-Token header); None turns the
     # check off (tests of the other checks only).
     token: str | None = None
+    # The header an authenticating proxy names the caller in
+    # (--trusted-identity-header): every request must carry it, and the
+    # questions take it as their user_id (application.cli.trusted_identity).
+    trusted_identity_header: str | None = None
 
     @property
     def console_directory(self) -> Path:
@@ -499,6 +504,17 @@ def create_app(
     )
     app.state.console = state
     app.add_middleware(_ContainUnexpected)
+    if options.trusted_identity_header is not None:
+        app.add_middleware(
+            TrustedIdentity,
+            header=options.trusted_identity_header,
+            refuse=_error(
+                401,
+                "unauthorized",
+                f"the {options.trusted_identity_header} header (the trusted "
+                "identity header) is missing",
+            ),
+        )
 
     @app.middleware("http")
     async def guard(

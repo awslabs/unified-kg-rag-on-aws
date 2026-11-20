@@ -42,6 +42,7 @@ from unified_kg_rag.application.cli.metrics_args import (
     add_metrics_sink_argument,
     build_metrics_sink,
 )
+from unified_kg_rag.application.cli.trusted_identity import header_name_argument
 from unified_kg_rag.application.config import get_config, load_cli_dotenv
 from unified_kg_rag.application.plugins import load_plugins
 from unified_kg_rag.domain.models import Config
@@ -147,6 +148,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Link each answer to its trace: a URL with {trace_id}, e.g. "
         "http://localhost:16686/trace/{trace_id} for Jaeger (default with "
         "observability.backend langfuse: LANGFUSE_HOST/trace/{trace_id})",
+    )
+    parser.add_argument(
+        "--trusted-identity-header",
+        metavar="NAME",
+        type=header_name_argument,
+        help="Take each request's caller from this header, set by the "
+        "authenticating proxy (for example x-amzn-oidc-identity behind an "
+        "Application Load Balancer), as its questions' user_id; a request "
+        "without exactly one is refused (401). Off by default. Only behind a "
+        "proxy that removes or overwrites any copy the client sends: "
+        "otherwise a client names any user",
     )
     add_metrics_sink_argument(
         parser,
@@ -263,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         trace_url_template=args.trace_url,
         sample_questions=_sample_questions(workspace),
         token=token,
+        trusted_identity_header=args.trusted_identity_header,
     )
     try:
         sock = _bind(args.host, args.port)

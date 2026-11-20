@@ -26,6 +26,7 @@ from typing import Any, Literal, TypeVar
 from pydantic import BaseModel, Field, ValidationError
 from structlog.contextvars import bound_contextvars, get_contextvars
 
+from unified_kg_rag.application.cli.trusted_identity import caller_user_id
 from unified_kg_rag.application.presentation.answer_view import (
     AnswerView,
     QueryOutcome,
@@ -861,6 +862,9 @@ class KnowledgeGraphTools:
             history=history,
             # Lowers the server's own (search.query_*); never raises them.
             limits=limits,
+            # Its HTTP request's, from the trusted identity header if one
+            # is configured (build_mcp_app).
+            user_id=caller_user_id(),
         )
 
     def _from_result(self, rank: int, result: RetrievalResult) -> SupportingContent:

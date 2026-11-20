@@ -182,6 +182,21 @@ whose every client may read the namespace. The query task's IAM role (read
 access to the stores and the models the strategies call) is the policy it
 needs.
 
+**Who asked.** When the proxy names the authenticated caller in a header
+(an Application Load Balancer with OIDC authentication sets
+`x-amzn-oidc-identity`, the IdP's subject), `--trusted-identity-header
+x-amzn-oidc-identity` (`build_mcp_app(trusted_identity_header=...)`) makes
+each call's queries take it as their `user_id`: the `user.id` of their
+spans and the `user_id` of their [audit record](../reference/telemetry.md#audit-record).
+Off by default: without it, a client's copy of the header is ignored. On,
+a request without exactly one non-blank value of at most 255 characters is
+refused with 401 and logged by the header's name, never its value. **The
+header is trusted as it arrives**, so turn it on only behind a proxy that
+authenticates every request and removes or overwrites any copy the client
+sent, and keep the server's port reachable from that proxy alone: a client
+that reaches the server another way names any user it likes. Prefer an
+opaque subject to an e-mail address; the value is recorded as it is.
+
 **The image the CDK stack ships does not run it.** The data-plane image
 installs no `mcp` extra, and the stack's query task is a one-shot task
 (`run-rag`, `run-eval`) with no service, port or load balancer in front.

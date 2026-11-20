@@ -242,6 +242,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `cost_usd` and outcome, with the question and the answer as SHA-256 digests, never their text
   (`QueryAuditRecord`, `record_version` 1; [fields](docs/reference/telemetry.md#audit-record)).
   `logging.library_levels: {unified_kg_rag.audit: WARNING}` turns it off.
+- `--trusted-identity-header NAME` on `run-mcp-server --transport streamable-http` and `run-console`
+  (`build_mcp_app(trusted_identity_header=...)`): off by default; on, each request's queries take that header (an
+  authenticating proxy's, such as an Application Load Balancer's `x-amzn-oidc-identity`) as their `user_id`, and a
+  request without exactly one valid value is refused (401). Only behind a proxy that removes or overwrites any copy
+  a client sends.
 
 ### Changed
 
