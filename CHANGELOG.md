@@ -249,8 +249,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - Retrieval `ndcg_at_k` (binary relevance, log2 discount), and several cutoffs: `evaluation.retrieval_k` takes a
   list, the first keeping the `*_at_k` names, each further k adding `hit_at_<k>`, `recall_at_<k>`, `ndcg_at_<k>`.
 - `search.search_type`, the search type of a query that names none (hybrid), so a `run-eval --arm` compares hybrid
-  with lexical or vector in one paired run. The console's questions and the MCP tools read it too when they name
-  none (they sent hybrid).
+  with lexical or vector in one paired run. The console's questions, the MCP tools and the LangChain retriever
+  interface (a retriever's `invoke` / `ainvoke`) read it too when they name none (they sent hybrid).
 - Embedding usage for every provider (`embedding_calls`, `embedding_input_tokens`, `embedding_estimated_calls`;
   `usage_schema` 4) and `models.prices.<id>.embedding_per_million_tokens`, which every USD figure adds. The console's
   dashboard sums and prices the embedding role's and model's rows too, and names an embedding model without a price.

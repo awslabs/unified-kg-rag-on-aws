@@ -255,6 +255,7 @@ def _loop_recording_retriever(config: Config) -> Any:
     class _Retriever(BaseGraphRAGRetriever):
         async def aretrieve(self, query: Any) -> list[RetrievalResult]:
             loops.append(asyncio.get_running_loop())
+            _SEARCHED.append(query.search_type)
             return [
                 RetrievalResult(
                     content=f"about {query.query}",
@@ -265,8 +266,13 @@ def _loop_recording_retriever(config: Config) -> Any:
             ]
 
     loops: list[Any] = []
+    _SEARCHED.clear()
     retriever = _Retriever(config)
     return retriever, loops
+
+
+# The search types the retriever of _loop_recording_retriever was asked for.
+_SEARCHED: list[Any] = []
 
 
 def test_retriever_invoke_outside_a_loop(config: Config) -> None:
@@ -274,6 +280,21 @@ def test_retriever_invoke_outside_a_loop(config: Config) -> None:
     [document] = retriever.invoke("vendors")
     assert document.page_content == "about vendors"
     assert document.metadata["source"] == "doc-1"
+
+
+async def test_retriever_invoke_searches_the_configs_search_type(
+    config: Config,
+) -> None:
+    # A LangChain invoke names no search type: it is the config's
+    # search.search_type, as for a query (it searched hybrid whatever that
+    # said).
+    from unified_kg_rag.domain.models import SearchType
+
+    config.search.search_type = SearchType.LEXICAL
+    retriever, _ = _loop_recording_retriever(config)
+    await retriever.ainvoke("vendors")
+    await asyncio.to_thread(retriever.invoke, "vendors")
+    assert _SEARCHED == [SearchType.LEXICAL, SearchType.LEXICAL]
 
 
 async def test_retriever_ainvoke_runs_on_the_callers_loop(config: Config) -> None:
