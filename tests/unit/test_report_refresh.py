@@ -400,3 +400,140 @@ def test_a_written_report_reads_the_stored_claims_about_its_members() -> None:
     _refresh(config, graph, vector, model)("default", {report}, {"acme"})
     (text,) = model.inputs
     assert "Acme hired Carrier for the harbour route" in text
+
+
+# --- Failure paths: every one keeps the reports flagged (RV6-10) -----------
+#
+# A report the refresh could not write again must stay listed as kept: the
+# run's build record names it, so the next run tries again. Never written,
+# its stored version stays as it was.
+
+
+def _assert_kept_as_they_were(done: Any, vector: Any, model: _Reports) -> None:
+    assert done.kept == _OUTDATED
+    assert not done.written and not done.deleted
+    assert not model.inputs
+    stored = {
+        r.community_id: r.summary for r in vector.read_community_reports(_OUTDATED)
+    }
+    assert stored == {"c1": "stale", "p": "stale"}
+
+
+def test_a_refresh_that_raises_keeps_every_report(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config)
+    model = _Reports()
+
+    def fail(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("graph store down")
+
+    graph.find_ids_citing = fail
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+
+    _assert_kept_as_they_were(done, vector, model)
+    assert any("stay flagged outdated" in r.getMessage() for r in caplog.records)
+
+
+def test_a_lost_lease_is_raised_not_kept() -> None:
+    from unified_kg_rag.shared import NamespaceLeaseError
+
+    config = _config()
+    graph, vector = _stores(config)
+
+    def lost(*_: Any, **__: Any) -> Any:
+        raise NamespaceLeaseError("lease lost")
+
+    vector.read_community_reports = lost
+    with pytest.raises(NamespaceLeaseError):
+        _refresh(config, graph, vector, _Reports())("default", _OUTDATED, {"acme"})
+
+
+def test_nothing_to_refresh_reads_nothing() -> None:
+    config = _config()
+    graph, vector = _stores(config)
+    vector.read_community_reports = MagicMock()
+    done = _refresh(config, graph, vector, _Reports())("default", set())
+    assert done == ({*()}, {*()}, {*()}, {})
+    vector.read_community_reports.assert_not_called()
+
+
+def test_a_store_that_cannot_read_reports_by_id_keeps_them(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config)
+    model = _Reports()
+    read = vector.read_community_reports
+    vector.read_community_reports = lambda ids, suffix=None: None
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+    vector.read_community_reports = read
+
+    _assert_kept_as_they_were(done, vector, model)
+    assert any(
+        "cannot read community reports" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_a_graph_that_cannot_find_what_units_state_keeps_them(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config)
+    model = _Reports()
+    graph.find_ids_citing = lambda units, suffix=None: None
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+
+    _assert_kept_as_they_were(done, vector, model)
+    assert any("cannot find what text units" in r.getMessage() for r in caplog.records)
+
+
+def test_a_report_missing_below_keeps_its_ancestors(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    model = _Reports()
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+    assert done.kept == {community_report_id("p")}
+    assert any("without a stored report" in r.getMessage() for r in caplog.records)
+
+
+def test_a_store_that_rejects_the_rewrite_keeps_the_reports() -> None:
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    config = _config()
+    graph, vector = _stores(config)
+    model = _Reports()
+    upsert = vector.upsert_community_reports
+    # A write that failed without naming its items wrote none.
+    vector.upsert_community_reports = lambda reports: IndexingStats(
+        total_items=len(reports), failed_items=len(reports)
+    )
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+    vector.upsert_community_reports = upsert
+    assert done.kept == _OUTDATED and not done.written
+    assert done.results["vector_refreshed_reports_default"].failed_items == 2
+
+    # One named failure keeps that report only.
+    graph, vector = _stores(config)
+    upsert = vector.upsert_community_reports
+
+    def reject_parent(reports: list[CommunityReport]) -> Any:
+        stats = upsert([r for r in reports if r.community_id != "p"])
+        stats.failed_items += 1
+        stats.failed_ids.append(community_report_id("p"))
+        return stats
+
+    vector.upsert_community_reports = reject_parent
+    done = _refresh(config, graph, vector, _Reports())("default", _OUTDATED, {"acme"})
+    assert done.written == {community_report_id("c1")}
+    assert done.kept == {community_report_id("p")}
+
+
+def test_an_emptied_report_whose_delete_failed_stays_kept() -> None:
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    config = _config()
+    graph, vector = _stores(config)
+    graph.delete_by_id(["acme"])
+    report = community_report_id("c1")
+    vector.upsert_community_reports([_report("c1", ["t1"], 0, parent="p")])
+    vector.delete_by_id = lambda ids, prefix, suffix=None: IndexingStats(
+        total_items=len(ids), failed_items=len(ids), failed_ids=list(ids)
+    )
+    done = _refresh(config, graph, vector, _Reports())("default", {report})
+    assert done.kept == {report} and not done.deleted
