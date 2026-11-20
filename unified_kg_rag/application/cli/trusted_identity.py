@@ -8,18 +8,24 @@ and ``ConsoleOptions`` the same setting): every HTTP request must then
 carry exactly one non-blank ``NAME`` header of at most
 ``MAX_IDENTITY_CHARS`` characters, which the request's queries take as
 ``RAGInput.user_id`` (their spans' ``user.id``, their audit record's
-``user_id``). A request without it, with two, or with an over-long or
-unprintable value is refused (401) and logged by the header's name and the
+``user_id``). A request without it (or with a blank one), with two (two
+field lines, or one holding a comma: RFC 9110 lets a proxy fold two copies
+into one comma-joined line), or with a value that is not UTF-8, too long or
+holds a control character is refused (401, naming which of the three
+:class:`IdentityRefusal` it is) and logged by the header's name and the
 path, never its value: a request that reaches the server without the
 header did not come through the proxy, or the proxy is misconfigured.
 
 The header is trusted as it arrives: only a proxy that authenticates every
-request and removes or overwrites any copy of the header the client sent
-makes it an identity. Reached any other way, a client names whom it likes.
+request and replaces any copy of the header the client sent (removes or
+overwrites it, never appends to it) makes it an identity. Reached any other
+way, a client names whom it likes.
 """
 
 from __future__ import annotations
 
+import enum
+import json
 import re
 from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from contextvars import ContextVar
@@ -30,6 +36,7 @@ from unified_kg_rag.shared.query_stop import blank_in_shared_calls
 
 __all__ = [
     "MAX_IDENTITY_CHARS",
+    "IdentityRefusal",
     "TrustedIdentity",
     "caller_user_id",
     "header_identity",
@@ -82,28 +89,57 @@ def header_name_argument(value: str) -> str:
         raise argparse.ArgumentTypeError(str(e)) from None
 
 
-def header_identity(headers: Iterable[tuple[bytes, bytes]], name: str) -> str | None:
+class IdentityRefusal(enum.Enum):
+    """Why a request has no identity (:func:`header_identity`); the value is
+    what the 401 says of the header (it never echoes the header's value)."""
+
+    MISSING = "is missing or blank"
+    REPEATED = (
+        "was sent more than once (two lines, or one with a comma): the proxy "
+        "must replace a client's copy, not append to it"
+    )
+    MALFORMED = (
+        f"is malformed (not UTF-8, over {MAX_IDENTITY_CHARS} characters, or a "
+        "control character)"
+    )
+
+
+def header_identity(
+    headers: Iterable[tuple[bytes, bytes]], name: str
+) -> str | IdentityRefusal:
     """The identity the ``name`` header of an ASGI request's ``headers``
-    gives: its one value, stripped; ``None`` when it is missing, blank,
-    repeated (a proxy that appended to a client's copy), longer than
-    ``MAX_IDENTITY_CHARS`` or holds a control character."""
+    gives: its one value, stripped; else why there is none: missing or
+    blank, repeated (two field lines, or a comma, which no subject an
+    authenticating proxy forwards holds: a proxy that appended to a
+    client's copy) or malformed (not UTF-8, longer than
+    ``MAX_IDENTITY_CHARS``, or a control character)."""
     wanted = name.lower().encode("latin-1")
     values = [value for key, value in headers if key.lower() == wanted]
-    if len(values) != 1:
-        return None
-    identity = values[0].decode("latin-1").strip()
-    if not identity or len(identity) > MAX_IDENTITY_CHARS or not identity.isprintable():
-        return None
+    if len(values) > 1:
+        return IdentityRefusal.REPEATED
+    if not values or not values[0].strip():
+        return IdentityRefusal.MISSING
+    try:
+        identity = values[0].decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return IdentityRefusal.MALFORMED
+    if "," in identity:
+        return IdentityRefusal.REPEATED
+    if len(identity) > MAX_IDENTITY_CHARS or not identity.isprintable():
+        return IdentityRefusal.MALFORMED
     return identity
 
 
 class TrustedIdentity:
     """ASGI middleware: each HTTP request served under the identity its
-    ``header`` gives (:func:`caller_user_id`), or refused by ``refuse``
-    (an ASGI app answering 401) without one (module docstring). Other
-    scopes (the lifespan) pass as they are."""
+    ``header`` gives (:func:`caller_user_id`), or refused without one by
+    the ASGI app ``refuse(why)`` returns (answering 401; ``why``: what is
+    wrong with the header, as the response may say it) (module docstring).
+    Other scopes (the lifespan) pass as they are."""
 
-    def __init__(self, app: ASGIApp, *, header: str, refuse: ASGIApp) -> None:
+    def __init__(
+        self, app: ASGIApp, *, header: str, refuse: Callable[[str], ASGIApp]
+    ) -> None:
         self.app = app
         self.header = valid_header_name(header)
         self.refuse = refuse
@@ -113,16 +149,16 @@ class TrustedIdentity:
             await self.app(scope, receive, send)
             return
         identity = header_identity(scope.get("headers") or (), self.header)
-        if identity is None:
+        if isinstance(identity, IdentityRefusal):
+            why = f"the {self.header} header (the trusted identity header) {identity.value}"
             # The path has no query string (ASGI keeps it apart).
             logger.warning(
-                "Refused a request to %s: no single valid %s header (the "
-                "trusted identity header; is the request coming through "
+                "Refused a request to %s: %s (is the request coming through "
                 "the authenticating proxy?)",
                 scope.get("path", ""),
-                self.header,
+                why,
             )
-            await self.refuse(scope, receive, send)
+            await self.refuse(why)(scope, receive, send)
             return
         token = _CALLER.set(identity)
         try:
@@ -131,17 +167,22 @@ class TrustedIdentity:
             _CALLER.reset(token)
 
 
-async def unauthorized(scope: Scope, receive: Receive, send: Send) -> None:
-    """A bare 401 with a JSON body naming why (the MCP server's refusal)."""
-    body = b'{"error": "unauthorized: the trusted identity header is missing"}'
-    await send(
-        {
-            "type": "http.response.start",
-            "status": 401,
-            "headers": [
-                (b"content-type", b"application/json"),
-                (b"content-length", str(len(body)).encode()),
-            ],
-        }
-    )
-    await send({"type": "http.response.body", "body": body})
+def unauthorized(why: str) -> ASGIApp:
+    """A bare 401 with a JSON body naming ``why`` (the MCP server's
+    refusal)."""
+    body = json.dumps({"error": f"unauthorized: {why}"}).encode()
+
+    async def refuse(scope: Scope, receive: Receive, send: Send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    return refuse

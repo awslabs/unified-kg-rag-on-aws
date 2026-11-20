@@ -408,11 +408,14 @@ The next question and job use the saved file.
   `--trusted-identity-header x-amzn-oidc-identity` makes the questions take
   it as their `user_id` (their spans' `user.id` and their
   [audit record](../reference/telemetry.md#audit-record)'s `user_id`); every
-  request then needs exactly one non-blank value of at most 255 characters
-  (401 otherwise). Off by default, a client's copy ignored. The header is
-  trusted as it arrives: turn it on only behind a proxy that authenticates
-  every request and removes or overwrites any copy the client sent, with
-  the console reachable from that proxy alone.
+  request then needs exactly one non-blank UTF-8 value of at most 255
+  characters with no comma (401 otherwise, saying whether the header was
+  missing, sent more than once or malformed; a comma is a second copy
+  folded into one line). Off by default, a client's copy ignored. The
+  header is trusted as it arrives: turn it on only behind a proxy that
+  authenticates every request and replaces any copy the client sent
+  (removes or overwrites it, never appends to it), with the console
+  reachable from that proxy alone.
 - Requests that change anything need a header a cross-site form cannot
   send, and one from another origin is refused; on loopback a request for
   another host name is refused (DNS rebinding). No response carries a CORS

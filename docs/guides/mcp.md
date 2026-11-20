@@ -211,12 +211,16 @@ x-amzn-oidc-identity` (`build_mcp_app(trusted_identity_header=...)`) makes
 each call's queries take it as their `user_id`: the `user.id` of their
 spans and the `user_id` of their [audit record](../reference/telemetry.md#audit-record).
 Off by default: without it, a client's copy of the header is ignored. On,
-a request without exactly one non-blank value of at most 255 characters is
-refused with 401 and logged by the header's name, never its value. **The
-header is trusted as it arrives**, so turn it on only behind a proxy that
-authenticates every request and removes or overwrites any copy the client
-sent, and keep the server's port reachable from that proxy alone: a client
-that reaches the server another way names any user it likes. Prefer an
+a request without exactly one non-blank UTF-8 value of at most 255
+characters with no comma is refused with 401, whose body says whether the
+header was missing, sent more than once or malformed, and logged by the
+header's name, never its value. A comma counts as a second copy: HTTP lets
+a proxy fold two copies into one comma-joined line. **The header is trusted
+as it arrives**, so turn it on only behind a proxy that authenticates every
+request and replaces any copy the client sent (removes or overwrites it,
+never appends to it), and keep the server's port reachable from that proxy
+alone: a client that reaches the server another way names any user it
+likes. Prefer an
 opaque subject to an e-mail address; the value is recorded as it is.
 
 **The image the CDK stack ships does not run it.** The data-plane image

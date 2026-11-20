@@ -17,6 +17,7 @@ from tests.fixtures.console_demo import requires_console
 from tests.fixtures.extras import requires_mcp
 from unified_kg_rag.application.cli.trusted_identity import (
     MAX_IDENTITY_CHARS,
+    IdentityRefusal,
     TrustedIdentity,
     caller_user_id,
     header_identity,
@@ -35,18 +36,29 @@ _HEADER = "x-amzn-oidc-identity"
         ([(b"x-amzn-oidc-identity", b"user-42")], "user-42"),
         # Header names are case-insensitive; the value is stripped.
         ([(b"X-Amzn-Oidc-Identity", b"  user-42 ")], "user-42"),
-        ([], None),
-        ([(b"x-amzn-oidc-identity", b"   ")], None),
+        ([], IdentityRefusal.MISSING),
+        ([(b"x-amzn-oidc-identity", b"   ")], IdentityRefusal.MISSING),
         # Two copies: a client's that the proxy appended to, not replaced.
-        ([(b"x-amzn-oidc-identity", b"a"), (b"x-amzn-oidc-identity", b"b")], None),
-        ([(b"x-amzn-oidc-identity", b"u" * (MAX_IDENTITY_CHARS + 1))], None),
+        (
+            [(b"x-amzn-oidc-identity", b"a"), (b"x-amzn-oidc-identity", b"b")],
+            IdentityRefusal.REPEATED,
+        ),
+        # The same, folded into one line (RFC 9110 §5.3): RV4-8 took it.
+        ([(b"x-amzn-oidc-identity", b"mallory, alice")], IdentityRefusal.REPEATED),
+        (
+            [(b"x-amzn-oidc-identity", b"u" * (MAX_IDENTITY_CHARS + 1))],
+            IdentityRefusal.MALFORMED,
+        ),
         ([(b"x-amzn-oidc-identity", b"u" * MAX_IDENTITY_CHARS)], "u" * 255),
-        ([(b"x-amzn-oidc-identity", b"user\x1b[2J")], None),
-        ([(b"other", b"user-42")], None),
+        ([(b"x-amzn-oidc-identity", b"user\x1b[2J")], IdentityRefusal.MALFORMED),
+        # UTF-8, strictly: it read as latin-1 mojibake ("Ã©ve").
+        ([(b"x-amzn-oidc-identity", "éve".encode())], "éve"),
+        ([(b"x-amzn-oidc-identity", b"\xe9ve")], IdentityRefusal.MALFORMED),
+        ([(b"other", b"user-42")], IdentityRefusal.MISSING),
     ],
 )
 def test_the_header_gives_one_bounded_identity(
-    headers: list[tuple[bytes, bytes]], identity: str | None
+    headers: list[tuple[bytes, bytes]], identity: str | IdentityRefusal
 ) -> None:
     assert header_identity(headers, _HEADER) == identity
 
@@ -91,8 +103,15 @@ async def test_on_the_request_is_served_as_its_caller_and_refused_without_one(
     assert caller_user_id() is None  # reset after the request
     status, sent = await _call(guarded, [])
     assert status == 401 and seen == ["user-42"]  # the app never ran
-    assert b"trusted identity header" in sent[1]["body"]
+    assert b"trusted identity header) is missing" in sent[1]["body"]
     assert "x-amzn-oidc-identity" in caplog.text
+    # RV7-6: the body said "missing" for every refusal; it names which.
+    twice = [(b"x-amzn-oidc-identity", b"a"), (b"x-amzn-oidc-identity", b"b")]
+    status, sent = await _call(guarded, twice)
+    assert status == 401 and b"sent more than once" in sent[1]["body"]
+    status, sent = await _call(guarded, [(b"x-amzn-oidc-identity", b"\xff")])
+    assert status == 401 and b"malformed" in sent[1]["body"]
+    assert b"\xff" not in sent[1]["body"]  # never the value
     # The lifespan passes.
     lifespan: list[str] = []
 
@@ -159,5 +178,13 @@ def test_the_console_s_questions_take_the_caller_only_when_on(
     assert missing.status_code == (401 if trusted else 200)
     if trusted:
         assert missing.json()["code"] == "unauthorized"
+        assert "is missing" in missing.json()["error"]
+        folded = client.post(
+            "/api/ask",
+            json={"query": "Who?"},
+            headers={"X-Console-Request": "1", _HEADER: "mallory, user-42"},
+        )
+        assert folded.status_code == 401
+        assert "more than once" in folded.json()["error"]
         # Every request, the page's too.
         assert client.get("/api/status").status_code == 401

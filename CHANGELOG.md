@@ -286,8 +286,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - `--trusted-identity-header NAME` on `run-mcp-server --transport streamable-http` and `run-console`
   (`build_mcp_app(trusted_identity_header=...)`): off by default; on, each request's queries take that header (an
   authenticating proxy's, such as an Application Load Balancer's `x-amzn-oidc-identity`) as their `user_id`, and a
-  request without exactly one valid value is refused (401). Only behind a proxy that removes or overwrites any copy
-  a client sends.
+  request without exactly one valid value (UTF-8, no comma: a comma is a second copy folded into one line) is
+  refused (401, saying whether it was missing, sent more than once or malformed). Only behind a proxy that replaces
+  (removes or overwrites, never appends to) any copy a client sends.
 - A `golden-metrics` CI job: every strategy and search type answers the synthetic structural and bridge datasets on
   fake models, and the LLM-free scores of the held-out `test` half must equal `tests/fixtures/golden_metrics.json`,
   which `scripts/gen_golden_metrics.py` regenerates
