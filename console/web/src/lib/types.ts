@@ -50,7 +50,7 @@ export interface NamespaceHeld {
  * `reset` for a run with indexing.reset: true, `next_run` for what the next
  * ingestion applies. */
 export interface RebuildReason {
-  kind: "communities" | "outdated_reports" | "answer_settings" | "extraction_settings" | "methodologies";
+  kind: "communities" | "outdated_reports" | "community_depths" | "answer_settings" | "extraction_settings" | "methodologies";
   remedy: "reset" | "next_run";
   detail: string;
   settings: string[];

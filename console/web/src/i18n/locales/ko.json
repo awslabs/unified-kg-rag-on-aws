@@ -243,6 +243,7 @@
   "ingest.rebuildTitle": "{{namespace}}를 다시 빌드할 때가 되었습니다",
   "ingest.rebuild.communities": "증분 실행이 거듭되어 커뮤니티가 마지막 전체 클러스터링과 많이 달라졌습니다.",
   "ingest.rebuild.outdated_reports": "일부 커뮤니티 리포트가 이후 삭제되거나 바뀐 문서를 바탕으로 작성되었고 다시 작성하지 못했습니다. 제거된 내용을 여전히 담고 있을 수 있습니다.",
+  "ingest.rebuild.community_depths": "커뮤니티 리포트를 이전 릴리스가 작성했으며, 그 릴리스는 깊이를 가장 큰 커뮤니티부터 셌습니다. 글로벌 검색의 깊이 기준으로는 한 단계 이상 거친 수준으로 읽힙니다.",
   "ingest.rebuild.answer_settings": "커뮤니티 리포트나 설명 요약이 이 구성과 다른 설정으로 작성되었거나 아예 작성되지 않았습니다.",
   "ingest.rebuild.extraction_settings": "마지막 실행 이후 추출 설정이 바뀌었습니다.",
   "ingest.rebuild.methodologies": "이 구성은 네임스페이스에 없는 것을 빌드합니다.",

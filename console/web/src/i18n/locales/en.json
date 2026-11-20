@@ -251,6 +251,7 @@
   "ingest.rebuildTitle": "{{namespace}} is due for a rebuild",
   "ingest.rebuild.communities": "Incremental runs have moved its communities far from the last full clustering.",
   "ingest.rebuild.outdated_reports": "Some of its community reports were written from documents since deleted or changed, and could not be written again: they may still state the removed text.",
+  "ingest.rebuild.community_depths": "Its community reports were written by an earlier release, which counted their depths from the coarsest community: global search's depth cut reads them a level or more too coarse.",
   "ingest.rebuild.answer_settings": "Its community reports or description summaries were written under other settings than this configuration's, or not written at all.",
   "ingest.rebuild.extraction_settings": "The extraction settings changed since its last run.",
   "ingest.rebuild.methodologies": "This configuration builds what the namespace does not hold.",

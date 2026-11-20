@@ -259,6 +259,7 @@
   "ingest.rebuildTitle": "{{namespace}} necesita una reconstrucción",
   "ingest.rebuild.communities": "Las ejecuciones incrementales han alejado mucho sus comunidades del último agrupamiento completo.",
   "ingest.rebuild.outdated_reports": "Algunos de sus informes de comunidad se escribieron a partir de documentos que después se eliminaron o cambiaron, y no se pudieron volver a escribir: pueden seguir afirmando el texto eliminado.",
+  "ingest.rebuild.community_depths": "Sus informes de comunidad los escribió una versión anterior, que contaba su profundidad desde la comunidad más general: el corte de profundidad de la búsqueda global los lee uno o más niveles demasiado generales.",
   "ingest.rebuild.answer_settings": "Sus informes de comunidad o resúmenes de descripciones se escribieron con una configuración distinta de esta, o no se escribieron.",
   "ingest.rebuild.extraction_settings": "La configuración de extracción cambió desde su última ejecución.",
   "ingest.rebuild.methodologies": "Esta configuración construye lo que el espacio de nombres no contiene.",

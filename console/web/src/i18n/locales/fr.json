@@ -259,6 +259,7 @@
   "ingest.rebuildTitle": "{{namespace}} doit être reconstruit",
   "ingest.rebuild.communities": "Les exécutions incrémentales ont beaucoup éloigné ses communautés du dernier clustering complet.",
   "ingest.rebuild.outdated_reports": "Certains de ses rapports de communauté ont été rédigés à partir de documents supprimés ou modifiés depuis, et n’ont pas pu être réécrits : ils peuvent encore affirmer le texte retiré.",
+  "ingest.rebuild.community_depths": "Ses rapports de communauté ont été rédigés par une version antérieure, qui comptait leur profondeur depuis la communauté la plus large : la coupe de profondeur de la recherche globale les lit un niveau ou plus trop haut.",
   "ingest.rebuild.answer_settings": "Ses rapports de communauté ou résumés de descriptions ont été écrits avec d'autres paramètres que ceux de cette configuration, ou pas écrits du tout.",
   "ingest.rebuild.extraction_settings": "Les paramètres d'extraction ont changé depuis sa dernière exécution.",
   "ingest.rebuild.methodologies": "Cette configuration construit ce que l'espace de noms ne contient pas.",
