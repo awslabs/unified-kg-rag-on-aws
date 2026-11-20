@@ -522,6 +522,8 @@ Bugs present in 0.3.0.
 - The Graph page's Analysis tab cut off the last column of its schema conformance and evidence tables in the side
   panel (English and German, at 1440 and 1920 px): each table lists the parts as rows, entities and relationships as
   columns.
+- The MCP server's instructions said the index holds the GraphRAG and LightRAG methodologies only; they name every
+  methodology (HippoRAG 2 and RAPTOR too).
 
 ## [0.3.0] - 2026-11-14
 

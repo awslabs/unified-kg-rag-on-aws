@@ -53,6 +53,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import QueryLimits, SearchType
 from unified_kg_rag.domain.models.config import McpServerConfig
+from unified_kg_rag.domain.models.methodology import Methodology
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
@@ -440,9 +441,10 @@ def build_mcp_server(
         title="Unified KG RAG (read-only)",
         version=__version__,
         instructions=(
-            "Read-only tools over a knowledge-graph RAG index (GraphRAG and "
-            "LightRAG methodologies): search it, ask it, look up entities and "
-            f"walk their neighbourhood. Namespace: {tools.namespace}. " + UNTRUSTED_NOTE
+            "Read-only tools over a knowledge-graph RAG index (methodologies: "
+            f"{', '.join(m.value for m in Methodology)}): search it, ask it, look "
+            "up entities and walk their neighbourhood. Namespace: "
+            f"{tools.namespace}. " + UNTRUSTED_NOTE
         ),
     )
     read_only = annotations_class(
