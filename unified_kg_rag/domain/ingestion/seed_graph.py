@@ -907,9 +907,12 @@ class _Converter:
         if again := self.collisions(nodes.values()):
             raise self.fail(
                 f"{len(again)} qualified names still collide (ids "
-                + "; ".join(
-                    ", ".join(node.id for part in parts for node in part)
-                    for parts in again[:5]
+                + first_names(
+                    (
+                        ", ".join(node.id for part in parts for node in part)
+                        for parts in again
+                    ),
+                    separator="; ",
                 )
                 + ")"
             )

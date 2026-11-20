@@ -49,6 +49,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreRequestRejectedError,
 )
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils import ERRORS_SHOWN, first_names
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports.indexer import VectorIndexer
@@ -310,7 +311,7 @@ class ExtractionStore:
                     stats.failed_items,
                     len(by_key),
                     suffix,
-                    "; ".join(stats.errors[:3]),
+                    first_names(stats.errors, ERRORS_SHOWN, separator="; "),
                 )
 
     def save(
@@ -350,7 +351,7 @@ class ExtractionStore:
                     stats.failed_items,
                     len(records),
                     suffix,
-                    "; ".join(stats.errors[:3]),
+                    first_names(stats.errors, ERRORS_SHOWN, separator="; "),
                 )
                 # A failure without the key it is of fails every unit.
                 failed = (

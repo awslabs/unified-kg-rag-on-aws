@@ -311,6 +311,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - Every S3 client (the stage-cache sync, `run-eval`'s `s3://` paths, schema and seed sources) connects within 10 s
   (from botocore's 60 s) and retries under botocore's standard mode with 5 requests in all (the legacy mode's count):
   a stalled endpoint fails an attempt in seconds, and throttling (`SlowDown`) backs off with jitter.
+- The lists of names and errors in log lines and messages (ingestion, incremental indexing, seed graphs, ontologies,
+  saved evaluation runs, model output) all read `a, b and N more`: the first 10 names or 3 errors. They ended in `...`
+  or in nothing, and showed 2 to 10 items.
 
 ### Deprecated
 

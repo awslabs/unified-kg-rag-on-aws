@@ -130,6 +130,9 @@ RE_EXTRA_SPACES = re.compile(r"\s+")
 
 # The names a log line or a message lists before "and N more".
 NAMES_SHOWN = 10
+# The errors one quotes before "and N more": an error's text is longer
+# than a name, so fewer of them keep the line readable.
+ERRORS_SHOWN = 3
 
 
 def first_names(

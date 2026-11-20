@@ -674,7 +674,7 @@ def summary_warnings(saved: Sequence[SavedRun], label: str) -> list[str]:
         return []
     return [
         f"{label}: {len(missing)} saved run(s) have no evaluation_summary file "
-        f"next to them ({', '.join(missing[:3])}{', ...' if len(missing) > 3 else ''}): "
+        f"next to them ({first_names(missing)}): "
         "their answer scoring, dataset, run settings and the pairwise judge's "
         "self-preference are not checked."
     ]

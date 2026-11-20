@@ -20,6 +20,7 @@ from typing import Any, TypeVar, overload
 from pydantic import BaseModel, ValidationError
 
 from unified_kg_rag.shared.exceptions import ModelOutputCutOffError, ModelOutputError
+from unified_kg_rag.shared.utils.common import ERRORS_SHOWN, first_names
 from unified_kg_rag.shared.utils.scripts import word_spans
 
 _M = TypeVar("_M", bound=BaseModel)
@@ -403,8 +404,12 @@ def parse_model_object(
             error = error or e
     raise ModelOutputError(
         f"the answer's JSON object is not a {schema.__name__}: "
-        + "; ".join(
-            f"{'.'.join(str(p) for p in item['loc']) or 'object'}: {item['msg']}"
-            for item in (error.errors() if error else [])[:5]
+        + first_names(
+            (
+                f"{'.'.join(str(p) for p in item['loc']) or 'object'}: {item['msg']}"
+                for item in (error.errors() if error else [])
+            ),
+            ERRORS_SHOWN,
+            separator="; ",
         )
     )

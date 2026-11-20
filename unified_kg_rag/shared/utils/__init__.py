@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from .common import (
     EMBEDDING_FIELD_SUFFIX,
+    ERRORS_SHOWN,
     NAMES_SHOWN,
     clean_display_name,
     compute_hash,
@@ -37,6 +38,7 @@ from .model_output import named_choice, parse_model_object, strip_leading_reason
 
 __all__ = [
     "EMBEDDING_FIELD_SUFFIX",
+    "ERRORS_SHOWN",
     "NAMES_SHOWN",
     "ContextThreadPoolExecutor",
     "clean_display_name",
