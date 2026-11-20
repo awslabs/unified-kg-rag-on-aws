@@ -222,7 +222,7 @@ jobs:
 
   local-stores:
     # The container backend of the store conformance suites, the SQLite vs
-    # OpenSearch parity test and tests/integration/test_local_stores.py are
+    # OpenSearch parity tests and tests/integration/test_local_stores.py are
     # skipped unless LOCAL_STORES=1, so the quality job never runs the
     # graph/vector adapters against a real Gremlin Server and OpenSearch (with
     # nori). Start the dev compose stack (no AWS, hashing embeddings) and run
@@ -271,6 +271,7 @@ jobs:
         run: >-
           uv run pytest tests/integration/test_*conformance*.py
           tests/integration/test_store_parity.py
+          tests/integration/test_strategy_parity.py
           tests/integration/test_neptune_vertex_ids.py
           tests/integration/test_opensearch_vector_storage.py
           tests/integration/test_embedded_schema_e2e.py
