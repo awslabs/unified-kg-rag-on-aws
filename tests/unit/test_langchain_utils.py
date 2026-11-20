@@ -243,7 +243,7 @@ class TestRetryDecorator:
 
         with pytest.raises(ValueError, match="nope"):
             always_fail()
-        assert attempts["n"] == 2  # stop_after_attempt(2)
+        assert attempts["n"] == 2  # max_attempts=2
 
     @pytest.mark.parametrize(
         ("error", "attempts_made"),
@@ -272,16 +272,6 @@ class TestRetryDecorator:
         with pytest.raises(type(error)):
             always_fail()
         assert attempts["n"] == attempts_made
-
-    def test_retry_log_callback_handles_none_next_action(self) -> None:
-        # Defensive branch: next_action None -> wait_time 0, no crash.
-        cb = BatchProcessor._create_retry_log_callback("op")
-
-        class _State:
-            next_action = None
-            attempt_number = 1
-
-        cb(_State())  # should not raise
 
 
 # --------------------------------------------------------------------------- #
@@ -1072,8 +1062,8 @@ def test_record_tag_inside_an_open_field_closes_the_record() -> None:
 
 
 def test_concurrent_retries_of_one_batch_do_not_share_retry_state() -> None:
-    # Regression: tenacity.retry's wrapper keeps one statistics dict for all
-    # calls and clears it on each, so a worker about to back off read a dict
+    # Regression: tenacity.retry's wrapper (the engine before the shared
+    # retry loop) kept one statistics dict for all calls and cleared it on each, so a worker about to back off read a dict
     # another worker had just cleared (KeyError 'idle_for', not retried) and
     # its item failed: ~3% of 3,000 items under a short switch interval.
     import sys
