@@ -1540,8 +1540,10 @@ class TestComparability:
         manager = EvaluationManager(config, rag_chain=chain)
         queries = [
             EvaluationQuery(query_id="a", question="?"),
-            EvaluationQuery(query_id="b", question="?", metadata={"suffix": "v2"}),
-            EvaluationQuery(query_id="c", question="?", metadata={"suffix": "broken"}),
+            EvaluationQuery(query_id="b", question="?", metadata={"namespace": "v2"}),
+            EvaluationQuery(
+                query_id="c", question="?", metadata={"namespace": "broken"}
+            ),
         ]
         builds = await manager._read_index_builds(queries)
         assert builds == {"broken": None, "default": record, "v2": None}

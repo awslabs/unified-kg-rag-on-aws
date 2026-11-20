@@ -273,7 +273,7 @@ def main() -> int:
             exported = export_graph(
                 config,
                 args.output_path,
-                suffix=description.suffix,
+                namespace=description.suffix,
                 format=args.export_format,
                 max_items=args.max_items,
                 include_text=args.include_text,

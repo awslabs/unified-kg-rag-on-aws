@@ -163,7 +163,7 @@ async def test_rag_mode_local_strategy_uses_graph_and_document_roles(
 async def test_a_conversation_id_reaches_only_its_tenants_and_users_history(
     config: Config,
 ) -> None:
-    # One chain serving several tenants (index suffixes) and users: the same
+    # One chain serving several tenants (namespaces) and users: the same
     # conversation id must not carry one's turns into another's rewrite.
     chain = _make_chain(config)
 
@@ -177,16 +177,16 @@ async def test_a_conversation_id_reaches_only_its_tenants_and_users_history(
             **fields,
         )
 
-    await chain.ainvoke(turn(suffix="tenant-a", user_id="u1"))
+    await chain.ainvoke(turn(namespace="tenant-a", user_id="u1"))
 
     async def history(**fields: object) -> str:
         state = await chain._load_memory_step(turn(**fields).model_dump())
         return str(state["history"])
 
-    assert "Vendor" in await history(suffix="tenant-a", user_id="u1")
-    assert await history(suffix="tenant-b", user_id="u1") == ""
-    assert await history(suffix="tenant-a", user_id="u2") == ""
-    assert await history(suffix="tenant-a") == ""
+    assert "Vendor" in await history(namespace="tenant-a", user_id="u1")
+    assert await history(namespace="tenant-b", user_id="u1") == ""
+    assert await history(namespace="tenant-a", user_id="u2") == ""
+    assert await history(namespace="tenant-a") == ""
     await chain.aclose()
 
 

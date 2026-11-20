@@ -135,7 +135,7 @@ async def test_a_namespace_without_an_index_fails_before_any_model_call(
             await chain.ainvoke(
                 RAGInput(
                     query="Who supplies Buyer?",
-                    suffix="tenant-b",
+                    namespace="tenant-b",
                     search_strategy=strategy,
                 )
             )
@@ -163,7 +163,7 @@ async def test_a_missing_namespace_is_not_described_as_holding_the_configs() -> 
             await chain.acheck_methodology(SearchStrategy.TREE, "nosuch")
         with pytest.raises(IndexNotFoundError, match="nosuch"):
             await chain.ainvoke(
-                RAGInput(query="q", suffix="nosuch", search_strategy="tree")
+                RAGInput(query="q", namespace="nosuch", search_strategy="tree")
             )
     finally:
         await chain.aclose()

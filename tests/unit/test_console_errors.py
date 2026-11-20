@@ -137,7 +137,7 @@ def test_the_console_s_own_refusals_are_invalid_arguments(tmp_path: Path) -> Non
     # every surface names it: not "configuration".
     client = _client(tmp_path)
     for refused in (
-        client.get("/api/strategies", params={"suffix": "../x"}),
+        client.get("/api/strategies", params={"namespace": "../x"}),
         client.post(
             "/api/jobs/evaluate",
             json={"dataset": "workspace:none.json", "strategies": []},

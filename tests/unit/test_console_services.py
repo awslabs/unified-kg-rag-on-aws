@@ -824,7 +824,7 @@ async def test_the_result_names_the_namespace_the_question_searched(
         ConsoleStore(tmp_path / "s.sqlite3"),
         chain_factory=lambda _c: _Chain(_output()),
     )
-    events = [e async for e in service.ask(AskRequest(query="q", suffix="tenant-a"))]
+    events = [e async for e in service.ask(AskRequest(query="q", namespace="tenant-a"))]
     assert events[-1]["namespace"] == "tenant-a"
     events = [e async for e in service.ask(AskRequest(query="q"))]
     assert events[-1]["namespace"] == "default"
@@ -855,7 +855,7 @@ async def test_the_question_s_span_names_the_namespace_it_searched(
         chain_factory=lambda _c: _Chain(_output()),
     )
     try:
-        [e async for e in service.ask(AskRequest(query="q", suffix="tenant-a"))]
+        [e async for e in service.ask(AskRequest(query="q", namespace="tenant-a"))]
         [e async for e in service.ask(AskRequest(query="q"))]
     finally:
         await service.close()

@@ -1145,7 +1145,7 @@ def test_query_of_a_never_ingested_suffix_raises_index_not_found(
     _ingest(harness)
     never = harness.suffix("never")
     with pytest.raises(
-        IndexNotFoundError, match=f"No indices found for suffix '{never}'"
+        IndexNotFoundError, match=f"No indices found for namespace '{never}'"
     ):
         _search(
             harness,

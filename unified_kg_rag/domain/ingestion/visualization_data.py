@@ -127,7 +127,7 @@ def stored_visualization_data(
     (``VectorIndexer.scan_items`` records), each community's members the
     entities that list it in ``community_ids``. Deterministic: items in id
     order, communities by level and id. ``namespace`` names it, so
-    ``run-visualization --suffix`` finds the newest export of one, and
+    ``run-visualization --namespace`` finds the newest export of one, and
     ``built_at`` (its build record's, when it has one) tells which build
     the stores held."""
     built = GraphBuilder(

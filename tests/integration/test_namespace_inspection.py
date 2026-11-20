@@ -492,7 +492,7 @@ def test_run_describe_names_a_wrong_suffix_on_stderr(
     captured = capsys.readouterr()
     err = " ".join(captured.err.split())
     assert "run-describe: error: The index namespace" in err
-    assert "holds no index: check --suffix" in err
+    assert "holds no index: check --namespace" in err
     # The namespaces ingested, as run-rag lists them (rv27).
     from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 

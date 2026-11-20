@@ -2937,7 +2937,7 @@ def reset_namespaces(
     The full build replaces the suffixes of the run's text units under
     ``indexing.additional_suffix`` (in the stores the configured prefixes
     name); the run's own namespace (its registry scope, else the configured
-    ``index_value``) is always included.
+    ``namespace``) is always included.
     """
     namespaces = {
         config_registry_namespace(config.indexing, BaseIndexer.get_suffix(unit))

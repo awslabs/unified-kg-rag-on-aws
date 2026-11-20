@@ -138,5 +138,5 @@ def test_every_surface_refuses_a_name_no_store_takes(suffix: str) -> None:
     with pytest.raises(ConfigurationError, match="lowercase"):
         resolve_namespace(Config(), suffix)
     with pytest.raises(ValidationError, match="lowercase"):
-        RAGInput(query="q", suffix=suffix)
+        RAGInput(query="q", namespace=suffix)
     assert resolve_namespace(Config(), "tenant_a-1") == "tenant_a-1"
