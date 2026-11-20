@@ -445,7 +445,8 @@ Bugs present in 0.3.0.
   the only trace). The incremental run now writes such a report again from its community's remaining members, by the
   summary tree's rule (a parent's too; a community without a member left loses its report), as a full build's
   detector reads them, one model call each in the indexing stage's usage and the run's budget (none when the input
-  is unchanged: the answer is kept in the extraction store). One it cannot write again stays
+  is unchanged: the answer is kept in the extraction store). One it cannot write again, and a parent that rolls up a
+  child whose report failed in the same run (written without it, it would never be asked again), stays
   flagged `outdated` in the stores (a query reads it in the report's source metadata, and on a global key point drawn
   from it), listed in the build record (`outdated_reports`) and named by every reader of the record as an
   `outdated_reports` rebuild reason (remedy `next_run`; the console words it apart from re-clustering) whatever

@@ -28,7 +28,8 @@ One model call per report at most, under the run's budget
 (``processing.max_run_*``). A community none of whose members remains, or
 only seed-graph members, has no report in a full build: its report is
 deleted. A report the run cannot write again (the model failed, the stores
-could not be read, a report below it is missing) stays flagged outdated and
+could not be read, a report below it is missing, or one below it got no
+report this run and it rolls its children up) stays flagged outdated and
 listed in the build record, and the next run tries again.
 """
 
@@ -391,19 +392,42 @@ class ReportRefresh:
             for unit_id, stored in sorted(attributes.items())
         ]
         detector = self._report_detector().report_on(graph)
-        reports, failed = detector.generate_reports(
-            communities,
-            text_units=text_units,
-            records=self._records,
-            # A parent rolls up its children's current reports: those written
-            # again beside it, and the stored ones that are not outdated (an
-            # outdated one may state the removed text, an emptied one is gone).
-            sub_reports={
-                community_id: report
-                for community_id, report in hierarchy.reports.items()
-                if community_id not in outdated
-            },
+        # A parent rolls up its children's current reports: those written
+        # again beside it, and the stored ones that are not outdated (an
+        # outdated one may state the removed text, an emptied one is gone).
+        current = {
+            community_id: report
+            for community_id, report in hierarchy.reports.items()
+            if community_id not in outdated
+        }
+        rollup = (
+            self._manager.config.graph.community_detection.report_generation.enable_sub_community_rollup
         )
+        reports: list[CommunityReport] = []
+        failed: set[str] = set()
+        waiting: set[str] = set()
+        # Level by level, the finest first, as the detector rolls up: a
+        # parent whose child got no report this run would roll up without
+        # it and, written, never be asked again once the child is (the next
+        # run writes only what stays flagged). It waits, flagged, as a
+        # summary over a failed one is rebuilt (the summary tree's rule).
+        for level in sorted({_level(c) for c in communities}):
+            ready = []
+            for community in communities:
+                if _level(community) != level:
+                    continue
+                if rollup and (failed | waiting) & set(community.children or ()):
+                    waiting.add(community.id)
+                else:
+                    ready.append(community)
+            if not ready:
+                continue
+            made, none = detector.generate_reports(
+                ready, text_units=text_units, records=self._records, sub_reports=current
+            )
+            reports += made
+            failed |= set(none)
+            current.update((r.community_id, r) for r in made)
         if failed:
             logger.warning(
                 "%d of %d outdated community reports of '%s' got no report "
@@ -411,6 +435,14 @@ class ReportRefresh:
                 "again",
                 len(failed),
                 len(communities),
+                suffix,
+            )
+        if waiting:
+            logger.warning(
+                "%d outdated community reports of '%s' roll up a report that "
+                "failed: they stay outdated and the next run writes them "
+                "with it",
+                len(waiting),
                 suffix,
             )
         for report in reports:
@@ -436,6 +468,14 @@ class ReportRefresh:
             suffix,
         )
         return written
+
+
+def _level(community: Community) -> int:
+    """The community's level, as the detector orders its roll-up."""
+    try:
+        return int(community.level)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _in_suffix(entity: Entity, suffix: str) -> Entity:

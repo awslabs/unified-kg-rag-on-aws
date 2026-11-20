@@ -585,7 +585,10 @@ costs no call; otherwise one call per report, in the indexing stage's usage
 (and so the run's `processing.max_run_*` budget, which prices the report
 role for the indexing stage). A community left without a document-backed
 member loses its report. A report the run cannot write again (the model
-failed, a read failed, a report below it is missing) stays flagged and in
+failed, a read failed, a report below it is missing, or, with
+`enable_sub_community_rollup`, one below it got no report this run: written
+without that child's roll-up, the parent would never be asked again once
+the child is) stays flagged and in
 the build record (`IndexBuildRecord.outdated_reports`, a `communities`
 rebuild reason with remedy `next_run`), and the next run, a run with
 nothing to index included, tries again. A property test checks that the

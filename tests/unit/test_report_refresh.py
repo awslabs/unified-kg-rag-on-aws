@@ -304,6 +304,66 @@ def test_a_failed_answer_leaves_the_report_outdated() -> None:
     assert parent.summary == "stale"
 
 
+class _FailingChild(_Reports):
+    """The report model, failing c1's report (Acme alone) while ``fail``."""
+
+    def __init__(self, fail: bool) -> None:
+        super().__init__()
+        self.fail = fail
+
+    def __call__(self, system: str, human: str) -> str:
+        members = [n for n in _NAMES if re.search(rf"\b{n}\b", human)]
+        if self.fail and members == ["Acme"]:
+            self.inputs.append(human)
+            return "no report"
+        return super().__call__(system, human)
+
+
+@pytest.mark.parametrize("rolls_up", [True, False])
+def test_a_parent_waits_for_a_child_that_failed_and_converges(rolls_up: bool) -> None:
+    # RV1-B2: c1's report failed and p was written without its roll-up,
+    # unflagged; the next run wrote c1 alone, so p kept the stale input for
+    # good. p now waits, flagged, and the next run writes both as a run
+    # whose model never failed does.
+    def run(
+        model: _Reports, stores: tuple[Any, Any] | None = None, ids=_OUTDATED
+    ) -> tuple[Any, Any, Any]:
+        graph, vector = stores or _stores(config)
+        done = _refresh(config, graph, vector, model)("default", ids, {"acme"})
+        return done, graph, vector
+
+    config = _config()
+    # The parent's context is truncated: it rolls its children's reports up.
+    config.graph.community_detection.report_generation.max_report_context_tokens = 40
+    config.graph.community_detection.report_generation.enable_sub_community_rollup = (
+        rolls_up
+    )
+    failing = _FailingChild(fail=True)
+    first, graph, vector = run(failing)
+    if not rolls_up:
+        # Without the roll-up p's input reads no child report: it is written.
+        assert first.written == {community_report_id("p")}
+        assert first.kept == {community_report_id("c1")}
+        return
+    assert first.written == set()
+    assert first.kept == _OUTDATED
+    # p was not asked: its input would lack c1's report.
+    assert len(failing.inputs) == 1 and "Carrier" not in failing.inputs[0]
+    (parent,) = vector.read_community_reports([community_report_id("p")])
+    assert parent.summary == "stale"
+
+    recovered = _FailingChild(fail=False)
+    second, _, vector = run(recovered, (graph, vector), first.kept)
+    assert second.written == _OUTDATED and not second.kept
+
+    one_shot = _FailingChild(fail=False)
+    _, _, clean = run(one_shot)
+    assert sorted(recovered.inputs) == sorted(one_shot.inputs)
+    assert {
+        r.community_id: r.summary for r in vector.read_community_reports(_OUTDATED)
+    } == {r.community_id: r.summary for r in clean.read_community_reports(_OUTDATED)}
+
+
 def test_a_community_without_members_left_loses_its_report() -> None:
     config = _config()
     graph, vector = _stores(config)
