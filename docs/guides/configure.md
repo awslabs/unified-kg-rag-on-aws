@@ -102,7 +102,9 @@ value in the file would be (`true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`,
 in any case, for booleans; JSON for a list or mapping, e.g. `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`).
 An invalid value, or a `UKR__` variable that names no key, is a usage error
 (exit 2) naming the variable; `--allow-unknown-keys` turns the unknown name
-into a WARNING.
+into a WARNING. A deprecated variable is read into the key that replaced it,
+with a WARNING; set beside that key's own variable to a different value it
+is a usage error naming both, as an old and a new key in one file are.
 
 - `AWS_PROFILE` and `AWS_REGION` fill `aws.profile_name` and
   `aws.region_name` only when the file leaves them unset, so a shell that

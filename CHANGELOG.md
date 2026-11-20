@@ -391,7 +391,8 @@ Each name below warns and still works, and is removed in 0.5.0
   `model_server_max_attempts`, `graph_store_max_attempts`, `query_store_max_attempts`) load, from a file or a `UKR__`
   variable, into every profile each one governed in 0.3.0 (`max_attempts` into `retry.model` and
   `retry.ingestion_item`, `base_delay_seconds` into `model`, `model_server` and `graph_store`, ...), with a WARNING
-  naming them; one set beside a profile key to another value fails the load, naming both. `DEPRECATED_KEYS` maps a
+  naming them; one set beside a profile key to another value (a file key or a `UKR__` variable) fails the load,
+  naming both. `DEPRECATED_KEYS` maps a
   key to one replacement or several.
 - `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its
   new name, and is no longer in `__all__` (`unified_kg_rag.domain.models.config.TransientRetryConfig`, an internal
