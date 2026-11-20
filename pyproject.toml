@@ -107,7 +107,9 @@ run-console = "unified_kg_rag.application.cli.launch:run_console"
 unstructured = [
     # Not imported here: unstructured pulls in numba, which pulls in llvmlite.
     "llvmlite>=0.48.0",
-    "unstructured[md]>=0.24.1",
+    # 0.24.1 fixes URL-partitioning SSRF and unescaped markup; 0.27.37 is
+    # the first release that allows filelock 4 (the 4.2.1-fixed advisories).
+    "unstructured[md]>=0.27.37",
 ]
 # Optional: the ragas LLM-judge evaluator of `run-eval` (opt-in: add it to
 # evaluation.enabled_evaluators or `run-eval --evaluators`). The core package
@@ -208,15 +210,6 @@ local = [
 cross-encoder = [
     "sentence-transformers>=5.1.0",
 ]
-
-[tool.uv]
-# The optional `unstructured` extra caps filelock below 4 (every release up to
-# 0.27.x), which would hold every install on a filelock with the 4.2.1-fixed
-# advisories (GHSA-v4x8-3wr5-3wq8 and eight more). unstructured only takes a
-# blocking `FileLock(path, timeout=-1)` around its spaCy model install, an API
-# filelock 4.x keeps, so the cap is overridden. Drop this once unstructured
-# lifts the cap.
-override-dependencies = ["filelock>=4.2.1"]
 
 [project.urls]
 Repository = "https://github.com/awslabs/unified-kg-rag-on-aws"

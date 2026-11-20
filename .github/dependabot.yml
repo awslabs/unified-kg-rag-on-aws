@@ -31,8 +31,9 @@ updates:
       # Held below 0.4 deliberately: ragas imports a langchain-community module
       # that 0.4 removed, so raising this breaks the evaluator at import time.
       # Dependabot proposed exactly that bump and CI caught it; the constraint
-      # carries the reason in pyproject.toml. Revisit when the parser's document
-      # loaders move off langchain-community (it is in sunset as of 0.4).
+      # carries the reason in pyproject.toml. No module of the package imports
+      # langchain-community (the parser's loaders are its own); only ragas
+      # needs it, so revisit with the ragas pin.
       - dependency-name: "langchain-community"
         versions: [">=0.4.0"]
       # 3.8 added the `discard()` step and sends `Cardinality.single` writes

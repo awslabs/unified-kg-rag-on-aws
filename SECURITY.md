@@ -69,8 +69,8 @@ control access to it as to the corpus. See the logging section of the
 ## Dependency advisories
 
 Use the committed lockfile for reproducible installations. The optional
-`unstructured` extra requires a patched parser (`>=0.24.1`). Do not install an
-older parser.
+`unstructured` extra requires a patched parser (`>=0.27.37`; 0.24.1 fixed
+URL-partitioning SSRF and unescaped markup). Do not install an older parser.
 
 The following upstream advisories currently have no patched release identified
 in the GitHub Advisory Database and remain open for tracking:
@@ -85,19 +85,14 @@ in the GitHub Advisory Database and remain open for tracking:
   directory writable only by the trusted application identity and never load
   cache files from untrusted sources.
 
-The lockfile overrides one upstream version cap to reach a patched release:
-
-- filelock is forced to `>=4.2.1` (`[tool.uv] override-dependencies` in
-  `pyproject.toml`), which fixes the nine filelock advisories present in 3.29.4,
-  including [GHSA-v4x8-3wr5-3wq8](https://github.com/advisories/GHSA-v4x8-3wr5-3wq8)
-  (`ReadWriteLock`) and [GHSA-69hj-f68j-2879](https://github.com/advisories/GHSA-69hj-f68j-2879)
-  (`UnixFileLock`, which `datasets` and `huggingface-hub` use). The optional
-  `unstructured` extra caps filelock below 4 in every release up to 0.27.x,
-  but uses only a blocking `FileLock(path, timeout=-1)` around its spaCy model
-  install; filelock 4.0's breaking change is limited to `SoftReadWriteLock`.
-  The override applies to installs from this lockfile (`uv sync`); a plain
-  `pip install` with the `unstructured` extra still resolves filelock 3.x.
-  Remove the override once `unstructured` lifts the cap.
+The `unstructured` extra requires 0.27.37 or later, the first release that
+allows filelock 4: with it, `uv sync` and `pip install` alike resolve a
+filelock that fixes the nine advisories present in 3.29.4, including
+[GHSA-v4x8-3wr5-3wq8](https://github.com/advisories/GHSA-v4x8-3wr5-3wq8)
+(`ReadWriteLock`) and [GHSA-69hj-f68j-2879](https://github.com/advisories/GHSA-69hj-f68j-2879)
+(`UnixFileLock`, which `datasets` and `huggingface-hub` use; the lockfile holds
+4.2.5). Earlier releases capped filelock below 4, which the lockfile used to
+override.
 
 These usage restrictions do not patch the upstream packages. Reassess them when
 changing evaluation or caching behavior and update when fixes become available.

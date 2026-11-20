@@ -109,8 +109,8 @@ the command that needs it stops with exit `2`, naming it. The two above:
 **Markdown and HTML** are parsed without an extra: Markdown as written, HTML
 through the standard library's parser. The `unstructured` extra is the richer
 parser of both and reads them in place of the core readers when installed
-(`uv sync --inexact --extra unstructured`; it requires `unstructured>=0.24.1`, which
-fixes URL-partitioning SSRF and unescaped markup). **Word** (`.docx`) files
+(`uv sync --inexact --extra unstructured`; it requires `unstructured>=0.27.37`: 0.24.1
+fixed URL-partitioning SSRF and unescaped markup, 0.27.37 allows a patched filelock). **Word** (`.docx`) files
 need the `docx` extra (`uv sync --inexact --extra docx`); without it ingestion skips
 them with one warning naming the extra. See
 [source formats](../troubleshooting.md#which-source-formats-are-read).

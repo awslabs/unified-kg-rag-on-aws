@@ -274,6 +274,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - Every final `--output-format json` document has the run's `status` and `exit_code` (`completed` and `0` for a
   success): `run-rag` said `success`, `run-ingestion` `status`, and a successful `run-eval` neither. Additive: no key
   was removed.
+- The `unstructured` extra requires `unstructured>=0.27.37` (locked at 0.27.37, from 0.24.1), the first release that
+  allows filelock 4, so the lockfile no longer overrides its filelock cap and a `pip install` gets the patched
+  filelock too.
 
 ### Deprecated
 
