@@ -43,6 +43,7 @@ from rdflib.term import Node
 
 from unified_kg_rag.adapters.source_files.rdf_terms import OWL, RDF, RDFS, XSD, Text
 from unified_kg_rag.shared.exceptions import SchemaSourceError
+from unified_kg_rag.shared.utils import first_names
 
 from .ontology_model import (
     OntologyClass,
@@ -152,7 +153,7 @@ def ontology_model(graph: Graph, prefixes: dict[str, str]) -> OntologyModel:
         if not bad:
             raise
         raise SchemaSourceError(
-            f"Ontology IRIs with whitespace: {', '.join(bad[:5])}; an IRI has "
+            f"Ontology IRIs with whitespace: {first_names(bad)}; an IRI has "
             "none (write %20, or fix the rdf:about / @id)"
         ) from e
 

@@ -120,7 +120,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import with_own_text
 from unified_kg_rag.shared.logging import log_error
-from unified_kg_rag.shared.utils import error_name, first_names
+from unified_kg_rag.shared.utils import ERRORS_SHOWN, error_name, first_names
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
@@ -503,7 +503,7 @@ class IncrementalIndexer:
                 f"{len(too_large)} documents have more text units than one "
                 "doc-status registry record holds (DynamoDB: 400 KB, roughly "
                 "10,000); split them into smaller files. Nothing was written "
-                "for this run's delta: " + ", ".join(too_large[:10])
+                "for this run's delta: " + first_names(too_large)
             )
         self._put(
             [
@@ -614,10 +614,8 @@ class IncrementalIndexer:
                     key,
                     suffix,
                     stats.failed_items,
-                    "; ".join(stats.errors[:2]),
-                    ", ".join(stats.failed_ids[:10])
-                    + (", ..." if len(stats.failed_ids) > 10 else "")
-                    or "not reported",
+                    first_names(stats.errors, ERRORS_SHOWN, separator="; "),
+                    first_names(stats.failed_ids) or "not reported",
                 )
         if failed:
             logger.warning(
@@ -1107,7 +1105,7 @@ class IncrementalIndexer:
             "again): %s",
             len(owners),
             len(records),
-            ", ".join(names[:10]) + (", ..." if len(names) > 10 else ""),
+            first_names(names),
         )
         check_write_fence()
         self._put(
@@ -1347,7 +1345,7 @@ class IncrementalIndexer:
                 "own): %s",
                 len(failed_doc_ids),
                 len(set(failed_doc_ids) & set(counted_failed_doc_ids)),
-                ", ".join(files[:10]) + (", ..." if len(files) > 10 else ""),
+                first_names(files),
             )
         # The records as stored before this run's PENDING records (read by
         # write_ahead); the others in one batched read.
@@ -1449,9 +1447,9 @@ class IncrementalIndexer:
                 "or quarantines one once its deaths reach "
                 "indexing.max_document_attempts: %s",
                 len(unproductive),
-                ", ".join(
+                first_names(
                     f"{record.file_path or record.doc_id} ({record.attempt_count})"
-                    for record in unproductive[:10]
+                    for record in unproductive
                 ),
             )
 
@@ -1852,7 +1850,7 @@ def _quarantined_on_reset(
             "indexing.max_document_attempts to retry them) and keeps their "
             "records: %s",
             len(quarantined),
-            ", ".join(sorted(quarantined.values())[:10]),
+            first_names(sorted(quarantined.values())),
         )
     return quarantined
 
@@ -1982,8 +1980,7 @@ def _refuse_seeds_over_documents(
     raise PipelineStageError(
         f"No source document reached this run, only its seed graphs, but the "
         f"doc-status registry holds {len(held)} documents of source scope "
-        f"{source_scope!r} ({', '.join(held[:5])}"
-        f"{', ...' if len(held) > 5 else ''}): "
+        f"{source_scope!r} ({first_names(held)}): "
         "indexing the seeds alone would delete them. Check that the corpus is "
         "in place (a volume not mounted, an S3 sync that copied nothing). To "
         "delete those documents, retire the scope from a run of another "
@@ -3105,8 +3102,7 @@ def _warn_claims_missing(retried: list[str], given_up: list[str]) -> None:
     run retries those of ``retried``, none retries those of ``given_up``."""
 
     def files(names: list[str]) -> str:
-        names = sorted(names)
-        return ", ".join(names[:10]) + (", ..." if len(names) > 10 else "")
+        return first_names(sorted(names))
 
     if retried:
         logger.warning(
@@ -3169,10 +3165,9 @@ def warn_retrying(records: Iterable[DocStatusRecord]) -> list[str]:
             "fix the cause to index them (consecutive failed runs in "
             "parentheses): %s",
             len(retrying),
-            ", ".join(
-                f"{r.file_path or r.doc_id} ({r.retry_count})" for r in retrying[:10]
-            )
-            + (", ..." if len(retrying) > 10 else ""),
+            first_names(
+                f"{r.file_path or r.doc_id} ({r.retry_count})" for r in retrying
+            ),
         )
     return [r.doc_id for r in retrying]
 
@@ -3265,10 +3260,10 @@ def record_item_failures(
         "extraction settings change): %s",
         len(records),
         max_failures,
-        ", ".join(
+        first_names(
             f"{record.file_path or record.doc_id} "
             f"({record.failure_count}/{max_failures})"
-            for record in records[:10]
+            for record in records
         ),
     )
     return records
@@ -3505,7 +3500,7 @@ def index_delta(
             record.file_path or record.doc_id
             for record in incremental.doc_status.get_many(doc_ids).values()
         )
-        named = ", ".join(removed[:10]) + (", ..." if len(removed) > 10 else "")
+        named = first_names(removed)
         raise PipelineStageError(
             "Removing stale artifacts of changed, deleted or quarantined "
             "documents failed; not committing the delta so the registry keeps "

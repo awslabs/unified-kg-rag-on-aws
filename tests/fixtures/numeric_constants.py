@@ -277,6 +277,7 @@ ALLOWED: dict[str, str] = {
         "application/cli/console/jobs.py:WARNING_LINES",
         "application/ingestion/incremental.py:_AUDIT_NAMES",
         "shared/utils/common.py:NAMES_SHOWN",
+        "shared/utils/common.py:ERRORS_SHOWN",
         "application/cli/run_evaluation.py:_METRIC_COLUMN_MAX",
         "application/cli/run_rag_chain.py:_HITS_SHOWN",
         "application/cli/run_rag_chain.py:_FILES_SHOWN",

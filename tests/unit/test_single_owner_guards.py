@@ -715,10 +715,48 @@ def _rest_counted_by_hand(source: Source) -> Iterator[tuple[int, str]]:
                 yield node.lineno, ast.unparse(node)[:80]
 
 
+# The separators a list of names or errors is written with.
+_LIST_SEPARATORS = frozenset({", ", "; "})
+
+
+def _head(node: ast.AST) -> bool:
+    """``x[:k]`` (``k`` not negative): the first ``k`` items of a list."""
+    return (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.slice, ast.Slice)
+        and node.slice.lower is None
+        and node.slice.upper is not None
+        and not isinstance(node.slice.upper, ast.UnaryOp)
+    )
+
+
+def _head_joined_by_hand(source: Source) -> Iterator[tuple[int, str]]:
+    """A list's first ``k`` items joined by hand, whatever follows them
+    (``", ..."``, nothing): ``", ".join(x[:k])``, or of a generator over
+    ``x[:k]``."""
+    for node in ast.walk(source.tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "join"
+            and isinstance(node.func.value, ast.Constant)
+            and node.func.value.value in _LIST_SEPARATORS
+        ):
+            continue
+        for arg in node.args:
+            joined = (
+                arg.generators[0].iter if isinstance(arg, ast.GeneratorExp) else arg
+            )
+            if _head(joined):
+                yield node.lineno, ast.unparse(node)[:80]
+
+
 # A hand-written "the first N, and N more" of a list of names: the count of
-# the rest in an f-string, or a bare "and others".
+# the rest in an f-string, a bare "and others", or the first N joined by hand.
 _NAME_TRUNCATION = any_of(
-    _rest_counted_by_hand, lines_matching(re.compile(r"' and others'"))
+    _rest_counted_by_hand,
+    lines_matching(re.compile(r"' and others'")),
+    _head_joined_by_hand,
 )
 
 GUARDS = [
@@ -1080,9 +1118,15 @@ GUARDS = [
                 "how many more documents it cites: a count, no list of names",
             ),
             "domain/retrieval/graph_query.py::_listing": (
-                1,
+                2,
                 "the known names a refused plan may use, in the error the "
                 "planner's repair prompt shows the model: model-visible text",
+            ),
+            "adapters/storage/opensearch_indexer.py::"
+            "OpenSearchIndexer._prepare_documents": (
+                1,
+                "pending: the vector indexer's rework (ARCH CD-2) owns this "
+                "file; its 'e.g.' list moves to first_names with it",
             ),
         },
     ),
@@ -1202,6 +1246,13 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         ),
         (_NAME_TRUNCATION, "m = f\"{' and others' if len(x) > 5 else ''}\"\n", 1),
         (_NAME_TRUNCATION, 'm = f"{n} more"\nk = len(x) - 1\n', []),
+        # The first N joined by hand, with or without a suffix (rv53 CD-10).
+        (_NAME_TRUNCATION, 'm = ", ".join(x[:10]) + ", ..."\n', 1),
+        (_NAME_TRUNCATION, 'm = "; ".join(e[:3])\n', 1),
+        (_NAME_TRUNCATION, 'm = ", ".join(f"{r}" for r in rs[:10])\n', 1),
+        # A path or a sentence, not a list: another separator, or a tail cut.
+        (_NAME_TRUNCATION, 'k = ".".join(parts[:i])\n', []),
+        (_NAME_TRUNCATION, 'm = ", ".join(sections[:-1])\n', []),
         # The count bound first, then written (rv54).
         (
             _NAME_TRUNCATION,

@@ -186,6 +186,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import classify, operator_error_text
 from unified_kg_rag.shared.genai import ERROR_TYPE
 from unified_kg_rag.shared.logging import log_error, log_failure
+from unified_kg_rag.shared.utils import first_names
 from unified_kg_rag.shared.utils.scripts import LATIN_CHARS_PER_TOKEN
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -265,14 +266,11 @@ def _build_knowledge_graph(context: PipelineContext) -> Any:
 
 
 def _failed_files_note(failed_files: Sequence[str]) -> str:
-    """`` It failed on N files: a, b ...`` (the first ten), or nothing."""
+    """`` It failed on N files: a, b and N more`` (``first_names``), or
+    nothing."""
     if not failed_files:
         return ""
-    return (
-        f" It failed on {len(failed_files)} files: "
-        + ", ".join(failed_files[:10])
-        + (" ..." if len(failed_files) > 10 else "")
-    )
+    return f" It failed on {len(failed_files)} files: {first_names(failed_files)}"
 
 
 class PipelineStage(ABC):
@@ -1279,7 +1277,7 @@ class DocumentParsingStage(_RegistryStage):
                 "the source directory to ingest them",
                 len(outside),
                 self.source_directory,
-                ", ".join(sorted(outside)[:5]) + (", ..." if len(outside) > 5 else ""),
+                first_names(sorted(outside)),
             )
         return sorted(files), sorted(skipped_files)
 
