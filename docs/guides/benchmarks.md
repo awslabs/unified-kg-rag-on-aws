@@ -48,7 +48,7 @@ anything is downloaded.
 # 1. 100 questions (about 1,900 paragraphs), sampled with seed 0.
 prepare-benchmark musique --output-directory bench/musique --limit 100
 
-# 2. Ingest the paragraphs under their own suffix.
+# 2. Ingest the paragraphs under their own namespace.
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
 # 3. Paired comparison of GraphRAG and LightRAG strategies, EM / F1 on the short answer span.

@@ -2012,7 +2012,7 @@ class EvaluationRunner:
                     "name": arm["name"],
                     "overlay": arm["overlay"],
                     "overlay_sha256": overlay_sha256(arm),
-                    "suffix": arm.get("namespace"),
+                    "namespace": arm.get("namespace"),
                     # The base configuration unchanged: its deltas are the
                     # noise floor, not a finding (left out of Holm and gates).
                     "aa": self._aa_by_arm.get(arm["name"], False),

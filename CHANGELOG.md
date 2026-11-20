@@ -126,8 +126,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - One name for the namespace on every surface: `--namespace` on every CLI that reads or writes one,
   `RAGInput.namespace`, `processing.document_parsing.namespace`, `run-eval --arm ...,namespace=`,
   `describe_namespace(config, namespace)`, `export_graph(namespace=)` and the console's requests (`namespace`).
-  Messages, `--help` and `run-describe` say "namespace"; a `run-eval` manifest records `cli_args.namespace` (a saved
-  run's `suffix` still pools). The old names are *Deprecated*.
+  Messages, `--help` and `run-describe` say "namespace"; a `run-eval` manifest records `cli_args.namespace` and an
+  arm run's `arm.namespace` (a saved run's `suffix` still pools). The old names are *Deprecated*.
 - One owner of model prices: `models.prices` (`domain/pricing.py`) prices every USD figure, the `run-eval` comparison,
   the console's answers and dashboard alike. A price keyed by the bare model id, or by one inference profile's id,
   prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads

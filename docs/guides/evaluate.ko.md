@@ -328,7 +328,7 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
 - 비교한 실행들의 LLM 판정 모델, 판정 추론 강도, ragas 임베딩 모델이 다르면(`models.embedding`을
   바꾼 비교군, 다른 호출의 `--baseline-results`나 `--from-results` 실행) 판정 지표의 차이에
   판정 모델의 차이도 섞인다고 경고합니다.
-- 실행 매니페스트는 비교군 실행마다 `arm`(이름, 오버레이 경로와 sha256, suffix)과
+- 실행 매니페스트는 비교군 실행마다 `arm`(이름, 오버레이 경로와 sha256, 네임스페이스. 이번 릴리스 전에 저장한 실행은 `suffix`라는 이름으로 기록)과
   `compared_runs`를 기록하므로 `--from-results`가 같은 짝을 다시 만듭니다. 실행마다 그
   전략의 답변이 인용하는지(`search.citations`를 전략별로 판정한 값, 매니페스트의
   `citations.strategies`)가 다르면 답변 프롬프트도 다르다고 경고합니다. `global`과 `drift`는

@@ -136,7 +136,7 @@ chunks hold (`kg_describe_schema` lists them); another key is refused with
 ## Scope and limits
 
 The namespace is fixed when the server starts, on the server's side, as
-[a tenant's suffix must be](../concepts/scopes-and-namespaces.md#not-an-access-control-boundary).
+[a tenant's namespace must be](../concepts/scopes-and-namespaces.md#not-an-access-control-boundary).
 A tool call can read another one only if `mcp.allowed_namespaces` lists it
 (the tools then take a `namespace` argument; without the list they have
 none), so list only namespaces every caller may read; an `index_not_found`

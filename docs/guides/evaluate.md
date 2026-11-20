@@ -400,7 +400,7 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   `models.embedding`, `--baseline-results` or `--from-results` runs of
   other invocations) warns that its judged deltas measure the judges too.
 - The run manifest records each arm run's `arm` (name, overlay path and
-  sha256, suffix) and `compared_runs`, so `--from-results` rebuilds the
+  sha256, namespace; a run saved before this release names it `suffix`) and `compared_runs`, so `--from-results` rebuilds the
   same pairs. A comparison whose runs differ in whether their answers cite
   (`search.citations`, resolved for each run's strategy, which the manifest
   records as `citations.strategies`) warns that the answer prompt differs
