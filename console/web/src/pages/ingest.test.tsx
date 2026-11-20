@@ -60,6 +60,16 @@ describe("rebuild due", () => {
     expect(extraction).toContain("The next run applies it");
   });
 
+  it("names reports kept after a deletion apart from re-clustering (X2)", async () => {
+    serve({ ...held, rebuild: [{ kind: "outdated_reports", remedy: "next_run", detail: "2 community reports were kept", settings: ["community_reports"] }] });
+    page("en");
+    await screen.findByText("default is due for a rebuild");
+    const [item] = screen.getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(item).toContain("could not be written again: they may still state the removed text.");
+    expect(item).toContain("The next run applies it");
+    expect(item).not.toContain("far from the last full clustering");
+  });
+
   it("says it in the page's language", async () => {
     serve(held);
     page("ko");

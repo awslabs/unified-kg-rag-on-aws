@@ -242,6 +242,7 @@
   "ingest.narrowingConfirm": "从命名空间中移除 {{methodologies}}",
   "ingest.rebuildTitle": "{{namespace}} 需要重建",
   "ingest.rebuild.communities": "多次增量运行后，其社区已与上次完整聚类相差很大。",
+  "ingest.rebuild.outdated_reports": "部分社区报告依据的文档此后已被删除或修改，且未能重新撰写：它们可能仍包含已删除的内容。",
   "ingest.rebuild.answer_settings": "其社区报告或描述摘要是按与此配置不同的设置写成的，或根本没有写成。",
   "ingest.rebuild.extraction_settings": "上次运行后抽取设置已更改。",
   "ingest.rebuild.methodologies": "此配置会构建命名空间中没有的内容。",

@@ -233,7 +233,8 @@ def test_reports_kept_after_a_deletion_are_a_reason_whatever_the_drift_setting()
     (reason,) = rebuild_reasons(
         _record(config, outdated_reports=["report-1", "report-2"]), config
     )
-    assert reason.kind is RebuildReasonKind.COMMUNITIES
+    # A kind of its own: the console names it apart from re-clustering.
+    assert reason.kind is RebuildReasonKind.OUTDATED_REPORTS
     # The next incremental run writes them again (report_refresh).
     assert reason.remedy is RebuildRemedy.NEXT_RUN
     assert reason.settings == [IndexArtifact.COMMUNITY_REPORTS.value]

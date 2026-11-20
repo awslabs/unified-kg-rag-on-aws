@@ -183,7 +183,7 @@ re-clustering: 24 incremental runs since the last full clustering
 | `kind` | 조건 | `remedy` |
 |---|---|---|
 | `communities` | 커뮤니티 카운터가 `indexing.community_compaction` 임곗값을 넘음(위의 WARNING) | `reset` |
-| `communities`(`settings: [community_reports]`) | 작성 근거인 텍스트가 제거된 뒤에도 남았는데 실행이 다시 쓰지 못한 리포트를 빌드 레코드가 나열함(`outdated_reports`, `on_drift_recommendation`과 무관) | `next_run`: 리포트마다 모델 호출 하나 |
+| `outdated_reports` | 작성 근거인 텍스트가 제거된 뒤에도 남았는데 실행이 다시 쓰지 못한 리포트를 빌드 레코드가 나열함(`outdated_reports`, `on_drift_recommendation`과 무관) | `next_run`: 리포트마다 모델 호출 하나 |
 | `answer_settings` | 마지막 전체 빌드가 쓴 커뮤니티 리포트나 설명 요약이 구성과 다른 설정(모델, 프롬프트, 언어, 요약 켜짐)으로 만들어짐. 증분 실행은 델타의 것만 씀 | `reset`: 리포트나 요약마다 모델 호출 하나 |
 | `extraction_settings` | 마지막 실행 이후 추출 설정이 바뀜(바뀐 경로는 `settings`) | `next_run`: 모든 문서를 다시 추출 |
 | `methodologies` | 구성이 네임스페이스에 없는 코퍼스 전체 산출물을 빌드함 | `next_run`: 저장된 추출 결과로 네임스페이스를 다시 빌드 |

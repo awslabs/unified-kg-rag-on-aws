@@ -370,8 +370,8 @@ Bugs present in 0.3.0.
   detector reads them, one model call each in the indexing stage's usage and the run's budget (none when the input
   is unchanged: the answer is kept in the extraction store). One it cannot write again stays
   flagged `outdated` in the stores (a query reads it in the report's source metadata, and on a global key point drawn
-  from it), listed in the build record (`outdated_reports`) and named by every reader of the record as a
-  `communities` rebuild reason (`settings: [community_reports]`, remedy `next_run`) whatever
+  from it), listed in the build record (`outdated_reports`) and named by every reader of the record as an
+  `outdated_reports` rebuild reason (remedy `next_run`; the console words it apart from re-clustering) whatever
   `on_drift_recommendation` says, until a later run writes it.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a

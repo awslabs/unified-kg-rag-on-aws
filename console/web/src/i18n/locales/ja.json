@@ -242,6 +242,7 @@
   "ingest.narrowingConfirm": "名前空間から {{methodologies}} を削除する",
   "ingest.rebuildTitle": "{{namespace}} は再構築が必要です",
   "ingest.rebuild.communities": "増分実行を重ねて、コミュニティが最後の全体クラスタリングから大きく変わりました。",
+  "ingest.rebuild.outdated_reports": "一部のコミュニティレポートは、その後削除または変更された文書から書かれており、書き直せませんでした。削除された内容をまだ述べている可能性があります。",
   "ingest.rebuild.answer_settings": "コミュニティレポートまたは説明の要約が、この構成とは別の設定で作成されたか、作成されていません。",
   "ingest.rebuild.extraction_settings": "前回の実行後に抽出設定が変わりました。",
   "ingest.rebuild.methodologies": "この構成は、名前空間にないものを作成します。",

@@ -258,6 +258,7 @@
   "ingest.narrowingConfirm": "Remover {{methodologies}} do namespace",
   "ingest.rebuildTitle": "{{namespace}} precisa ser reconstruído",
   "ingest.rebuild.communities": "As execuções incrementais afastaram muito suas comunidades do último agrupamento completo.",
+  "ingest.rebuild.outdated_reports": "Alguns de seus relatórios de comunidade foram escritos a partir de documentos depois excluídos ou alterados e não puderam ser reescritos: podem ainda afirmar o texto removido.",
   "ingest.rebuild.answer_settings": "Seus relatórios de comunidade ou resumos de descrições foram escritos com configurações diferentes das desta configuração, ou não foram escritos.",
   "ingest.rebuild.extraction_settings": "As configurações de extração mudaram desde a última execução.",
   "ingest.rebuild.methodologies": "Esta configuração constrói o que o namespace não contém.",
