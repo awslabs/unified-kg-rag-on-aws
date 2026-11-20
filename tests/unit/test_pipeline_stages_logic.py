@@ -659,9 +659,10 @@ def test_new_reports_failing_behind_reused_ones_fail_the_stage(mocker) -> None:
 
 def test_a_small_run_passes_the_failures_a_large_one_would_explain(mocker) -> None:
     # The ARCH baseline: a 5-document delta failed with 4 of 11 reports cut
-    # off (36%) where the full build of the corpus passed with 6 of 59, at the
-    # same chance per report; 4 of 11 at 20% is 16% likely and passes now.
-    # The plain share failed it; 6 of 11 (1% likely) still fails.
+    # off (36%) where the full build of the corpus passed with 6 of 59. The
+    # plain share failed it; at a tolerated chance of 20% per report 4 of 11
+    # is 16% likely and passes, 6 of 11 (1% likely) still fails. (The two
+    # runs themselves differ: Fisher's exact test gives p = 0.044.)
     from unified_kg_rag.domain.ingestion.failure_rate import failure_rate_exceeded
 
     assert not failure_rate_exceeded(4, 11, 0.2)
