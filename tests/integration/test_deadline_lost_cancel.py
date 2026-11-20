@@ -10,7 +10,10 @@ returns a connected stream to a task cancelled while it connected, and on
 3.11 ``asyncio.wait_for`` (langchain-openai's chunk read) returns the
 result its awaitable got in the same turn as the cancellation. The query
 then went on until the model client's read timeout. Each test forces the
-loss at one place, over real loopback HTTP: the query must fail with the
+loss at one place, over real loopback HTTP, and cuts the query there on cue
+(its limit's timer expired through its scope, once the connect or the first
+chunk is held), never by the wall clock: a slow runner's query does not
+reach that place before its limit. The query must fail with the
 timeout its deadline scope made, at the next stop point (no request written
 after a lost connect, no chunk read after a lost chunk read), leave no
 connection held and no loop error, and the next query must answer.
@@ -43,11 +46,13 @@ from unified_kg_rag.shared.exceptions import QueryTimeoutError
 
 pytestmark = [pytest.mark.integration]
 
-# The limit that cuts each query off (the deadline, or the window).
-LIMIT = 1.0
+# The limit each query is cut off at (the deadline, or the window): expired
+# on cue, so only a bound past the hang backstop, which it never reaches on
+# its own; under the deadline, below the model clients' read timeout (30 s).
+LIMIT = 25.0
 # A hang backstop far below what else ends a query whose cut was lost: the
 # model clients' read timeout (30 s under the deadline) and the stall.
-HANG = 10.0
+HANG = 15.0
 # Seconds a stalled answer waits: far past every bound here.
 STALL = 60.0
 
@@ -59,14 +64,24 @@ def wire() -> Iterator[tuple[int, stream_models.StreamModels]]:
     server.shutdown()
 
 
-def _timer() -> asyncio.Timeout | None:
-    """The timer of the deadline scope of the query running here."""
+def _cue(window: bool) -> asyncio.Timeout | None:
+    """Expire the timer of the query running here through its deadline
+    scope (which sets the query's stop with it, as when it fires), and
+    return it: the cut, cancelling the task next. ``None`` outside a scope
+    still running, and under the window (``window``) outside the first
+    chunk's wait (``first_chunk_within``)."""
     scope = rag_chain._DEADLINE_SCOPE.get()
-    return None if scope is None else scope._timeout
+    timer = None if scope is None else scope._timeout
+    if scope is None or timer is None or timer.expired():
+        return None
+    if window and scope._first_chunk_seconds is None:
+        return None
+    scope._reschedule(asyncio.get_running_loop().time())
+    return timer
 
 
 async def _losing(step: Any) -> Any:
-    """Run ``step()`` once the task is cancelled (the query's timer), losing
+    """Run ``step()`` once the task is cancelled (the cut, :func:`_cue`), losing
     the cancellation: the step's result is returned as if nothing was
     cancelled (anyio's connect, 3.11's ``wait_for``)."""
     cut = asyncio.Event()
@@ -83,17 +98,18 @@ async def _losing(step: Any) -> Any:
         return await inner
 
 
-def _connect_loses_the_cut(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
-    """httpcore's connect waits for the query's timer to cancel it, then
-    connects, losing the cancellation. Returns one entry per connect that lost it."""
+def _connect_loses_the_cut(monkeypatch: pytest.MonkeyPatch, window: bool) -> list[bool]:
+    """httpcore's first connect under the query's limit cuts the query
+    (:func:`_cue`), waits for the cancellation, then connects, losing it.
+    Returns one entry per connect that lost it."""
     from httpcore._backends.anyio import AnyIOBackend
 
     connect = AnyIOBackend.connect_tcp
     lost: list[bool] = []
 
     async def losing(backend: Any, *args: Any, **kwargs: Any) -> Any:
-        timer = _timer()
-        if timer is None or timer.expired():
+        timer = None if lost else _cue(window)
+        if timer is None:
             return await connect(backend, *args, **kwargs)
         stream = await _losing(lambda: connect(backend, *args, **kwargs))
         lost.append(timer.expired())
@@ -104,21 +120,21 @@ def _connect_loses_the_cut(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
 
 
 def _read_loses_the_cut(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, window: bool
 ) -> tuple[list[bool], list[bool]]:
-    """The answer stream's first chunk reaches the stream's reader once the
-    query's timer expired, the cancellation lost on its way. Returns the
-    reads that lost it, and the chunks asked for after that one."""
+    """The answer stream's first chunk, held, cuts the query (:func:`_cue`,
+    within the window under it), then reaches the stream's reader, the
+    cancellation lost on its way. Returns the reads that lost it, and the
+    chunks asked for after that one."""
     carry = chain_factory.ReasoningStripper.atransform
     lost: list[bool] = []
     asked: list[bool] = []
 
     async def losing(self: Any, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        timer = _timer()
         async for chunk in carry(self, input, config, **kwargs):
             if lost:
                 asked.append(True)
-            elif timer is not None:
+            elif (timer := _cue(window)) is not None:
                 await _losing(lambda: asyncio.sleep(0))
                 lost.append(timer.expired())
             yield chunk
@@ -171,8 +187,10 @@ async def _warm(chain: Any) -> None:
 
 
 def _cut_at(chain: Any, limit: str) -> None:
+    # Under the window the deadline is a backstop past it, so the window
+    # applies however long the steps before the answer take.
     chain.config.search.query_timeout_seconds = (
-        30 if limit == "first-chunk window" else LIMIT
+        WARM if limit == "first-chunk window" else LIMIT
     )
 
 
@@ -205,7 +223,7 @@ async def test_a_cut_the_connect_loses_ends_the_query_before_its_request(
     errors = _loop_errors()
     try:
         with pytest.MonkeyPatch.context() as cut:
-            lost = _connect_loses_the_cut(cut)
+            lost = _connect_loses_the_cut(cut, limit == "first-chunk window")
             made = _made(cut)
             received = models.received
             async with _generators_kept():
@@ -245,7 +263,7 @@ async def test_a_cut_a_chunk_read_loses_ends_the_query_at_that_chunk(
     errors = _loop_errors()
     try:
         with pytest.MonkeyPatch.context() as cut:
-            lost, asked = _read_loses_the_cut(cut)
+            lost, asked = _read_loses_the_cut(cut, limit == "first-chunk window")
             made = _made(cut)
             async with _generators_kept():
                 await _cut_off(chain, "events", made)
