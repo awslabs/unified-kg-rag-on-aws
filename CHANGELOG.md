@@ -314,6 +314,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - The lists of names and errors in log lines and messages (ingestion, incremental indexing, seed graphs, ontologies,
   saved evaluation runs, model output) all read `a, b and N more`: the first 10 names or 3 errors. They ended in `...`
   or in nothing, and showed 2 to 10 items.
+- One layout and one node cap for a drawn graph: `run-visualization`'s interactive page lays out each connected
+  component on its own, packed in rows largest first, as the console's Graph page did, and the Graph page draws
+  `graph.visualization.interactive.max_nodes` nodes (it drew 600 whatever that said). Its default is 600 (from 2000):
+  laying out 600 nodes takes about 1.4 s, 2000 about 15 s. Set it to 2000 for the former interactive page.
 
 ### Deprecated
 
@@ -343,6 +347,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 ### Fixed
 Bugs present in 0.3.0.
 
+- The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
+  out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items
   only, so hubs cited by hundreds of text units made one request of tens of thousands of steps. A Gremlin Server at
   its default thread stack answered `StackOverflowError`, retried 4 times, then wrote each item alone (300 documents:

@@ -236,11 +236,17 @@ class InteractiveGraphSettings(ConfigSection):
         json_schema_extra=evidence("operational"),
     )
     max_nodes: int | None = Field(
-        default=2000,
+        default=600,
         ge=0,
-        description="Keep the top-N nodes by degree; 0 or null disables the cap "
-        "(a browser cannot lay out tens of thousands of nodes).",
-        json_schema_extra=evidence("operational"),
+        description="Nodes a drawn graph keeps, the top-N by degree: this "
+        "page's and the console's Graph page's (the rest are listed and found "
+        "by search there); 0 or null disables the cap. The layout is "
+        "quadratic in them: 600 take about 1.4 s, 2000 about 15 s.",
+        json_schema_extra=evidence(
+            "operational",
+            "spring layout of a scale-free graph on one core: 600 nodes 1.4 s, "
+            "1000 3.3 s, 2000 15.2 s",
+        ),
     )
 
 

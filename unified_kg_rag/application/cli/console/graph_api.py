@@ -36,6 +36,7 @@ from unified_kg_rag.application.storage.visualization_export import (
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
     displayed_graph,
+    spring_layout,
 )
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -52,9 +53,6 @@ logger = get_logger(__name__)
 
 # The node attributes the page reads; the rest stay on the server.
 MAX_DESCRIPTION = 1200
-# Nodes the page lays out and draws at once (the rest are listed and found
-# by search); the layout is quadratic in the drawn nodes.
-MAX_DRAWN_NODES = 600
 MAX_FILE_BYTES = 200 * 1024 * 1024
 # Read graphs kept (the newest few files the page switches between).
 CACHED_GRAPHS = 4
@@ -312,15 +310,17 @@ class LoadedGraph:
     edges: list[dict[str, Any]]
 
 
-_cache: OrderedDict[tuple[str, int, int], LoadedGraph] = OrderedDict()
+_cache: OrderedDict[tuple[str, int, int, int | None], LoadedGraph] = OrderedDict()
 _cache_lock = threading.Lock()
 
 
-def cached_graph(path: Path) -> LoadedGraph:
+def cached_graph(path: Path, max_nodes: int | None) -> LoadedGraph:
     """The graph of an exported file, read again only when the file changed
-    (its modification time or size). Its ``page`` is what the page draws:
-    the drawn entities (``nodes``, at most :data:`MAX_DRAWN_NODES`, with
-    their ``layout``) and the edges between them in full, every other
+    (its modification time or size) or ``max_nodes`` did. Its ``page`` is
+    what the page draws: the drawn entities (``nodes``, the best-connected
+    ``max_nodes``, ``graph.visualization.interactive.max_nodes``; None or 0
+    draws every node, with their ``layout``) and the edges between them in
+    full, every other
     entity as ``{id, name, degree}`` (``others``, most connected first), and
     the communities and analysis of the whole graph.
 
@@ -329,12 +329,12 @@ def cached_graph(path: Path) -> LoadedGraph:
             an export.
     """
     stat = path.stat()
-    key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+    key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size, max_nodes)
     with _cache_lock:
         if key in _cache:
             _cache.move_to_end(key)
             return _cache[key]
-    loaded = _read_graph(path)
+    loaded = _read_graph(path, max_nodes)
     with _cache_lock:
         _cache[key] = loaded
         while len(_cache) > CACHED_GRAPHS:
@@ -342,11 +342,12 @@ def cached_graph(path: Path) -> LoadedGraph:
     return loaded
 
 
-def entity(path: Path, entity_id: str) -> dict[str, Any] | None:
-    """An entity of the graph of ``path`` (drawn or not), every edge that
-    touches it and the names of the entities at their other ends; None for
-    an id the graph lacks."""
-    loaded = cached_graph(path)
+def entity(path: Path, entity_id: str, max_nodes: int | None) -> dict[str, Any] | None:
+    """An entity of the graph of ``path`` (drawn or not, of the page
+    :func:`cached_graph` draws with ``max_nodes``), every edge that touches
+    it and the names of the entities at their other ends; None for an id
+    the graph lacks."""
+    loaded = cached_graph(path, max_nodes)
     node = loaded.nodes.get(entity_id)
     if node is None:
         return None
@@ -363,7 +364,7 @@ def entity(path: Path, entity_id: str) -> dict[str, Any] | None:
     }
 
 
-def _read_graph(path: Path) -> LoadedGraph:
+def _read_graph(path: Path, max_nodes: int | None) -> LoadedGraph:
     if path.stat().st_size > MAX_FILE_BYTES:
         raise GraphDataError(f"'{path.name}' is over {MAX_FILE_BYTES // 2**20} MiB")
     try:
@@ -424,13 +425,14 @@ def _read_graph(path: Path) -> LoadedGraph:
     degrees = dict(graph.degree())
     for node in nodes:
         node["degree"] = degrees.get(node["id"], 0)
-    # The page draws the best-connected MAX_DRAWN_NODES, at an exported
-    # layout's positions when it has them (an export may lay out more).
-    drawn = displayed_graph(graph, MAX_DRAWN_NODES)
+    # The page draws the best-connected max_nodes, at an exported layout's
+    # positions when it has them (an export may lay out more), else at the
+    # layout run-visualization draws them at.
+    drawn = displayed_graph(graph, max_nodes)
     exported = data.get("layout") or {}
     layout = {k: v for k, v in exported.items() if k in drawn}
-    if not layout and drawn.number_of_nodes():
-        layout = packed_layout(drawn)
+    if not layout:
+        layout = spring_layout(drawn, None)
     by_id = {n["id"]: n for n in nodes}
     communities = _communities(data.get("communities"), by_id)
     page = {
@@ -447,35 +449,6 @@ def _read_graph(path: Path) -> LoadedGraph:
     }
     encoded = json.dumps(page, ensure_ascii=False, separators=(",", ":")).encode()
     return LoadedGraph(page=page, encoded=encoded, nodes=by_id, edges=edges)
-
-
-def packed_layout(graph: nx.Graph) -> dict[str, list[float]]:
-    """A seeded spring layout of each connected component, the components
-    packed in rows largest first, so small islands do not push the main
-    component into a corner (one spring layout of a disconnected graph
-    flings its islands far apart)."""
-    components = sorted(nx.connected_components(graph), key=len, reverse=True)
-    positions: dict[str, list[float]] = {}
-    x = y = row_height = 0.0
-    width = max(1.0, len(components[0]) ** 0.5 * 2.2) if components else 1.0
-    for component in components:
-        size = len(component) ** 0.5
-        if x > 0 and x + size > width:
-            x, y = 0.0, y + row_height + 0.4
-            row_height = 0.0
-        if len(component) == 1:
-            (node,) = component
-            local = {node: (0.0, 0.0)}
-        else:
-            local = nx.spring_layout(graph.subgraph(component), seed=42)
-        for node, (px, py) in local.items():
-            positions[str(node)] = [
-                x + size / 2 + px * size / 2,
-                y + size / 2 + py * size / 2,
-            ]
-        x += size + 0.4
-        row_height = max(row_height, size)
-    return positions
 
 
 def _communities(raw: Any, nodes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:

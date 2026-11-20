@@ -82,7 +82,9 @@ Ingestion itself renders nothing. Another renderer plugs in through
   `community_size_distribution.html` (level 0): each is one page with an
   SVG chart and a tooltip on every bar, which needs no script or network.
 - **Size.** The interactive graph keeps the top `interactive.max_nodes` nodes
-  by degree (default 2000) and lays out only those.
+  by degree (default 600; 2000 take about 15 s to lay out) and lays out only
+  those, each connected component on its own, packed in rows largest first:
+  the console's Graph page draws the same nodes at the same positions.
 - Edge width and opacity are log-scaled to the graph's own weight range.
 - Only files a renderer wrote are reported (an earlier file of the same name
   is removed first); when nothing is rendered (an empty graph), or a

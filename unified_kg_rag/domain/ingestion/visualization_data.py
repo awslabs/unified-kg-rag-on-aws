@@ -12,8 +12,8 @@ renders; a file that carries them (written by an earlier release) is drawn
 with its own.
 
 The layout helpers (:func:`displayed_graph`, :func:`spring_layout`) are
-renderer-neutral: ``run-visualization`` lays out the nodes the interactive
-page will draw without depending on it.
+renderer-neutral: the one layout and node cap of a drawn graph, which
+``run-visualization`` and the console's Graph page share.
 """
 
 from __future__ import annotations
@@ -41,6 +41,12 @@ __all__ = [
 # ``run-visualization --data-path`` re-renders from without ingestion.
 VISUALIZATION_DATA_FILENAME = "visualization_data.json"
 DEFAULT_OUTPUTS_DIRECTORY = "outputs/visualization"
+# The packed layout (spring_layout): a component of n nodes takes a square
+# of side sqrt(n); a row is _ROW_WIDTH times the largest's side wide, and
+# _COMPONENT_GAP apart from the next. Presentation: the console's
+# layout before it moved here.
+_ROW_WIDTH = 2.2
+_COMPONENT_GAP = 0.4
 
 
 def strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -180,11 +186,50 @@ def displayed_graph(graph: nx.Graph, max_nodes: int | None) -> nx.Graph:
 
 
 def spring_layout(graph: nx.Graph, max_nodes: int | None) -> dict[str, list[float]]:
-    """Seeded spring layout of the drawn nodes only (:func:`displayed_graph`).
+    """The one layout of a drawn graph (``run-visualization``'s pages and
+    the console's Graph page): a seeded spring layout of each connected
+    component of the drawn nodes (:func:`displayed_graph`), the components
+    packed in rows largest first, so small islands do not push the main
+    component into a corner (one spring layout of a disconnected graph
+    flings its islands far apart).
 
     A spring layout is quadratic in the node count, so laying out a large
     graph and then drawing its top ``max_nodes`` spent minutes on nodes
     the page never shows. A graph within the cap is laid out whole.
     """
-    positions = nx.spring_layout(displayed_graph(graph, max_nodes), seed=42)
-    return {str(node): pos.tolist() for node, pos in positions.items()}
+    # In the graph's own node order, never a set's: a set of strings
+    # iterates in an order of the process's hash seed, so the seeded layout
+    # moved from one run to the next.
+    drawn = displayed_graph(graph, max_nodes)
+    order = {node: i for i, node in enumerate(graph)}
+    components = sorted(
+        (
+            sorted(component, key=order.__getitem__)
+            for component in nx.connected_components(drawn)
+        ),
+        key=lambda nodes: (-len(nodes), order[nodes[0]]),
+    )
+    positions: dict[str, list[float]] = {}
+    x = y = row_height = 0.0
+    width = max(1.0, len(components[0]) ** 0.5 * _ROW_WIDTH) if components else 1.0
+    for component in components:
+        size = len(component) ** 0.5
+        if x > 0 and x + size > width:
+            x, y = 0.0, y + row_height + _COMPONENT_GAP
+            row_height = 0.0
+        if len(component) == 1:
+            (node,) = component
+            local = {node: (0.0, 0.0)}
+        else:
+            ordered = nx.Graph()
+            ordered.add_nodes_from(component)
+            ordered.add_edges_from(drawn.edges(component))
+            local = nx.spring_layout(ordered, seed=42)
+        for node, (px, py) in local.items():
+            positions[str(node)] = [
+                x + size / 2 + float(px) * size / 2,
+                y + size / 2 + float(py) * size / 2,
+            ]
+        x += size + _COMPONENT_GAP
+        row_height = max(row_height, size)
+    return positions

@@ -36,8 +36,8 @@ class InteractiveRenderer:
         self.background_color = settings.background_color
         self.font_family = settings.font_family
         self.tooltip_delay = settings.tooltip_delay
-        # A browser cannot lay out a pyvis page of tens of thousands of nodes;
-        # keep the top-N by degree (None/0 = no cap).
+        # The one cap of a drawn graph (the console's Graph page's too): keep
+        # the top-N by degree (None/0 = no cap).
         self.max_nodes = settings.max_nodes
 
     def create_network_visualization(

@@ -501,7 +501,7 @@ Settings of the interactive pyvis graph.
 | `background_color` | string | `"#f8fafc"` |  | Canvas colour. |
 | `font_family` | string | `"Arial"` |  | Label font. |
 | `tooltip_delay` | integer (≥ 0) | `200` | operational | Tooltip delay (ms). |
-| `max_nodes` | integer \| null (≥ 0) | `2000` | operational | Keep the top-N nodes by degree; 0 or null disables the cap (a browser cannot lay out tens of thousands of nodes). |
+| `max_nodes` | integer \| null (≥ 0) | `600` | operational: spring layout of a scale-free graph on one core: 600 nodes 1.4 s, 1000 3.3 s, 2000 15.2 s | Nodes a drawn graph keeps, the top-N by degree: this page's and the console's Graph page's (the rest are listed and found by search there); 0 or null disables the cap. The layout is quadratic in them: 600 take about 1.4 s, 2000 about 15 s. |
 
 #### `graph.visualization.static`
 

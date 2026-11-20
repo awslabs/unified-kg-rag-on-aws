@@ -12,18 +12,23 @@ import pytest
 
 from tests.fixtures.graph_exports import write_export
 from unified_kg_rag.application.cli.console import graph_api
+from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 from unified_kg_rag.shared.exceptions import StoreConnectionError
 
 pytestmark = pytest.mark.unit
+
+# The one cap of a drawn graph (graph.visualization.interactive.max_nodes).
+_CAP = InteractiveGraphSettings().max_nodes
+assert _CAP
 
 
 @pytest.mark.parametrize("extra", [1, 400])
 def test_a_large_graph_lays_out_only_the_drawn_nodes(
     tmp_path: Path, extra: int
 ) -> None:
-    total = graph_api.MAX_DRAWN_NODES + extra
-    data = graph_api.cached_graph(write_export(tmp_path / "v.json", total)).page
-    assert len(data["layout"]) == graph_api.MAX_DRAWN_NODES
+    total = _CAP + extra
+    data = graph_api.cached_graph(write_export(tmp_path / "v.json", total), _CAP).page
+    assert len(data["layout"]) == _CAP
     assert "n0" in data["layout"]  # the best-connected is drawn
     assert data["stats"]["nodes"] == total
 
@@ -31,23 +36,23 @@ def test_a_large_graph_lays_out_only_the_drawn_nodes(
 def test_an_exported_layout_larger_than_the_cap_is_cut_to_it(
     tmp_path: Path,
 ) -> None:
-    total = graph_api.MAX_DRAWN_NODES + 50
+    total = _CAP + 50
     layout = {f"n{i}": [float(i), 0.0] for i in range(total)}
     data = graph_api.cached_graph(
-        write_export(tmp_path / "v.json", total, layout=layout)
+        write_export(tmp_path / "v.json", total, layout=layout), _CAP
     ).page
-    assert len(data["layout"]) == graph_api.MAX_DRAWN_NODES
+    assert len(data["layout"]) == _CAP
     assert data["layout"]["n0"] == [0.0, 0.0]
 
 
 def test_the_page_gets_the_drawn_entities_in_full_and_the_rest_by_name(
     tmp_path: Path,
 ) -> None:
-    total = graph_api.MAX_DRAWN_NODES + 30
-    data = graph_api.cached_graph(write_export(tmp_path / "v.json", total)).page
+    total = _CAP + 30
+    data = graph_api.cached_graph(write_export(tmp_path / "v.json", total), _CAP).page
     drawn = {n["id"] for n in data["nodes"]}
     assert drawn == set(data["layout"])
-    assert len(data["others"]) == total - graph_api.MAX_DRAWN_NODES
+    assert len(data["others"]) == total - _CAP
     assert all(set(o) == {"id", "name", "degree"} for o in data["others"])
     assert not drawn & {o["id"] for o in data["others"]}
     degrees = [o["degree"] for o in data["others"]]
@@ -63,15 +68,15 @@ def test_the_page_gets_the_drawn_entities_in_full_and_the_rest_by_name(
 def test_an_undrawn_entity_is_read_with_every_edge_that_touches_it(
     tmp_path: Path,
 ) -> None:
-    total = graph_api.MAX_DRAWN_NODES + 30
+    total = _CAP + 30
     path = write_export(tmp_path / "v.json", total)
-    undrawn = graph_api.cached_graph(path).page["others"][0]["id"]
-    found = graph_api.entity(path, undrawn)
+    undrawn = graph_api.cached_graph(path, _CAP).page["others"][0]["id"]
+    found = graph_api.entity(path, undrawn, _CAP)
     assert found is not None and found["node"]["id"] == undrawn
     assert found["node"]["name"] == f"Entity {undrawn}"
     assert len(found["edges"]) == found["node"]["degree"]
     assert found["names"]["n0"] == "Entity n0"
-    assert graph_api.entity(path, "missing") is None
+    assert graph_api.entity(path, "missing", _CAP) is None
 
 
 def test_a_graph_is_read_again_only_when_its_file_changes(
@@ -80,17 +85,17 @@ def test_a_graph_is_read_again_only_when_its_file_changes(
     reads: list[Path] = []
     read = graph_api._read_graph
 
-    def counted(path: Path) -> graph_api.LoadedGraph:
+    def counted(path: Path, max_nodes: int | None) -> graph_api.LoadedGraph:
         reads.append(path)
-        return read(path)
+        return read(path, max_nodes)
 
     monkeypatch.setattr(graph_api, "_read_graph", counted)
     path = write_export(tmp_path / "v.json", 20)
-    first = graph_api.cached_graph(path)
-    assert graph_api.cached_graph(path) is first
+    first = graph_api.cached_graph(path, _CAP)
+    assert graph_api.cached_graph(path, _CAP) is first
     assert len(reads) == 1
     write_export(path, 21)
-    assert graph_api.cached_graph(path).page["stats"]["nodes"] == 21
+    assert graph_api.cached_graph(path, _CAP).page["stats"]["nodes"] == 21
     assert len(reads) == 2
 
 
