@@ -482,8 +482,10 @@ npm run build
 
 - One user on one host: no accounts, no access control between users, no
   history shared between browsers.
-- The Graph page draws the 600 best-connected entities of a large graph;
-  the others are found by name or in the table.
+- The Graph page draws the best-connected entities of a large graph
+  (`graph.visualization.interactive.max_nodes`, 600 by default, the cap of
+  `run-visualization`'s interactive page too); the others are found by name
+  or in the table.
 - A job's progress is per stage (ingestion), or per answer and saved run
   (evaluation), not per document; the answers count only at a log level
   that shows INFO lines (`logging.level`).

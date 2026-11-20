@@ -690,9 +690,11 @@ def test_the_graph_page_brings_the_namespace_s_graph_up_to_date(
 def test_a_large_graph_draws_only_the_best_connected(
     client: Any, workspace: Path
 ) -> None:
-    from unified_kg_rag.application.cli.console.graph_api import MAX_DRAWN_NODES
+    # The one cap of a drawn graph, the config's (the demo config sets none).
+    from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 
-    total = MAX_DRAWN_NODES + 1
+    cap = InteractiveGraphSettings().max_nodes
+    total = cap + 1
     path = write_export(
         workspace / "cache" / "large" / "visualization" / "visualization_data.json",
         total,
@@ -703,7 +705,7 @@ def test_a_large_graph_draws_only_the_best_connected(
         "/api/graphs/data",
         params={"ref": "cache:large/visualization/visualization_data.json"},
     ).json()
-    assert len(data["layout"]) == len(data["nodes"]) == MAX_DRAWN_NODES
+    assert len(data["layout"]) == len(data["nodes"]) == cap
     assert data["stats"]["nodes"] == total
     # The rest is listed by name, and read whole on demand.
     (other,) = data["others"]

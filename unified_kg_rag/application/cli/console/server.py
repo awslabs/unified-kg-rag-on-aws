@@ -1057,6 +1057,11 @@ def create_app(
         default = graph_api.default_graph(found, current, current_ref)
         return {"graphs": found, "current": {**current.view(), "ref": default}}
 
+    def drawn_nodes() -> int | None:
+        # The one cap of a drawn graph, run-visualization's too.
+        config = state.try_config() or Config()
+        return config.graph.visualization.interactive.max_nodes
+
     async def graph_file(ref: str) -> Path:
         path = state.roots.resolve(ref)
         if path.name != VISUALIZATION_DATA_FILENAME:
@@ -1067,12 +1072,16 @@ def create_app(
 
     @app.get("/api/graphs/data")
     async def graph_data(ref: str) -> Response:
-        loaded = await asyncio.to_thread(graph_api.cached_graph, await graph_file(ref))
+        loaded = await asyncio.to_thread(
+            graph_api.cached_graph, await graph_file(ref), drawn_nodes()
+        )
         return Response(loaded.encoded, media_type="application/json")
 
     @app.get("/api/graphs/entity")
     async def graph_entity(ref: str, id: str) -> dict[str, Any]:
-        found = await asyncio.to_thread(graph_api.entity, await graph_file(ref), id)
+        found = await asyncio.to_thread(
+            graph_api.entity, await graph_file(ref), id, drawn_nodes()
+        )
         if found is None:
             raise HTTPException(404, f"no entity '{id}' in '{ref}'")
         return found
