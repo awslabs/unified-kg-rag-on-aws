@@ -321,7 +321,7 @@ the documents (their rebuild) and leaves the tree as it is: the text units
 do not change, so neither does the leaf-set digest. The indexing stage
 writes the build record before the tree exists, so the stage adds
 `summary_tree` to the record once the tree is current
-(`VectorIndexer.add_build_artifacts`). An incremental record keeps only the
+(`BuildRecordStore.add_build_artifacts`). An incremental record keeps only the
 artifacts both it and the stored record name; the indexing stage keeps
 naming a live tree while `raptor` is selected and its stale nodes were
 deleted (*Incremental runs, resets and crash recovery* below), and a failed tree build drops it, so `tree` is
@@ -449,7 +449,7 @@ flip a tie):
   than its leaves) are held until the stage writes them, in one new index
   it swaps in whole: they grow with the corpus, not the batch (unbounded;
   streaming them into the new index is left for the tree's re-key). A batch
-  reads its own text units by id (`VectorIndexer.read_text_unit_fields`), a
+  reads its own text units by id (`SummaryTreeStore.read_text_unit_fields`), a
   page of ids at a time, so the stored units are read once in all; a store
   that cannot read them by id is walked once per batch.
 
