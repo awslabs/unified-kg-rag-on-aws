@@ -225,6 +225,43 @@ async def test_kg_neighbors_reads_graph_edges_without_relationship_vectors(
     assert any(e.name == "Depot" for r in edges for e in r.entities)
 
 
+async def test_kg_get_chunks_reads_the_chunks_records_cite(
+    tools: KnowledgeGraphTools,
+) -> None:
+    searched = await tools.search("Depot", strategy="naive", top_k=3)
+    (entity,) = (await tools.get_entity(name="Depot")).records
+    cited = [r.chunk_id for r in searched.records if r.chunk_id]
+    wanted = [*cited, *entity.text_unit_ids, "no-such-chunk", entity.source_id]
+    result = await tools.get_chunks([str(i) for i in wanted])
+    found = {r.chunk_id: r for r in result.records}
+    assert set(cited) | set(entity.text_unit_ids) <= set(found)
+    # An id no chunk has, an entity's included: missing, not an error.
+    assert result.missing == ["no-such-chunk", entity.source_id]
+    for record in result.records:
+        # The whole stored chunk, with its document and corpus path.
+        assert record.kind == "text" and record.document_name in DOCUMENTS
+        assert record.text == DOCUMENTS[record.document_name]
+        assert record.attributes["relative_path"] == record.document_name
+        assert record.attributes["n_tokens"] > 0 and record.document_id
+    assert "corpus/" not in result.model_dump_json()
+    assert result.usage["llm_calls"] == 0
+
+
+async def test_kg_get_chunks_applies_the_filters_on_the_store(
+    tools: KnowledgeGraphTools,
+) -> None:
+    searched = await tools.search("Depot", strategy="naive", top_k=2)
+    ids = [str(r.chunk_id) for r in searched.records if r.chunk_id]
+    assert ids
+    kept = await tools.get_chunks(ids, filters={"n_tokens": {"gte": 1}})
+    assert [r.chunk_id for r in kept.records] == ids
+    excluded = await tools.get_chunks(ids, filters={"n_tokens": {"gt": 100000}})
+    assert (excluded.records, excluded.missing) == ([], ids)
+    # A key the text units do not hold would filter nothing: refused.
+    with pytest.raises(GraphRAGException, match="Unknown filter key"):
+        await tools.get_chunks(ids, filters={"rank": 1})
+
+
 async def test_a_namespace_without_a_graph_refuses_the_graph_tools(
     tools: KnowledgeGraphTools, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -415,6 +452,7 @@ async def test_the_tools_over_the_protocol(tools: KnowledgeGraphTools) -> None:
             "kg_answer",
             "kg_get_entity",
             "kg_neighbors",
+            "kg_get_chunks",
             "kg_describe_schema",
         ]
         for tool in listed.tools:
@@ -428,6 +466,19 @@ async def test_the_tools_over_the_protocol(tools: KnowledgeGraphTools) -> None:
         payload = found.structured_content
         assert payload is not None and payload["match"] == "name"
         assert payload["records"][0]["name"] == "한빛물류"
+        unit = payload["records"][0]["text_unit_ids"][0]
+        chunks = await client.call_tool("kg_get_chunks", {"ids": [unit, "nope"]})
+        assert not chunks.is_error, chunks.content
+        assert chunks.structured_content is not None
+        assert chunks.structured_content["missing"] == ["nope"]
+        assert chunks.structured_content["records"][0]["chunk_id"] == unit
+        too_many = await client.call_tool(
+            "kg_get_chunks", {"ids": [f"u{i}" for i in range(21)]}
+        )
+        assert too_many.is_error and (
+            "[invalid_argument] ids: "
+            in too_many.content[0].text  # type: ignore[union-attr]
+        )
         searched = await client.call_tool(
             "kg_search", {"query": "Depot", "strategy": "naive", "top_k": 3}
         )

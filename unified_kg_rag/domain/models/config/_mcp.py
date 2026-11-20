@@ -20,13 +20,19 @@ from ._common import ConfigSection
 
 # The tools run-mcp-server can serve (mcp.tools).
 McpToolName = Literal[
-    "kg_search", "kg_answer", "kg_get_entity", "kg_neighbors", "kg_describe_schema"
+    "kg_search",
+    "kg_answer",
+    "kg_get_entity",
+    "kg_neighbors",
+    "kg_get_chunks",
+    "kg_describe_schema",
 ]
 MCP_TOOLS: tuple[McpToolName, ...] = (
     "kg_search",
     "kg_answer",
     "kg_get_entity",
     "kg_neighbors",
+    "kg_get_chunks",
     "kg_describe_schema",
 )
 
@@ -44,8 +50,8 @@ class McpServerConfig(ConfigSection):
         min_length=1,
         description=(
             "The tools the server lists, of kg_search, kg_answer, "
-            "kg_get_entity, kg_neighbors and kg_describe_schema (all by "
-            "default). Leave kg_answer out to make no answer-model call: the "
+            "kg_get_entity, kg_neighbors, kg_get_chunks and kg_describe_schema "
+            "(all by default). Leave kg_answer out to make no answer-model call: the "
             "agent then answers from kg_search's records with its own model"
         ),
     )
@@ -74,7 +80,10 @@ class McpServerConfig(ConfigSection):
         default=20,
         ge=1,
         le=MAX_SERVED_TOP_K,
-        description="Largest top_k (and kg_get_entity limit) a call may ask",
+        description=(
+            "Largest top_k (and kg_get_entity limit, and number of ids of a "
+            "kg_get_chunks call) a call may ask"
+        ),
         json_schema_extra=evidence("operational"),
     )
     max_hops: int = Field(

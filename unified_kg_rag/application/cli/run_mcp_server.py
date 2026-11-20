@@ -101,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Serve one index namespace to agents as read-only MCP (Model "
             "Context Protocol) tools: kg_search, kg_answer, kg_get_entity, "
-            "kg_neighbors and kg_describe_schema. Needs the mcp extra"
+            "kg_neighbors, kg_get_chunks and kg_describe_schema. Needs the mcp extra"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(

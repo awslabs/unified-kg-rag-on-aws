@@ -1119,10 +1119,10 @@ The read-only MCP server of run-mcp-server
 
 | Key | Type | Default | Evidence | Description |
 |---|---|---|---|---|
-| `tools` | list[`"kg_search"` \| `"kg_answer"` \| `"kg_get_entity"` \| `"kg_neighbors"` \| `"kg_describe_schema"`] (min length 1) | see [Long defaults](#long-defaults) |  | The tools the server lists, of kg_search, kg_answer, kg_get_entity, kg_neighbors and kg_describe_schema (all by default). Leave kg_answer out to make no answer-model call: the agent then answers from kg_search's records with its own model |
+| `tools` | list[`"kg_search"` \| `"kg_answer"` \| `"kg_get_entity"` \| `"kg_neighbors"` \| `"kg_get_chunks"` \| `"kg_describe_schema"`] (min length 1) | see [Long defaults](#long-defaults) |  | The tools the server lists, of kg_search, kg_answer, kg_get_entity, kg_neighbors, kg_get_chunks and kg_describe_schema (all by default). Leave kg_answer out to make no answer-model call: the agent then answers from kg_search's records with its own model |
 | `allowed_namespaces` | list[string] | `[]` |  | Further namespaces a tool call may name in its namespace argument. Empty (the default): the tools take no namespace argument and serve only the namespace the server started with |
 | `strategies` | list[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"` \| `"structured"`] \| null (min length 1) | `null` |  | The search strategies kg_search and kg_answer may run (null: every strategy; one the namespace does not hold is refused either way). The default strategy is auto when listed, else the first one; auto then routes (and falls back) only among them, and is refused before any model call when the namespace serves none of them |
-| `max_top_k` | integer (≥ 1, ≤ 100) | `20` | operational | Largest top_k (and kg_get_entity limit) a call may ask |
+| `max_top_k` | integer (≥ 1, ≤ 100) | `20` | operational | Largest top_k (and kg_get_entity limit, and number of ids of a kg_get_chunks call) a call may ask |
 | `max_hops` | integer (≥ 1, ≤ 3) | `2` | operational | Largest max_hops of a kg_neighbors call |
 | `max_neighbors` | integer (≥ 1, ≤ 500) | `50` | operational | Largest number of neighbours (and of relationships) one kg_neighbors call returns |
 | `max_query_chars` | integer (≥ 1) | `2000` | operational | Longest query (and entity name) a call may give, in characters |
@@ -1248,6 +1248,7 @@ tools:
 - kg_answer
 - kg_get_entity
 - kg_neighbors
+- kg_get_chunks
 - kg_describe_schema
 ```
 

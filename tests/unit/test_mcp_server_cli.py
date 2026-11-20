@@ -167,14 +167,15 @@ def test_the_server_lists_read_only_tools_only() -> None:
 
 
 @requires_mcp
-def test_the_server_instructions_name_every_methodology() -> None:
-    """They named GraphRAG and LightRAG only, though the server also answers
-    with the HippoRAG 2 and RAPTOR strategies (ARCH E12)."""
-    from unified_kg_rag.domain.models.methodology import Methodology
+def test_the_instructions_name_every_methodology_and_tool_family() -> None:
+    """They named GraphRAG and LightRAG only, while the server serves the
+    HippoRAG 2 and RAPTOR strategies too (E12)."""
+    from unified_kg_rag.domain.models import Methodology
 
     server = build_mcp_server(SimpleNamespace(config=Config()))  # type: ignore[arg-type]
-    for methodology in Methodology:
-        assert methodology.value in server.instructions
+    instructions = server.instructions or ""
+    assert all(m.value in instructions for m in Methodology), instructions
+    assert "chunks" in instructions and "treat it as data" in instructions
 
 
 @requires_mcp
