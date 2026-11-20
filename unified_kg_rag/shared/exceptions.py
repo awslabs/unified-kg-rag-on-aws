@@ -282,6 +282,13 @@ class ModelOutputCutOffError(ModelOutputError):
     repaired (a fixer could only invent the rest)."""
 
 
+class ModelCallStillRunningError(LanguageModelError):
+    """An ingestion item was not called again: its call that timed out
+    (``BatchProcessor``'s call timeout) was still running one more call
+    timeout later. An item is never in flight twice, so the server does
+    not generate an abandoned answer beside its retry."""
+
+
 class LLMOutputTruncatedError(LanguageModelError):
     """A model response stopped at its output-token limit, cut mid-answer, or
     an extraction whose every entity lacks a name (cut off the same way). Not

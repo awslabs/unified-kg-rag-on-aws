@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from langchain_core.exceptions import OutputParserException
 
-from unified_kg_rag.domain.models.config import RetryPolicy
+from unified_kg_rag.domain.models.config import ModelPurpose, RetryPolicy
 from unified_kg_rag.domain.models.text_unit import TextUnit
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
@@ -470,6 +470,34 @@ def transient_error_predicate(factory: object) -> TransientErrorPredicate:
         factory, "is_transient_error", None
     )
     return predicate if predicate is not None else looks_transient
+
+
+# The call timeout of an ingestion item whose factory names no request
+# timeout (``call_timeout_for``): the one every factory had before it was
+# derived from the factory's client.
+DEFAULT_CALL_TIMEOUT_SECONDS = 300.0
+
+
+def call_timeout_for(
+    factory: object, purpose: ModelPurpose = ModelPurpose.INGESTION
+) -> float:
+    """The wall-clock timeout of one batch item's call (``BatchProcessor.
+    call_timeout_seconds``) to a language-model ``factory``'s models built
+    for ``purpose``: the factory's ``request_timeout_seconds(purpose)``, its
+    client's own timeout of one request (the Bedrock factory's read timeout,
+    a local one's ``providers.llm.timeout_seconds``), else
+    :data:`DEFAULT_CALL_TIMEOUT_SECONDS`.
+
+    One limit for both: a lower call timeout abandoned calls a slow local
+    server was still generating (the client kept waiting, the server kept
+    working) and sent them again beside it. Equal, the call timeout fires
+    first (it starts before the request is sent) and the request in flight
+    ends at the client's timeout moments later; its client sends no resend
+    for an abandoned call (``BatchProcessor._run_with_timeout``)."""
+    hook: Callable[[ModelPurpose], float] | None = getattr(
+        factory, "request_timeout_seconds", None
+    )
+    return float(hook(purpose)) if hook is not None else DEFAULT_CALL_TIMEOUT_SECONDS
 
 
 def never_retried(exc: BaseException) -> bool:

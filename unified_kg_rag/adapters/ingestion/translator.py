@@ -15,7 +15,6 @@ from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProces
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
-    transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.cache_keys import translation_fingerprint
@@ -131,10 +130,7 @@ class TextUnitTranslator:
         self.stats: TranslationStats | None = None
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor.from_config(
-            self.config,
-            is_transient_error=transient_error_predicate(self.factory),
-        )
+        self.batch_processor = BatchProcessor.from_config(self.config, self.factory)
         self.is_item_error = item_error_predicate(self.factory)
 
         self.translator = setup_chain(

@@ -1643,7 +1643,9 @@ A query has two bounds ([Querying](./guides/query.md#query-deadline)):
 
 Ingestion calls use their own client: a 330 s read timeout and
 `retry.model.client_max_attempts` (default 6) botocore attempts, bounded by
-`BatchProcessor`'s 300 s call timeout; an item that still fails is retried
+`BatchProcessor`'s call timeout, which is that read timeout (an abandoned
+call sends no resend, and its item is retried once it ended); an item that
+still fails is retried
 under `retry.ingestion_item`.
 
 **Tuning.**

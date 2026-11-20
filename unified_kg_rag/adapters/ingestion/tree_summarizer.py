@@ -28,7 +28,6 @@ from langchain_core.output_parsers import StrOutputParser
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain, usage_model_id
 from unified_kg_rag.adapters.llm.langchain import BatchProcessor
-from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.cache_keys import (
     index_language,
@@ -92,9 +91,7 @@ class TreeSummarizer:
         self.providers = Providers.resolve(config, providers)
         self.factory = self.providers.llm_factory
         self.model_id = config.model_id(ModelRole.SUMMARY_TREE)
-        self.batch_processor = BatchProcessor.from_config(
-            config, is_transient_error=transient_error_predicate(self.factory)
-        )
+        self.batch_processor = BatchProcessor.from_config(config, self.factory)
         self.chain = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,

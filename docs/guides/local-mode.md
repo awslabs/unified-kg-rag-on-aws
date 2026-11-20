@@ -69,8 +69,11 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   OpenAI-compatible server's `finish_reason`): the ingestion item fails
   without a retry, as the same input stops at the same limit again, so a
   small model that repeats itself until `max_output_tokens` leaves its text
-  unit without an extraction. Token counts and so context budgets are
-  estimates. A
+  unit without an extraction. `providers.llm.timeout_seconds` (300) bounds
+  each request and each ingestion call alike: raise it for a slow server
+  instead of lowering `max_output_tokens`. A call past it is abandoned and
+  sends no further request, and its item is retried once it ended, never
+  beside it. Token counts and so context budgets are estimates. A
   server that refuses a call (HTTP 4xx) or stays unreachable fails the query
   with the client's error instead of answering "could not find".
 - **Reasoning models.** A leading `<think>` (or `<thinking>`, `<reasoning>`)

@@ -374,7 +374,12 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     ``query_prompt_cache_ttl`` (a str, e.g. ``"1h"``) is the prompt-cache
     TTL ``setup_chain`` asks for on query chains, for models whose record
     sets ``supports_1h_cache_ttl``; without it the provider's default TTL
-    (5 minutes) applies.
+    (5 minutes) applies. ``request_timeout_seconds(purpose) -> float`` is
+    its client's timeout of one request of a model built for ``purpose``; an
+    ingestion item's call timeout is its ``INGESTION`` value
+    (``adapters.llm.retry.call_timeout_for``), so a call is abandoned no
+    sooner than its client gives up on it. Without it the call timeout is
+    300 s.
     """
 
     def get_model(self, model_id: ModelIdT, **kwargs: Any) -> ModelT: ...

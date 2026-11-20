@@ -27,8 +27,10 @@ from langchain_core.runnables import RunnableLambda
 
 from tests.fixtures.held_timeouts import HeldCallTimeouts
 from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
+from unified_kg_rag.adapters.llm import langchain as langchain_mod
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.domain.models.config import RetryPolicy
+from unified_kg_rag.shared.exceptions import ModelCallStillRunningError
 
 pytestmark = pytest.mark.unit
 
@@ -294,12 +296,137 @@ async def test_async_slow_item_does_not_hold_back_the_other_slots() -> None:
     assert in_flight.peak == 2
 
 
-def test_bedrock_read_timeout_outlasts_the_call_timeout() -> None:
-    # The wall-clock call timeout is the limit meant to end a long call: with
-    # an equal socket read timeout the two raced, and botocore's silent
-    # re-send on a read timeout was then abandoned by the call timeout.
-    call_timeout = BatchProcessor.model_fields["call_timeout_seconds"].default
-    assert BaseBedrockModelFactory.BOTO_READ_TIMEOUT > call_timeout
+def test_the_call_timeout_is_the_factory_s_request_timeout() -> None:
+    # It was a fixed 300 s that no caller set: a local server given 1,200 s
+    # (providers.llm.timeout_seconds) had its long extraction calls
+    # abandoned at 300 s and sent again while it kept generating the first
+    # (ARCH baseline).
+    from tests.fixtures.fakes.boto import FakeBotoSession
+    from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+    from unified_kg_rag.adapters.llm.retry import (
+        DEFAULT_CALL_TIMEOUT_SECONDS,
+        call_timeout_for,
+        transient_error_predicate,
+    )
+    from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
+    from unified_kg_rag.domain.models import Config
+    from unified_kg_rag.domain.models.config import ModelPurpose
+
+    local = Config.model_validate(
+        {"backend": "local", "providers": {"llm": {"timeout_seconds": 1200}}}
+    )
+    ollama = OllamaLanguageModelFactory(local)
+    processor = BatchProcessor.from_config(local, ollama)
+    assert processor.call_timeout_seconds == 1200
+    assert processor.is_transient_error is transient_error_predicate(ollama)
+    # The query calls' own (capped) timeout is not the ingestion one.
+    assert call_timeout_for(ollama, ModelPurpose.QUERY) == (
+        local.search.model_timeout_seconds
+    )
+    bedrock = BedrockLanguageModelFactory(Config(), boto_session=FakeBotoSession())
+    assert BatchProcessor.from_config(Config(), bedrock).call_timeout_seconds == (
+        BaseBedrockModelFactory.BOTO_READ_TIMEOUT
+    )
+    # A factory that names none keeps the default; an explicit one wins.
+    assert BatchProcessor.from_config(Config(), object()).call_timeout_seconds == (
+        DEFAULT_CALL_TIMEOUT_SECONDS
+    )
+    assert (
+        BatchProcessor.from_config(
+            local, ollama, call_timeout_seconds=5
+        ).call_timeout_seconds
+        == 5
+    )
+
+
+def test_an_abandoned_call_is_not_resent_while_it_runs(
+    held_calls: HeldCallTimeouts,
+) -> None:
+    # Its retry started at once beside it: the server generated both.
+    events: list[str] = []
+    lock = threading.Lock()
+
+    def call(item: dict[str, int]) -> dict[str, int]:
+        with lock:
+            events.append("start")
+            first = events.count("start") == 1
+        if first:
+            held_calls.hang()
+            with lock:
+                events.append("abandoned call ended")
+        return {"echo": item["v"]}
+
+    bp = BatchProcessor(
+        call_timeout_seconds=60,
+        retry=RetryPolicy(base_delay_seconds=1.0, max_delay_seconds=0),
+    )
+    results = bp.execute_with_fallback(
+        items_to_process=[1],
+        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+        sequential_func=call,
+        task_name="t",
+        show_progress=False,
+    )
+    assert results == [{"echo": 1}]
+    assert events == ["start", "abandoned call ended", "start"]
+
+
+def test_an_abandoned_call_sends_no_further_request() -> None:
+    # The model clients' stop points (Bedrock's before-send and needs-retry
+    # hooks, the local clients' request hooks) refuse every request of a
+    # call once it is abandoned: a client's own resend after its read
+    # timeout would otherwise run on beside the item's retry.
+    from unified_kg_rag.adapters.local import models as local_models
+    from unified_kg_rag.shared.query_stop import query_stopped
+
+    abandoned = threading.Event()
+    seen: list[object] = []
+
+    def call() -> None:
+        abandoned.wait(30)
+        seen.append(query_stopped())
+        try:
+            local_models._stop_before_sync_request(None)
+        except asyncio.CancelledError:
+            seen.append("refused")
+
+    calls = langchain_mod._ItemCalls()
+    with pytest.raises(TimeoutError, match="call timeout"):
+        BatchProcessor._run_with_timeout(call, 0.2, "hung", calls)
+    abandoned.set()
+    assert calls.abandoned is not None
+    calls.abandoned.result(timeout=30)
+    assert seen == [True, "refused"]
+
+
+def test_an_abandoned_call_still_running_fails_its_item_unresent(
+    release_hung_calls: threading.Event,
+) -> None:
+    # A call that outlasts one more call timeout (a server dribbling bytes
+    # past every read timeout) is not sent again beside it: the item fails.
+    calls: Counter[int] = Counter()
+    errors: dict[int, BaseException] = {}
+
+    def call(item: dict[str, int]) -> dict[str, int]:
+        calls[item["v"]] += 1
+        release_hung_calls.wait()
+        return {"echo": item["v"]}
+
+    bp = BatchProcessor(
+        call_timeout_seconds=0.2,
+        retry=RetryPolicy(max_attempts=3, base_delay_seconds=1.0, max_delay_seconds=0),
+    )
+    results = bp.execute_with_fallback(
+        items_to_process=[7],
+        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+        sequential_func=call,
+        task_name="t",
+        show_progress=False,
+        errors=errors,
+    )
+    assert results == [BATCH_ITEM_FAILED]
+    assert calls == Counter({7: 1})
+    assert isinstance(errors[0], ModelCallStillRunningError)
 
 
 def test_cancelling_an_async_batch_cancels_its_items() -> None:
@@ -370,3 +497,19 @@ async def test_an_async_item_that_failed_names_its_ids_and_keeps_its_error(
     (failed,) = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert failed.query_id == "q2"  # type: ignore[attr-defined]
     assert "Quokkasecret" not in failed.getMessage()
+
+
+@pytest.mark.parametrize("order", ["abandoned first", "bound first"])
+def test_an_abandoned_attempt_stops_its_call_whenever_it_binds(order: str) -> None:
+    # The caller may abandon a call before its thread bound its stop.
+    from unified_kg_rag.shared.query_stop import QueryStop, StopCause
+
+    attempt, stop = langchain_mod._Attempt(), QueryStop()
+    if order == "abandoned first":
+        attempt.abandon()
+        attempt.bind(stop)
+    else:
+        attempt.bind(stop)
+        assert not stop.is_set()
+        attempt.abandon()
+    assert stop.is_set() and stop.cause is StopCause.DEADLINE

@@ -1217,3 +1217,34 @@ def test_successive_event_loops_send_one_openai_request_per_call(
         assert paths.count("/v1/chat/completions") == runs + 1
         assert paths.count("/v1/embeddings") == runs + 1
         assert after - before < runs
+
+
+@pytest.mark.parametrize(
+    "factory_cls", [OllamaLanguageModelFactory, OpenAICompatibleLanguageModelFactory]
+)
+def test_an_ingestion_model_sends_no_request_once_its_call_is_stopped(
+    factory_cls: type,
+) -> None:
+    # A batch item's call abandoned at its call timeout is stopped
+    # (BatchProcessor._run_with_timeout): the sync client the ingestion
+    # models call through sent its requests anyway, so an OpenAI-compatible
+    # client's own resend ran on beside the item's retry.
+    import asyncio
+
+    from unified_kg_rag.shared.query_stop import QueryStop, query_stop_scope
+
+    kind = (
+        "ollama" if factory_cls is OllamaLanguageModelFactory else "openai_compatible"
+    )
+    server = FakeServer()
+    factory = factory_cls(_config(kind), transport=httpx.MockTransport(server))
+    model = factory.get_model("synthetic-chat", model_purpose=ModelPurpose.INGESTION)
+    model.invoke("hello")
+    asked = len(server.requests)
+    stop = QueryStop()
+    stop.set()
+    with query_stop_scope(stop), pytest.raises(asyncio.CancelledError):
+        model.invoke("hello")
+    assert len(server.requests) == asked
+    # The factory names its request timeout, the call timeout of a batch.
+    assert factory.request_timeout_seconds(ModelPurpose.INGESTION) == 300

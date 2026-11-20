@@ -74,7 +74,7 @@ Language-model provider
 |---|---|---|---|---|
 | `base_url` | string \| null (min length 1) | `null` |  | Endpoint of the model server, e.g. http://localhost:11434 for Ollama or http://localhost:8000/v1 for an OpenAI-compatible server (vLLM, llama.cpp, LM Studio). Ignored by bedrock. |
 | `api_key` | secret string \| null | `null` |  | API key for an OpenAI-compatible server (masked in logs). Most local servers ignore it; null sends a placeholder. Ignored by bedrock and ollama. |
-| `timeout_seconds` | number (> 0) | `300.0` | operational | HTTP timeout per request to the model server, in seconds. |
+| `timeout_seconds` | number (> 0) | `300.0` | operational | HTTP timeout per request to the model server, in seconds. For the language model it is also the wall-clock limit of one ingestion call: past it the call is abandoned (it sends no further request) and its item retried once it ended. |
 | `kind` | string (min length 1) | `"bedrock"` |  | Language-model provider: bedrock \| openai_compatible \| ollama. |
 | `context_window_size` | integer (≥ 1024) | `32768` | operational | Context window of the non-Bedrock models, in tokens. Sizes the retrieval context budget and is sent to Ollama as num_ctx. Bedrock models take theirs from the capability catalog. |
 | `max_output_tokens` | integer (≥ 1) | `8192` | operational | Output-token ceiling of the non-Bedrock models. A request asks for models.default_max_output_tokens (or a prompt's own floor), clamped to this. |
@@ -90,7 +90,7 @@ Embedding provider
 |---|---|---|---|---|
 | `base_url` | string \| null (min length 1) | `null` |  | Endpoint of the model server, e.g. http://localhost:11434 for Ollama or http://localhost:8000/v1 for an OpenAI-compatible server (vLLM, llama.cpp, LM Studio). Ignored by bedrock. |
 | `api_key` | secret string \| null | `null` |  | API key for an OpenAI-compatible server (masked in logs). Most local servers ignore it; null sends a placeholder. Ignored by bedrock and ollama. |
-| `timeout_seconds` | number (> 0) | `300.0` | operational | HTTP timeout per request to the model server, in seconds. |
+| `timeout_seconds` | number (> 0) | `300.0` | operational | HTTP timeout per request to the model server, in seconds. For the language model it is also the wall-clock limit of one ingestion call: past it the call is abandoned (it sends no further request) and its item retried once it ended. |
 | `kind` | string (min length 1) | `"bedrock"` |  | Embedding provider: bedrock \| openai_compatible \| ollama. |
 | `max_input_tokens` | integer (≥ 1) | `8192` | operational | Longest input the non-Bedrock embedding model accepts, in tokens; longer texts are truncated (by the estimate) before embedding. |
 

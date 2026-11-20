@@ -128,6 +128,7 @@ ALLOWED: dict[str, str] = {
         "adapters/aws/opensearch.py:_QUERY_POOL_MAX",
         "adapters/graph_query/gremlin.py:HYDRATE_BATCH",
         "adapters/ingestion/description_summarizer.py:_MAX_MAP_ROUNDS",
+        "adapters/llm/retry.py:DEFAULT_CALL_TIMEOUT_SECONDS",
         "adapters/llm/token_estimate.py:_LANGUAGE_SAMPLE_CHARS",
         "adapters/local/models.py:_SHOW_TIMEOUT_SECONDS",
         "adapters/local/search_engine/engine.py:LARGE_INDEX_DOCS",

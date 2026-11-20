@@ -25,7 +25,6 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     usage_model_id,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
-from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.cache_keys import chunk_boundary_fingerprint
@@ -917,10 +916,7 @@ class IntelligentTextChunker(PreChunker):
         self._boundary_fingerprint = chunk_boundary_fingerprint(config)
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor.from_config(
-            self.config,
-            is_transient_error=transient_error_predicate(self.factory),
-        )
+        self.batch_processor = BatchProcessor.from_config(self.config, self.factory)
 
         robust_xml_output_parser = create_robust_xml_output_parser(
             model_purpose=ModelPurpose.INGESTION,

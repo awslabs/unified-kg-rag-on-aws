@@ -509,6 +509,11 @@ Bugs present in 0.3.0.
   OpenSearch's does: fullwidth "ＡＢＣ" and halfwidth "ｶﾀｶﾅ" did not match "abc" and "カタカナ". It follows OpenSearch 2.19's
   chain (checked with `_analyze`); queries see it at once (the engine analyzes stored text when it loads). A live
   field mapped `standard` no longer passes for `cjk`.
+- An ingestion LLM call had a fixed 300 s wall-clock timeout whatever the client's: on a slow local server
+  (`providers.llm.timeout_seconds` raised) long calls were abandoned and sent again while the server kept generating
+  them. The call timeout is the factory's request timeout of ingestion calls (`providers.llm.timeout_seconds`;
+  Bedrock's 330 s read timeout, from 300 s), an abandoned call sends no further request, and its item is retried only
+  once it ended (`ModelCallStillRunningError` when it still runs a call timeout later).
 
 ## [0.3.0] - 2026-11-14
 

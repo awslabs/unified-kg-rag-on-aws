@@ -176,11 +176,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # reports, extended thinking) but short enough that a hung socket doesn't
     # freeze a whole ProcessPool-parallel stage (e.g. claim extraction).
     # A non-streaming call sends no bytes until the whole answer is ready, so
-    # this also caps generation time. It sits above BatchProcessor's default
-    # 300 s call timeout so that wall-clock limit, not a race with this one,
-    # ends a long ingestion call: botocore retries a read timeout itself, and
-    # at equal values that silent re-send started inside the call timeout's
-    # window, only to be abandoned when it fired.
+    # this also caps generation time. It is an ingestion item's call timeout
+    # too (request_timeout_seconds, BatchProcessor): that wall-clock limit
+    # starts before the request is sent, so it fires first, and the call it
+    # abandons sends no resend (stop_at_query_stop) while its request ends
+    # here moments later. 330 s: the 300 s call timeout of earlier versions
+    # plus the margin it had kept below this one.
     BOTO_READ_TIMEOUT: ClassVar[int] = 330
     # TCP connect timeout. Without this, a client whose endpoint is unreachable
     # (e.g. a private/no-NAT VPC missing the relevant Bedrock interface endpoint,
@@ -301,19 +302,27 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         with self._purpose_clients_lock:
             client = self._purpose_clients.get(purpose)
             if client is None:
-                search = self.config.search
-                boto_config = (
-                    self._boto_config(
-                        read_timeout=search.model_timeout_seconds,
-                        total_max_attempts=search.model_max_attempts,
-                    )
-                    if purpose is ModelPurpose.QUERY
-                    else self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT)
+                boto_config = self._boto_config(
+                    read_timeout=self.request_timeout_seconds(purpose),
+                    total_max_attempts=(
+                        self.config.search.model_max_attempts
+                        if purpose is ModelPurpose.QUERY
+                        else None
+                    ),
                 )
                 client = self._purpose_clients[purpose] = self._new_client(
                     boto_config, purpose
                 )
             return client
+
+    def request_timeout_seconds(self, purpose: ModelPurpose) -> float:
+        """The read timeout of the runtime client of ``purpose``'s calls:
+        ``search.model_timeout_seconds`` for query calls, else
+        :attr:`BOTO_READ_TIMEOUT`. An ingestion item's call timeout too
+        (``adapters.llm.retry.call_timeout_for``)."""
+        if purpose is ModelPurpose.QUERY:
+            return self.config.search.model_timeout_seconds
+        return self.BOTO_READ_TIMEOUT
 
     @abstractmethod
     def _get_boto_service_name(self) -> str:

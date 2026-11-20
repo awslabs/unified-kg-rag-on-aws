@@ -73,7 +73,12 @@ class EndpointConfig(ConfigSection):
     timeout_seconds: float = Field(
         default=300.0,
         gt=0,
-        description="HTTP timeout per request to the model server, in seconds.",
+        description=(
+            "HTTP timeout per request to the model server, in seconds. For the "
+            "language model it is also the wall-clock limit of one ingestion "
+            "call: past it the call is abandoned (it sends no further request) "
+            "and its item retried once it ended."
+        ),
         json_schema_extra=evidence("operational"),
     )
 
