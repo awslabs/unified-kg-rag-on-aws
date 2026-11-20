@@ -19,6 +19,12 @@ stale, each with what applies it:
   text they were written from and could not write them again from what
   remains (``IndexBuildRecord.outdated_reports``): they may state it, and
   the next incremental run tries again (``report_refresh``).
+- ``community_depths`` (reset): the community reports were written by a
+  release before 0.4.0 (the full build the record is or keeps,
+  ``package_version``), whose depths count from the coarsest root, not from
+  the first Leiden pass as global search's ``community_depth`` cut now
+  reads them; incremental runs write their delta's reports at the new
+  depths beside them.
 - ``answer_settings`` (reset): the community reports or description
   summaries the last full build wrote were made under other settings
   (prompt, model, language; ``cache_keys.corpus_answer_fingerprints``)
@@ -37,6 +43,7 @@ writes (its WARNING and the run's ``rebuild_due``, which the console's job
 card reads). Nothing here reads a store or calls a model.
 """
 
+import re
 from collections.abc import Mapping
 from enum import Enum
 from typing import Annotated, Any
@@ -77,6 +84,7 @@ class RebuildRemedy(str, Enum):
 class RebuildReasonKind(str, Enum):
     COMMUNITIES = "communities"
     OUTDATED_REPORTS = "outdated_reports"
+    COMMUNITY_DEPTHS = "community_depths"
     ANSWER_SETTINGS = "answer_settings"
     EXTRACTION_SETTINGS = "extraction_settings"
     METHODOLOGIES = "methodologies"
@@ -114,6 +122,12 @@ RebuildReasons = Annotated[
 ]
 
 
+# The first release whose community depths count from the first Leiden pass
+# (community_clustering._set_depths): a full build of an earlier one stored
+# them counted from the coarsest root.
+FIRST_PASS_DEPTH_RELEASE = (0, 4, 0)
+
+
 _ANSWERS = {
     COMMUNITY_REPORT_ANSWERS: "community reports",
     DESCRIPTION_SUMMARY_ANSWERS: "description summaries",
@@ -138,6 +152,7 @@ def rebuild_reasons(
     return [
         *_community_reasons(record, config, drift_recommended),
         *_outdated_report_reasons(record, config),
+        *_community_depth_reasons(record, config),
         *_answer_reasons(record, config),
         *_extraction_reasons(record, config),
         *_methodology_reasons(record, config),
@@ -190,6 +205,34 @@ def _outdated_report_reasons(
             "still state the removed text and are flagged outdated where "
             "they are read; the next incremental run tries again, a model "
             "call each (a run with indexing.reset: true writes every report)",
+            settings=[IndexArtifact.COMMUNITY_REPORTS.value],
+        )
+    ]
+
+
+def _community_depth_reasons(
+    record: Mapping[str, Any], config: Config
+) -> list[RebuildReason]:
+    if IndexArtifact.COMMUNITY_REPORTS not in held_artifacts(record, config):
+        return []
+    full = record if record.get("mode") == "full" else record.get("full_build")
+    if not isinstance(full, Mapping):
+        return []
+    version = full.get("package_version")
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)", version or "")
+    if match is None or tuple(map(int, match.groups())) >= FIRST_PASS_DEPTH_RELEASE:
+        return []
+    return [
+        RebuildReason(
+            kind=RebuildReasonKind.COMMUNITY_DEPTHS,
+            remedy=RebuildRemedy.RESET,
+            detail=f"its community reports were written by {version}, which "
+            "counted their depth from the coarsest root: global search's "
+            "search.global_search.community_depth cut, which counts it from "
+            "the first Leiden pass as MS GraphRAG does, reads them one or more "
+            "levels too coarse beside the reports incremental runs write; a "
+            "run with indexing.reset: true writes every report at its depth, "
+            "reusing the stored extractions",
             settings=[IndexArtifact.COMMUNITY_REPORTS.value],
         )
     ]

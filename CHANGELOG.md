@@ -48,7 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cap (on planted graphs at the defaults: 132 reports at 6,000 entities, 120 at 9,000), so the default query maps a
   coarser cut there, not the 99 depth-2 reports most similar to the query. With
   `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
-  coarser roots. Stored reports keep their depth, and step down to depth 0 only, until a reset (*Upgrading*).
+  coarser roots. Stored reports keep their depth, and step down to depth 0 only, until a reset (*Upgrading*); a
+  namespace whose last full build an earlier release wrote gets a `community_depths` rebuild reason (remedy `reset`)
+  in `run-describe`, the console, MCP and the run's `rebuild_due`.
 - The CLIs log to stderr in text mode too, so stdout holds only a run's output (`run-rag ... > answer.txt` keeps the
   answer alone); `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
   stderr (`2>&1` keeps both on one stream).
