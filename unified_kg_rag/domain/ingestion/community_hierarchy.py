@@ -28,7 +28,15 @@ which a report written without ``min_cut_depth`` holds too.
 
 from __future__ import annotations
 
-from unified_kg_rag.domain.models import Community, CommunityReport
+from collections.abc import Mapping
+
+from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
+from unified_kg_rag.domain.models import (
+    Community,
+    CommunityReport,
+    Constants,
+    TextUnit,
+)
 from unified_kg_rag.shared.utils import generate_stable_id
 
 # A leaf stands for every deeper cut, a root for every shallower one.
@@ -97,6 +105,68 @@ def attach_report_hierarchy(
         report.parent_community_id = parent if parent in by_id else None
         report.min_cut_depth = depths[parent] + 1 if parent in by_id else ROOT_CUT_DEPTH
         report.child_community_ids = [c for c in community.children if c in by_id]
+
+
+def attach_report_lineage(
+    reports: list[CommunityReport],
+    community_units: Mapping[str, list[str]],
+    text_units: list[TextUnit] | None,
+) -> None:
+    """Record each report's candidate source text units, documents and
+    document ``filters`` (in place): those of its community's text units
+    (``community_units``, by community id).
+
+    A report is the only artifact in the index with no pointer back to its
+    sources, so a retrieved report cannot be filtered by origin. Detection
+    already unions its member entities' ``text_unit_ids`` onto the
+    Community, so the report inherits them; the source documents come from
+    those units.
+
+    This is community MEMBERSHIP provenance, not report-input provenance:
+    the prompt is capped at ``max_entities_per_report`` and a token budget,
+    and the lineage deliberately ignores that cap (a community with ``e1``
+    from ``d1`` and ``e2`` from ``d2`` records ``document_ids=["d1", "d2"]``
+    even when only ``e1`` reached the prompt). The fields therefore may name
+    material omitted from the report and do not establish sentence-level
+    citation support; they exist so a consumer can filter reports by source
+    or re-summarize them per reader.
+
+    The report's ``filters`` attribute is the union of its text units'
+    document filters, so an attribute filter matches a report when one of
+    its documents matches, as it does an entity. Without text units, or
+    when none has filters, the report has none and an attribute filter
+    excludes it (fail-closed). A removal narrows a kept report the same way
+    to the text units it still cites.
+
+    ``text_units``: the corpus's (or those the units name); omit to leave
+    ``document_ids`` empty.
+    """
+    unit_to_documents = {
+        unit.id: list(unit.document_ids or []) for unit in (text_units or [])
+    }
+    filters_key = Constants.FILTERS.value
+    unit_filters = {
+        unit.id: filters
+        for unit in (text_units or [])
+        if isinstance(filters := (unit.attributes or {}).get(filters_key), dict)
+        and filters
+    }
+    for report in reports:
+        unit_ids = list(community_units.get(report.community_id, []))
+        report.text_unit_ids = unit_ids
+        document_ids: set[str] = set()
+        for unit_id in unit_ids:
+            document_ids.update(unit_to_documents.get(unit_id, ()))
+        # Sorted for a stable, reproducible record.
+        report.document_ids = sorted(document_ids)
+        attributes = {
+            k: v for k, v in (report.attributes or {}).items() if k != filters_key
+        }
+        maps = [{filters_key: unit_filters[u]} for u in unit_ids if u in unit_filters]
+        filters = (merge_attributes(maps) or {}).get(filters_key)
+        if filters:
+            attributes[filters_key] = filters
+        report.attributes = attributes
 
 
 def max_cut_depth(report: CommunityReport) -> int | None:

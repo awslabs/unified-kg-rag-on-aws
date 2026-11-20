@@ -19,6 +19,7 @@ import unified_kg_rag.adapters.ingestion.community_detector as detector_module
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_lineage
 from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
@@ -73,12 +74,22 @@ def _report(community_id: str, **kwargs) -> CommunityReport:
     )
 
 
+def _attach(
+    reports: list[CommunityReport],
+    communities: list[Community],
+    text_units: list[TextUnit] | None = None,
+) -> None:
+    """``attach_report_lineage`` over the ``communities``' text units, as
+    the detector calls it."""
+    attach_report_lineage(
+        reports, {c.id: list(c.text_unit_ids or []) for c in communities}, text_units
+    )
+
+
 class TestAttachReportLineage:
     def test_report_inherits_its_community_text_units(self) -> None:
         report = _report("c1")
-        CommunityDetector._attach_report_lineage(
-            [report], [_community("c1", ["t1", "t2"])], text_units=None
-        )
+        _attach([report], [_community("c1", ["t1", "t2"])], text_units=None)
         assert report.text_unit_ids == ["t1", "t2"]
 
     def test_documents_resolved_from_the_contributing_text_units(self) -> None:
@@ -89,17 +100,13 @@ class TestAttachReportLineage:
             # Not a member of this community, so its document must not appear.
             TextUnit(id="t9", text="c", document_ids=["d9"]),
         ]
-        CommunityDetector._attach_report_lineage(
-            [report], [_community("c1", ["t1", "t2"])], text_units=units
-        )
+        _attach([report], [_community("c1", ["t1", "t2"])], text_units=units)
         assert report.document_ids == ["d1", "d2"]
 
     def test_documents_empty_without_text_units(self) -> None:
         # Callers that do not supply the corpus still get text-unit lineage.
         report = _report("c1")
-        CommunityDetector._attach_report_lineage(
-            [report], [_community("c1", ["t1"])], text_units=None
-        )
+        _attach([report], [_community("c1", ["t1"])], text_units=None)
         assert report.text_unit_ids == ["t1"]
         assert report.document_ids == []
 
@@ -109,7 +116,7 @@ class TestAttachReportLineage:
             TextUnit(id="t1", text="a", document_ids=["d1"]),
             TextUnit(id="t2", text="b", document_ids=["d2"]),
         ]
-        CommunityDetector._attach_report_lineage(
+        _attach(
             [first, second],
             [_community("c1", ["t1"]), _community("c2", ["t2"])],
             text_units=units,
@@ -119,9 +126,7 @@ class TestAttachReportLineage:
 
     def test_report_without_a_matching_community_gets_empty_lineage(self) -> None:
         report = _report("orphan")
-        CommunityDetector._attach_report_lineage(
-            [report], [_community("c1", ["t1"])], text_units=None
-        )
+        _attach([report], [_community("c1", ["t1"])], text_units=None)
         assert report.text_unit_ids == []
         assert report.document_ids == []
 
@@ -168,7 +173,7 @@ class TestAttachReportLineage:
         assert [e["id"] for e in prompt_input["entities"]] == ["e1"]
 
         report = _report("c1")
-        CommunityDetector._attach_report_lineage([report], [community], units)
+        _attach([report], [community], units)
         assert sorted(report.text_unit_ids or []) == ["t1", "t2"]
         assert sorted(report.document_ids or []) == ["d1", "d2"]
 
@@ -284,9 +289,7 @@ class TestReportFilters:
                 id="t2", text="b", attributes={"filters": {"category": "logistics"}}
             ),
         ]
-        CommunityDetector._attach_report_lineage(
-            [report], [_community("c1", ["t1", "t2"])], units
-        )
+        _attach([report], [_community("c1", ["t1", "t2"])], units)
         assert report.attributes["filters"] == {"category": ["contract", "logistics"]}
 
 

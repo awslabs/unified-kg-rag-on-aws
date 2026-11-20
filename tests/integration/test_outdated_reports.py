@@ -254,8 +254,13 @@ def test_a_report_that_cannot_be_written_again_stays_recorded_and_flagged(
     # The run's end warns of what really stays flagged.
     (left,) = _logged(caplog, logging.WARNING, "stay flagged outdated")
     assert left.startswith(f"{len(kept)} community reports in 'default'")
+    units = _unit_ids(config, providers)
     for report_id in kept:
         assert after[report_id][REPORT_OUTDATED_FIELD] is True
+        # RV3-I5: its lineage is narrowed to what remains, so a filter on the
+        # deleted file no longer matches it.
+        assert set(after[report_id]["text_unit_ids"]) <= units
+        assert after[report_id]["attr_file"] == "a.txt"
     record = _record(providers)
     assert record["outdated_reports"] == kept
     # Every reader of the record names it, the run's metrics too.

@@ -571,8 +571,11 @@ text unit is made again from what remains. The removal finds the reports
 citing a removed unit and keeping others (a report cites its members' units,
 so a parent's are its children's: the chain up to the root is found), notes
 them with the entities it strips in the extraction store (the
-`outdated-reports` note), flags them outdated in the vector store and lists
-them in the run state. The removal deletes the removed documents' registry
+`outdated-reports` note), writes their lineage again without the removed
+units (their text units, documents and path filters are those of the units
+they still cite, so a filter on a deleted file stops matching them; their
+text stays until the refresh), flags them outdated in the vector store and
+lists them in the run state. The removal deletes the removed documents' registry
 records before the commit: a run killed in between leaves the note, which
 its successor's refresh reads, and the note goes once a build record lists
 what stays flagged. The

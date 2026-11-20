@@ -47,6 +47,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
     index_language,
     unbuilt_record_prefixes,
 )
+from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_lineage
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     RECORD_KINDS,
@@ -65,7 +66,8 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     stored_leaf_entry,
     unit_leaf_entry,
 )
-from unified_kg_rag.domain.models import Entity, Relationship
+from unified_kg_rag.domain.models import Entity, Relationship, TextUnit
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
@@ -185,6 +187,9 @@ class TextUnitRemoval:
                 results[key] = IndexingStats(total_items=len(outdated))
                 results[key].add_error(e, count=len(outdated))
             else:
+                narrowed = self._narrow_reports(suffix, outdated, set(text_unit_ids))
+                if narrowed is not None:
+                    results[f"vector_narrowed_reports_{suffix}"] = narrowed
                 results[key] = m.vector_indexer.mark_reports_outdated(outdated, suffix)
                 m.outdated_reports.setdefault(suffix, set()).update(outdated)
         m.deleted_reports.setdefault(suffix, set()).update(
@@ -222,6 +227,43 @@ class TextUnitRemoval:
             # The noted items are gone: the earlier strip is finished.
             self._clear_pending_strip(suffix)
         return results
+
+    def _narrow_reports(
+        self, suffix: str, report_ids: list[str], removed: set[str]
+    ) -> IndexingStats | None:
+        """Write the stored reports ``report_ids`` again without the
+        ``removed`` text units in their lineage: their text units, documents
+        and document filters are those of the units they still cite
+        (``attach_report_lineage``), so a filter on a deleted file no longer
+        matches a report the refresh may not write again. Their text is
+        kept (flagged outdated next, it is written again from what remains
+        or stays flagged); an unchanged text keeps its vectors. ``None``
+        when the store cannot read reports by id."""
+        vector = self._m.vector_indexer
+        stored = vector.read_community_reports(report_ids, suffix)
+        if not stored:
+            return None
+        remaining = {
+            r.community_id: [u for u in r.text_unit_ids or [] if u not in removed]
+            for r in stored
+        }
+        attributes = vector.read_text_unit_attributes(
+            sorted({u for units in remaining.values() for u in units}), suffix=suffix
+        )
+        attach_report_lineage(
+            stored,
+            remaining,
+            [
+                TextUnit(
+                    id=unit_id,
+                    text="",
+                    document_ids=source_fields.document_ids({"attributes": held}),
+                    attributes=held,
+                )
+                for unit_id, held in sorted(attributes.items())
+            ],
+        )
+        return vector.upsert_community_reports(stored)
 
     def _rewritten_leaves(self, suffix: str, text_unit_ids: list[str]) -> set[str]:
         """The removed text units the run's commit writes back under their

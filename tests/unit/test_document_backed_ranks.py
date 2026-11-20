@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.search_strategies.local_search import LocalSearchSt
 from unified_kg_rag.adapters.storage import neptune_codec
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_lineage
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
@@ -609,7 +610,9 @@ def test_report_lineage_keeps_seed_documents_and_the_seed_filter() -> None:
             },
         ),
     ]
-    CommunityDetector._attach_report_lineage([report], [community], units)
+    attach_report_lineage(
+        [report], {community.id: list(community.text_unit_ids or [])}, units
+    )
     assert report.document_ids == ["d1", "seed_graphs/procure/0000-of-0001.jsonl"]
     assert (report.attributes or {})["filters"] == {
         "region": "north",
