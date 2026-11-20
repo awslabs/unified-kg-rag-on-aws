@@ -36,7 +36,8 @@ class AuditOutcome(StrEnum):
     FAILED = "failed"
     # Raised or answered with a caller's error (ErrorClass.is_caller_error).
     REFUSED = "refused"
-    # Its events' reader stopped before the end (a stream closed early).
+    # Its reader stopped before the end (a stream closed early, a caller
+    # that cancelled it).
     STOPPED = "stopped"
 
 

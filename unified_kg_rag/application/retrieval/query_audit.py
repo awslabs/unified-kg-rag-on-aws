@@ -6,10 +6,11 @@
 place every query ends (``GraphRAGChain._record_query``): ``invoke``,
 ``ainvoke``, ``search``, ``asearch``, the streams and ``aquery_events``, so
 ``run-rag``, ``run-eval``, the MCP server and the console each get it with
-no code of their own. A query that failed, timed out, was refused or whose
-stream was closed early gets one too; a cancelled ``ainvoke`` gets none
-from the chain, as its metrics (the host that cancels it records it:
-``GraphRAGChain.record_unrun_query``).
+no code of their own. A query that failed, timed out, was refused, whose
+stream was closed early or whose caller cancelled it gets one too (a
+cancelled one is ``stopped``, or ``failed`` with ``timeout`` when its
+deadline had passed); a host that gives up on a query before the chain ran
+it records it (``GraphRAGChain.record_unrun_query``).
 
 It is an INFO record of the ``unified_kg_rag.audit`` logger, its fields the
 record's own keys (``logging.log_format: structured`` writes them as one

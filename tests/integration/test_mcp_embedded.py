@@ -1072,13 +1072,21 @@ async def test_a_client_that_disconnects_frees_its_call_slot(
 ) -> None:
     # The SDK answers a stateless JSON POST once its tool call returns and
     # does not watch the connection meanwhile: a client that left held its
-    # call slot until its query ended. Its disconnect now cancels the call.
+    # call slot until its query ended. Its disconnect now cancels the call,
+    # which the chain records as a stopped query (RV4-1: it recorded none).
     import asyncio
 
     import httpx
     import uvicorn
 
     from unified_kg_rag.application.cli.mcp_server import build_mcp_app
+    from unified_kg_rag.application.retrieval import query_audit
+
+    records: list[Any] = []
+    monkeypatch.setattr(query_audit, "audit_enabled", lambda: True)
+    monkeypatch.setattr(query_audit, "emit", records.append)
+    metrics = _Metrics()
+    monkeypatch.setattr(index.providers, "metrics_sink", metrics)
 
     real_screen = GraphRAGChain._screen_input
     calls: list[str] = []
@@ -1130,3 +1138,47 @@ async def test_a_client_that_disconnects_frees_its_call_slot(
         server.should_exit = True
         await serving
         await chain.aclose()
+    # One record each: the call its client left, stopped, and the answer.
+    assert [r.outcome.value for r in records] == ["stopped", "answered"]
+    assert len({r.query_id for r in records}) == 2
+    assert [row["query_failed"] for row, _ in metrics.rows] == [0.0, 0.0]
+
+
+@requires_mcp
+async def test_a_kg_answer_cut_at_the_backstop_is_recorded_once(
+    index: Index, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Work that does not watch the deadline ends at the server's backstop:
+    # the chain records the cancelled query as timed out, and the server
+    # does not record it again.
+    import asyncio
+
+    from unified_kg_rag.application.retrieval import query_audit
+    from unified_kg_rag.shared.exceptions import QueryTimeoutError
+
+    records: list[Any] = []
+    monkeypatch.setattr(query_audit, "audit_enabled", lambda: True)
+    monkeypatch.setattr(query_audit, "emit", records.append)
+    metrics = _Metrics()
+    monkeypatch.setattr(index.providers, "metrics_sink", metrics)
+    monkeypatch.setattr(mcp_tools, "_BACKSTOP_GRACE_SECONDS", 0.2)
+    real_admit = GraphRAGChain._admit_query
+
+    async def unwatched(self: GraphRAGChain, *args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(30)
+        return await real_admit(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphRAGChain, "_admit_query", unwatched)
+    config = index.config.updated({"search.query_timeout_seconds": 0.3})
+    chain = GraphRAGChain(config, providers=index.providers)
+    try:
+        with pytest.raises(QueryTimeoutError):
+            await KnowledgeGraphTools(chain).answer(
+                "가젯을 보관하는 곳은?", strategy="local"
+            )
+    finally:
+        await chain.aclose()
+    ((record,),) = [records]
+    assert (record.outcome.value, record.error_class) == ("failed", "timeout")
+    ((values, dimensions),) = metrics.rows
+    assert values["query_failed"] == 1.0 and dimensions["error_class"] == "timeout"

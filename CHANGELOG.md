@@ -498,7 +498,10 @@ Bugs present in 0.3.0.
   one of the `mcp.max_concurrent_calls` slots (128 callers that left after 0.3 s kept the next call waiting 8 s);
   the disconnect now cancels the call and frees its slot, logged as cancelled, not failed, and its span marked
   `kg_rag.cancelled` without the error status (a failure of the call still reaches a host application as raised,
-  not in an `ExceptionGroup`; a `CancelledError` the call raised while its task was not cancelled is a failure).
+  not in an `ExceptionGroup`; a `CancelledError` the call raised while its task was not cancelled is a failure). The
+  chain records a cancelled `ainvoke` as a stopped query, as it records a console reader's stop: its query metrics
+  and its audit record, its usage up to there; one cancelled after its deadline passed, at the server's backstop, is
+  one timed-out query, not two.
   uvicorn's start line keeps the address the server listens on, which the logging setup digested (`Uvicorn running
   on len=4 sha=...`); a record that matches it keeps no traceback, and only the text and numbers it formats.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit

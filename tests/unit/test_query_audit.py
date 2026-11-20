@@ -286,9 +286,15 @@ async def test_a_query_a_host_gave_up_on_writes_one_record(audit: _Captured) -> 
     assert record.namespace == "default" and record.question is None
 
 
-async def test_a_cancelled_ainvoke_writes_none(audit: _Captured) -> None:
-    # As its metrics: the host that cancels it records it.
+async def test_a_cancelled_ainvoke_writes_one_stopped_record(
+    audit: _Captured,
+) -> None:
+    # RV4-1: a cancelled ainvoke (an MCP client that disconnected) wrote no
+    # record and no metric, where a console reader's stop writes `stopped`
+    # (ADR 0007: a cancelled caller is a stopped reader).
     chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
     started = asyncio.Event()
     real_screen = GraphRAGChain._screen_input
 
@@ -306,7 +312,44 @@ async def test_a_cancelled_ainvoke_writes_none(audit: _Captured) -> None:
             await task
     finally:
         await chain.aclose()
-    assert audit.fields() == []
+    record = _one(audit)
+    assert record.outcome is AuditOutcome.STOPPED
+    assert record.error_class is None and record.answer is None
+    assert record.requested_strategy == "simple"
+    assert record.question is not None
+    # Its metrics: one query, no failure.
+    ((_namespace, metrics, _properties),) = sink.emitted
+    assert metrics["query_failed"] == 0.0
+
+
+async def test_an_ainvoke_cancelled_past_its_deadline_is_one_timeout(
+    audit: _Captured, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A host's backstop (the MCP server's) cancels a query its deadline did
+    # not end (work that does not watch it): a timeout, not a stop.
+    chain = _simple_chain()
+    chain.config.search.query_timeout_seconds = 0.05
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    real_admit = GraphRAGChain._admit_query
+
+    async def unwatched(self: GraphRAGChain, *args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(10)
+        return await real_admit(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphRAGChain, "_admit_query", unwatched)
+    try:
+        task = asyncio.create_task(chain.ainvoke(_SIMPLE_QUERY))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        await chain.aclose()
+    record = _one(audit)
+    assert (record.outcome, record.error_class) == (AuditOutcome.FAILED, "timeout")
+    ((_namespace, metrics, properties),) = sink.emitted
+    assert metrics["query_failed"] == 1.0 and properties["error_class"] == "timeout"
 
 
 async def test_no_record_is_built_while_the_audit_logger_is_off(

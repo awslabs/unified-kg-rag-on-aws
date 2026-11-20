@@ -80,10 +80,12 @@ line, next to the record's `timestamp`, `level` and `logger`). It is written
 where every query ends in `GraphRAGChain`, so `run-rag`, `run-eval`, the MCP
 server, the console and an embedded chain write the same record: an answer
 and a search (`kg_search`, `run-rag --mode search`), one that failed, timed
-out or was refused, and a stream its reader closed early. A cancelled
-`ainvoke` writes none, as it records no query metric: the MCP server records
-a call it gave up on at its backstop (`outcome` `failed`, `error_class`
-`timeout`).
+out or was refused, a stream its reader closed early, and a query its caller cancelled (an MCP
+client that disconnected, a task cancelled by its host: `outcome`
+`stopped`, its usage up to there; `failed` with `error_class` `timeout`
+when its deadline had passed, as at the MCP server's backstop). An MCP
+`kg_answer` that timed out waiting for a call slot, before the chain ran
+it, gets its record from the server.
 
 It holds ids, counts and digests, never the text of the question, the answer
 or a source: the question and the answer are their length and hex SHA-256

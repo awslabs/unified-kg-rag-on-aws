@@ -1004,13 +1004,14 @@ class KnowledgeGraphTools:
         ``limits`` lowers the server's query limits for this call."""
 
         started = time.monotonic()
-        # Whether the chain returned its answer (and recorded its metrics).
-        answered = False
+        # Whether the chain took the query: from then on it records the
+        # query however it ends, cancelled at the backstop too.
+        asked = False
 
         def on_timeout(error: QueryTimeoutError) -> None:
-            # A call that timed out waiting for a slot, or at the backstop
-            # while the chain ran, has no query metric of the chain's own.
-            if not answered:
+            # A call that timed out waiting for a slot (or before it reached
+            # the chain) has no query metric of the chain's own.
+            if not asked:
                 self.chain.record_unrun_query(
                     {"search_strategy": strategy, "namespace": namespace},
                     error,
@@ -1018,7 +1019,7 @@ class KnowledgeGraphTools:
                 )
 
         async def run() -> AnswerToolResult:
-            nonlocal answered
+            nonlocal asked
             if records not in ANSWER_RECORDS:
                 raise InvalidArgumentError(
                     f"records must be one of {', '.join(ANSWER_RECORDS)}, "
@@ -1034,8 +1035,9 @@ class KnowledgeGraphTools:
                 self._history(history),
                 limits=limits,
             )
+            # No await between this and the chain's start (its _query).
+            asked = True
             output = await self.chain.ainvoke(rag_input)
-            answered = True
             outcome = self._checked(output)
             view = AnswerView.from_output(output)
             # The model-written sections first, then the sources as the
