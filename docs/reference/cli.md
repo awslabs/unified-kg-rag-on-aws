@@ -287,7 +287,7 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 
 Local web console: ask, ingest, evaluate, explore the graph, see usage and cost, edit the configuration
 
-Guide: [Console](../guides/console.md).
+Guide: [Console](../guides/console.md). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -299,6 +299,7 @@ Guide: [Console](../guides/console.md).
 | `--trace-url` `TEMPLATE` | — | Link each answer to its trace: a URL with {trace_id}, e.g. http://localhost:16686/trace/{trace_id} for Jaeger (default with observability.backend langfuse: LANGFUSE_HOST/trace/{trace_id}). |
 | `--trusted-identity-header` `NAME` | — | Take each request's caller from this header, set by the authenticating proxy (for example x-amzn-oidc-identity behind an Application Load Balancer), as its questions' user_id; a request without exactly one is refused (401). Off by default. Only behind a proxy that removes or overwrites any copy the client sends: otherwise a client names any user. |
 | `--metrics-sink` | `none` | Where to send the questions' query metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout, to stderr with --output-format json: query_latency_ms, the outcome counts query_failed, query_degraded, query_abstained and query_limited, query_throttled_requests, query_input_tokens and query_output_tokens, and query_cost_usd when models.prices prices every model called under unified_kg_rag/query, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and the Strategy that ran). |
+| `--namespace` | — | Namespace the pages and jobs start with (default: the config's processing.document_parsing.namespace, else 'default'); the header's picker switches Ask, Evaluate and Graph to another. --suffix is its deprecated alias. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
@@ -307,7 +308,7 @@ Guide: [Console](../guides/console.md).
 
 ## Provider flags
 
-Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-describe`, `run-prompt-tuning`, `prepare-benchmark assertions`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
+Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-describe`, `run-prompt-tuning`, `prepare-benchmark assertions`, `run-mcp-server`, `run-console`. Override the config's provider selection (see docs/guides/local-mode.md).
 
 | Flag | Default | Description |
 |---|---|---|

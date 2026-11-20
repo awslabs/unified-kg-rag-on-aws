@@ -42,6 +42,12 @@ from unified_kg_rag.application.cli.metrics_args import (
     add_metrics_sink_argument,
     build_metrics_sink,
 )
+from unified_kg_rag.application.cli.provider_args import (
+    add_provider_arguments,
+    apply_provider_arguments,
+    provider_flags,
+)
+from unified_kg_rag.application.cli.query_args import add_namespace_argument
 from unified_kg_rag.application.cli.trusted_identity import header_name_argument
 from unified_kg_rag.application.config import get_config, load_cli_dotenv
 from unified_kg_rag.application.plugins import load_plugins
@@ -168,6 +174,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "Environment dimension when "
         "UKR_METRICS_ENVIRONMENT is set and the Strategy that ran)",
     )
+    add_namespace_argument(
+        parser,
+        "Namespace the pages and jobs start with (default: the config's "
+        "processing.document_parsing.namespace, else 'default'); the header's "
+        "picker switches Ask, Evaluate and Graph to another. --suffix is its "
+        "deprecated alias",
+    )
+    add_provider_arguments(parser)
     add_config_arguments(parser)
     add_output_format_argument(parser)
     return parser
@@ -249,7 +263,9 @@ def main(argv: list[str] | None = None) -> int:
     config_path = Path(args.config_path).resolve() if args.config_path else None
     try:
         load_plugins()
-        config = get_config(config_path, allow_unknown_keys=args.allow_unknown_keys)
+        config = apply_provider_arguments(
+            get_config(config_path, allow_unknown_keys=args.allow_unknown_keys), args
+        )
         setup_cli_logging(config, args)
     except (ConfigurationError, FileNotFoundError) as e:
         setup_cli_logging(Config(), args)
@@ -274,6 +290,8 @@ def main(argv: list[str] | None = None) -> int:
         web_directory=web,
         trace_url_template=args.trace_url,
         sample_questions=_sample_questions(workspace),
+        provider_flags=tuple(provider_flags(args)),
+        namespace=args.namespace,
         token=token,
         trusted_identity_header=args.trusted_identity_header,
     )

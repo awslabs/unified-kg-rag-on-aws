@@ -6,7 +6,7 @@ import { I18nProvider, useI18n, type Locale } from "../i18n/i18n";
 import { ApiError, errorMessage } from "../lib/api";
 import { TrailProvider } from "../lib/trail";
 import type { Status } from "../lib/types";
-import { AskPage, graphParams, turnErrorText } from "./AskPage";
+import { AskPage, graphParams, processingRows, searchTypeOf, turnErrorText } from "./AskPage";
 
 const status = { config_path: "c.yaml", namespace: "default", jobs: [], sample_questions: ["Who ships parts?"], max_top_k: 40 } as unknown as Status;
 
@@ -171,5 +171,90 @@ describe("Show in the graph", () => {
     const community = { kind: "community", community_id: "c7" } as unknown as Parameters<typeof graphParams>[0];
     expect(graphParams(community, "default")).toEqual({ namespace: "default", community: "c7" });
     expect(graphParams(entity, null)).toEqual({ focus: "e1" });
+  });
+});
+
+describe("the namespace and search type a question sends", () => {
+  it("asks the namespace the header picked and leaves the search type to the config", async () => {
+    serveStream([{ kind: "start", query_id: "q1", trace_id: null, trace_url: null }]);
+    render(
+      <I18nProvider initial="en">
+        <TrailProvider>
+          <AskPage status={{ ...status, search_type: "lexical" } as Status} namespace="v2" />
+        </TrailProvider>
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByText("Who ships parts?"));
+    const calls = (fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls;
+    await waitFor(() => expect(calls.some(([url]) => String(url).endsWith("/api/ask"))).toBe(true));
+    const [, init] = calls.find(([url]) => String(url).endsWith("/api/ask"))!;
+    const body = JSON.parse(String(init!.body));
+    expect(body.namespace).toBe("v2");
+    // Not "hybrid": the server reads search.search_type.
+    expect(body.search_type).toBeNull();
+    // The page's other reads are the picked namespace's too.
+    expect(calls.some(([url]) => String(url).includes("strategies?namespace=v2"))).toBe(true);
+    expect(calls.some(([url]) => String(url).includes("namespace/methodologies?namespace=v2"))).toBe(true);
+    // The picker shows what the config searches with until one is picked.
+    expect(searchTypeOf(null, "lexical")).toEqual({ value: "lexical", sent: null });
+    expect(searchTypeOf("vector", "lexical")).toEqual({ value: "vector", sent: "vector" });
+  });
+});
+
+describe("the query processing panel", () => {
+  it("lists what processing changed or extracted, in the order it ran", () => {
+    const rows = processingRows({
+      original_query: "and its supplier?",
+      standalone_query: "Who supplies Acme Robotics?",
+      translated_query: null,
+      final_query: "Who supplies Acme Robotics?",
+      entities: ["Acme Robotics"],
+      hl_keywords: ["supply chain"],
+      ll_keywords: [],
+    });
+    expect(rows.map((r) => r.key)).toEqual(["rewrite", "searched", "entities", "highKeywords"]);
+  });
+
+  it("shows nothing for a question searched as asked with nothing extracted", () => {
+    expect(processingRows({ original_query: "q", final_query: "q", translated_query: null, entities: [] })).toEqual([]);
+  });
+
+  it("is a collapsed section under the answer", async () => {
+    serveStream([
+      { kind: "start", query_id: "q1", trace_id: null, trace_url: null },
+      {
+        kind: "result",
+        answer: "Umbra Freight.",
+        citations: [],
+        unknown_citation_markers: [],
+        strategy: "local",
+        routing: null,
+        abstained: false,
+        abstention_reason: null,
+        blocked: false,
+        error: false,
+        error_kind: null,
+        error_message: null,
+        rerank: null,
+        usage: null,
+        cost_usd: null,
+        unpriced_models: [],
+        prices_configured: false,
+        latency_seconds: 1,
+        total_results: 1,
+        context_sections_included: 1,
+        context_sections_excluded: 0,
+        processed_query: { original_query: "Who ships parts?", final_query: "Who ships parts?", translated_query: null, entities: ["Umbra Freight"] },
+        sources: [],
+        namespace: "default",
+        trace_id: null,
+        trace_url: null,
+      },
+    ]);
+    renderAsk();
+    fireEvent.click(await screen.findByText("Who ships parts?"));
+    const summary = await screen.findByText("Query processing");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Umbra Freight")).toBeInTheDocument();
   });
 });

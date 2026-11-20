@@ -510,10 +510,16 @@ def build_mcp_server(
         _parameter(
             "search_type",
             Annotated[
-                Literal[tuple(t.value for t in SearchType)],
-                Field(description="hybrid (BM25 and vector, fused), lexical or vector"),
+                Literal[tuple(t.value for t in SearchType)] | None,
+                Field(
+                    description=(
+                        "hybrid (BM25 and vector, fused), lexical or vector "
+                        f"(default {tools.chain.config.search.search_type.value}, the "
+                        "server's search.search_type)"
+                    )
+                ),
             ],
-            SearchType.HYBRID.value,
+            None,
         ),
         _parameter(
             "top_k",

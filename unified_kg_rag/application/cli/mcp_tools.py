@@ -852,7 +852,7 @@ class KnowledgeGraphTools:
         self,
         query: str,
         strategy: str | None,
-        search_type: str,
+        search_type: str | None,
         top_k: int | None,
         filters: dict[str, Any] | None,
         namespace: str | None,
@@ -860,7 +860,8 @@ class KnowledgeGraphTools:
         limits: QueryLimits | dict[str, Any] | None = None,
     ) -> RAGInput:
         try:
-            kind = SearchType(search_type)
+            # None: the config's search.search_type, as RAGInput reads it.
+            kind = None if search_type is None else SearchType(search_type)
         except ValueError:
             raise InvalidArgumentError(
                 f"search_type must be one of {', '.join(t.value for t in SearchType)}."
@@ -942,7 +943,7 @@ class KnowledgeGraphTools:
         query: str,
         *,
         strategy: str | None = None,
-        search_type: str = SearchType.HYBRID.value,
+        search_type: str | None = None,
         top_k: int | None = None,
         filters: dict[str, Any] | None = None,
         namespace: str | None = None,
@@ -984,7 +985,7 @@ class KnowledgeGraphTools:
         query: str,
         *,
         strategy: str | None = None,
-        search_type: str = SearchType.HYBRID.value,
+        search_type: str | None = None,
         top_k: int | None = None,
         filters: dict[str, Any] | None = None,
         namespace: str | None = None,

@@ -108,6 +108,20 @@ class NarrowingNotConfirmed(InvalidArgumentError):
         self.dropped = dropped
 
 
+def _safe_namespace(namespace: str | None) -> str | None:
+    """``namespace`` if it is a safe name (None: the config's).
+
+    Raises:
+        InvalidArgumentError: It is not.
+    """
+    if not namespace:
+        return None
+    try:
+        return validate_safe_name(namespace, "namespace")
+    except ValueError as e:
+        raise InvalidArgumentError(str(e)) from e
+
+
 def masked_error_name(error: str | None) -> str | None:
     """The error's name when ``error`` is the text a CLI shows of an
     unexpected failure (``operator_error_text``: ``"<name>: "`` and
@@ -280,6 +294,7 @@ class JobManager:
         on_ingest_end: Callable[[], None] | None = None,
         read_held: Callable[[str], Awaitable[list[str] | None]] | None = None,
         cwd: Path | None = None,
+        cli_flags: list[str] | None = None,
     ) -> None:
         self.store = store
         self.jobs_directory = jobs_directory
@@ -292,6 +307,8 @@ class JobManager:
         # no record), for refusing an unconfirmed narrowing.
         self.read_held = read_held
         self.cwd = cwd or Path.cwd()
+        # run-console's provider flags, passed on to every job's CLI.
+        self.cli_flags = list(cli_flags or [])
         self.jobs: dict[str, Job] = {}
         # Namespaces a request has claimed before its job is registered: two
         # requests at once must not both pass the check across an await.
@@ -369,7 +386,10 @@ class JobManager:
         )
 
     def _config_args(self) -> list[str]:
-        return ["--config-path", str(self.config_path)] if self.config_path else []
+        """The config file and run-console's provider flags, as a job's CLI
+        takes them."""
+        given = ["--config-path", str(self.config_path)] if self.config_path else []
+        return [*given, *self.cli_flags]
 
     async def start_ingest(
         self,
@@ -406,13 +426,7 @@ class JobManager:
         env: dict[str, str] = {}
         if chosen:
             env["UKR__INDEXING__METHODOLOGIES"] = json.dumps(chosen)
-        chosen_namespace = namespace
-        if chosen_namespace:
-            try:
-                chosen_namespace = validate_safe_name(chosen_namespace, "namespace")
-            except ValueError as e:
-                raise InvalidArgumentError(str(e)) from e
-            env["UKR__PROCESSING__DOCUMENT_PARSING__NAMESPACE"] = chosen_namespace
+        chosen_namespace = _safe_namespace(namespace)
         namespace = resolve_namespace(config, chosen_namespace)
         if not confirm_narrowing:
             await self._check_narrowing(namespace, config)
@@ -490,6 +504,9 @@ class JobManager:
             "--output-format",
             "json",
         ]
+        # The namespace resolved here (the request's, else run-console's or
+        # the config's), named to the job as run-ingestion takes it.
+        argv.extend(["--namespace", namespace])
         if force_rebuild:
             argv.append("--force-rebuild")
         if reset:
@@ -535,8 +552,10 @@ class JobManager:
         pairwise_judge: bool = False,
         fail_if: list[str] | None = None,
         max_failure_rate: float | None = None,
+        namespace: str | None = None,
     ) -> Job:
-        """Start ``run-eval`` over ``dataset`` (a resolved file).
+        """Start ``run-eval`` over ``dataset`` (a resolved file), querying
+        ``namespace`` (default: the config's).
 
         Raises:
             JobConflict: A job runs in the namespace.
@@ -569,7 +588,7 @@ class JobManager:
             raise InvalidArgumentError("the failure budget must be between 0 and 1")
         if not await asyncio.to_thread(dataset.is_file):
             raise PathRefused(f"'{dataset_ref}' is not a file")
-        namespace = resolve_namespace(config, None)
+        namespace = resolve_namespace(config, _safe_namespace(namespace))
         job_id = self._new_id()
         self._claim(namespace, job_id)
         try:
@@ -616,6 +635,8 @@ class JobManager:
             str(repeats),
             "--output-directory",
             str(output),
+            "--namespace",
+            namespace,
             "--output-format",
             "json",
         ]

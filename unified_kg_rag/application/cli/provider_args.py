@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Provider-selection flags shared by the CLIs (run-ingestion, run-rag,
-run-eval, run-prompt-tuning, run-visualization).
+run-eval, run-prompt-tuning, run-visualization, run-console, ...).
 
 Each flag overrides one ``backend`` / ``providers`` key of the loaded config
 (see ``application.bootstrap.with_provider_overrides``); omitted flags leave
@@ -72,6 +72,29 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
         help="providers.llm.base_url and providers.embedding.base_url (the "
         "Ollama or OpenAI-compatible server)",
     )
+
+
+def _provider_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    add_provider_arguments(parser)
+    return parser
+
+
+def provider_flags(args: argparse.Namespace) -> list[str]:
+    """The provider flags ``args`` holds, as a command line again: what a
+    CLI that starts others (``run-console``'s jobs) passes on, so each
+    applies them as it would its own."""
+    flags: list[str] = []
+    for action in _provider_parser()._actions:
+        value = getattr(args, action.dest, None) if action.option_strings else None
+        if value is not None:
+            flags += [action.option_strings[0], str(value)]
+    return flags
+
+
+def parse_provider_flags(flags: list[str]) -> argparse.Namespace:
+    """``flags`` (:func:`provider_flags`) parsed back."""
+    return _provider_parser().parse_args(flags)
 
 
 def apply_provider_arguments(config: Config, args: argparse.Namespace) -> Config:

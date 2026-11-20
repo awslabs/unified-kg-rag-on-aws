@@ -129,3 +129,34 @@ describe("a run stopped at its budget", () => {
     expect(screen.queryByText("The run failed")).not.toBeInTheDocument();
   });
 });
+
+describe("the header's namespace", () => {
+  const sent = () =>
+    (fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([url, init]) => [String(url), JSON.parse(String(init!.body))] as const);
+
+  it("is the one an evaluation queries", async () => {
+    serve();
+    renderPage(<EvaluatePage status={status} namespace="v2" onJobsChanged={() => undefined} />);
+    const start = await screen.findByRole("button", { name: "Start evaluation" });
+    await vi.waitFor(() => expect(start).toBeEnabled());
+    fireEvent.click(start);
+    await vi.waitFor(() => expect(sent()).toHaveLength(1));
+    const [url, body] = sent()[0]!;
+    expect(url).toBe("/api/jobs/evaluate");
+    expect(body.namespace).toBe("v2");
+  });
+
+  it("is the one an ingestion writes unless another is typed", async () => {
+    serve();
+    renderPage(<IngestPage status={status} namespace="v2" onJobsChanged={() => undefined} />);
+    fireEvent.click(await screen.findByRole("radio"));
+    fireEvent.click(screen.getByRole("button", { name: "Start ingestion" }));
+    await vi.waitFor(() => expect(sent()).toHaveLength(1));
+    const [url, body] = sent()[0]!;
+    expect(url).toBe("/api/jobs/ingest");
+    expect(body.namespace).toBe("v2");
+    expect(body).not.toHaveProperty("index_value");
+  });
+});

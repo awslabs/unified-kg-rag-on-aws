@@ -16,6 +16,19 @@ interface Counts {
   cache_hits: number;
   failed_calls: number;
   rerank_calls: number;
+  /** The embedding model's requests and their input tokens (absent from an older server). */
+  embedding_calls?: number;
+  embedding_input_tokens?: number;
+}
+
+/** A usage row's requests of every kind (language, rerank and embedding
+ * models'), and its input tokens (the embedding requests' too): the
+ * embedding model's row counts its own. */
+export function rowRequests(r: Counts): { calls: number; inputTokens: number } {
+  return {
+    calls: r.llm_calls + (r.rerank_calls ?? 0) + (r.embedding_calls ?? 0),
+    inputTokens: r.input_tokens + (r.embedding_input_tokens ?? 0),
+  };
 }
 
 interface Dashboard {
@@ -256,8 +269,8 @@ function UsageTable({ title, rows, showCost = false }: { title: string; rows: ({
             {rows.map((r) => (
               <tr key={r.name}>
                 <td className="mono">{r.name}</td>
-                <td className="num">{number(r.llm_calls)}</td>
-                <td className="num">{number(r.input_tokens)}</td>
+                <td className="num">{number(rowRequests(r).calls)}</td>
+                <td className="num">{number(rowRequests(r).inputTokens)}</td>
                 <td className="num">{number(r.output_tokens)}</td>
                 <td className="num">{number(r.cache_hits)}</td>
                 {showCost ? <td className="num">{r.cost_usd != null ? usd(r.cost_usd) : "—"}</td> : null}

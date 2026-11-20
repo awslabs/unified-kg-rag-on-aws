@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { AnswerText, CitationList } from "../components/AnswerText";
 import { EvidenceTrace } from "../components/EvidenceTrace";
 import { StrategyPicker } from "../components/StrategyPicker";
@@ -9,7 +9,7 @@ import { joinList, joinSentences, useI18n, type I18n } from "../i18n/i18n";
 import { errorMessage, failureHelp, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
-import type { AskEvent, AskResult, Citation, Degradation, NamespaceHeld, Source, Status, StrategyInfo } from "../lib/types";
+import type { AskEvent, AskResult, Citation, Degradation, NamespaceHeld, ProcessedQuery, Source, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
 import { contentLang } from "../lib/contentLang";
 
@@ -88,13 +88,22 @@ export function graphParams(source: Source, namespace: string | null | undefined
   return params;
 }
 
-export function AskPage({ status }: { status: Status | null }) {
+/** The search type a question sends: the one picked, else none, so the
+ * server searches with search.search_type (`configured`, what the picker
+ * shows until one is picked). */
+export function searchTypeOf(picked: string | null, configured: string | null | undefined): { value: string; sent: string | null } {
+  return { value: picked ?? configured ?? "hybrid", sent: picked };
+}
+
+export function AskPage({ status, namespace }: { status: Status | null; namespace?: string | null }) {
   const { t } = useI18n();
   const { setTrail } = useTrail();
-  const strategies = useApi(() => get<{ strategies: StrategyInfo[] }>("strategies"), [status?.config_path]);
+  // The namespace the header picked (undefined: the config's).
+  const asked = namespace ?? undefined;
+  const strategies = useApi(() => get<{ strategies: StrategyInfo[] }>("strategies", { namespace: asked }), [status?.config_path, asked]);
   // Whether the namespace holds anything yet (read again after an ingestion).
   const ingested = (status?.jobs ?? []).filter((j) => j.kind === "ingest" && j.status === "succeeded").length;
-  const held = useApi(() => get<NamespaceHeld>("namespace/methodologies").catch(() => null), [status?.config_path, ingested]);
+  const held = useApi(() => get<NamespaceHeld>("namespace/methodologies", { namespace: asked }).catch(() => null), [status?.config_path, ingested, asked]);
   // Nothing ingested: a question would be refused. (A namespace indexed
   // before build records were written has none, yet answers.)
   const empty = held.data ? !held.data.indexed : false;
@@ -103,12 +112,25 @@ export function AskPage({ status }: { status: Status | null }) {
   const [strategy, setStrategy] = useState("auto");
   const [followUp, setFollowUp] = useState(true);
   const [topK, setTopK] = useState(10);
-  const [searchType, setSearchType] = useState("hybrid");
+  const [pickedSearchType, setSearchType] = useState<string | null>(null);
+  const searchType = searchTypeOf(pickedSearchType, status?.search_type);
   const [filters, setFilters] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   // The source open in the trace (its rank), set by an answer's [n].
   const [openRank, setOpenRank] = useState<number | null>(null);
+  // Another namespace picked: its conversation starts over (the question
+  // being typed stays). Adjusted while rendering, as React advises for
+  // state derived from a prop.
+  const [conversationOf, setConversationOf] = useState(asked);
+  if (conversationOf !== asked) {
+    setConversationOf(asked);
+    if (conversationOf !== undefined) {
+      setTurns([]);
+      setSelected(null);
+      setOpenRank(null);
+    }
+  }
   const abort = useRef<AbortController | null>(null);
   const counter = useRef(0);
   const busy = turns.some((turn) => turn.status === "streaming");
@@ -134,8 +156,9 @@ export function AskPage({ status }: { status: Status | null }) {
         {
           query: text,
           search_strategy: strategy,
-          search_type: searchType,
+          search_type: searchType.sent,
           top_k: topK,
+          namespace: asked ?? null,
           history: history.length ? history : null,
           filter_text: filterText(filters),
         },
@@ -288,7 +311,7 @@ export function AskPage({ status }: { status: Status | null }) {
                       </label>
                       <label className="field">
                         <span className="field-label">{t("ask.searchType")}</span>
-                        <select className="select" value={searchType} onChange={(e) => setSearchType(e.target.value)}>
+                        <select className="select" value={searchType.value} onChange={(e) => setSearchType(e.target.value)}>
                           {["hybrid", "lexical", "vector"].map((v) => (
                             <option key={v} value={v}>
                               {t(`ask.searchType.${v}`)}
@@ -425,6 +448,55 @@ export function stepNames(entries: Degradation[], t: (key: string) => string): s
   return joinList(names, t);
 }
 
+/** The rows of the "Query processing" panel: each step that changed or
+ * extracted something, in the order the query ran them (the follow-up
+ * rewrite, the translation, what was searched, then the extractions). */
+export function processingRows(processed: ProcessedQuery): { key: string; value: string | string[] }[] {
+  const rows: { key: string; value: string | string[] }[] = [];
+  const standalone = processed.standalone_query;
+  if (standalone && standalone !== processed.original_query) rows.push({ key: "rewrite", value: standalone });
+  if (processed.translated_query) rows.push({ key: "translation", value: processed.translated_query });
+  if (processed.final_query !== processed.original_query) rows.push({ key: "searched", value: processed.final_query });
+  if (processed.entities.length) rows.push({ key: "entities", value: processed.entities });
+  if (processed.hl_keywords?.length) rows.push({ key: "highKeywords", value: processed.hl_keywords });
+  if (processed.ll_keywords?.length) rows.push({ key: "lowKeywords", value: processed.ll_keywords });
+  return rows;
+}
+
+/** Why the answer searched what it did: a collapsed panel of the query's
+ * processing (nothing when the query was searched as asked, with no
+ * extraction). */
+function QueryProcessing({ processed }: { processed: ProcessedQuery }) {
+  const { t, locale } = useI18n();
+  const rows = processingRows(processed);
+  if (!rows.length) return null;
+  return (
+    <details className="query-processing">
+      <summary>{t("ask.processing.title")}</summary>
+      <dl className="kv">
+        {rows.map((row) => (
+          <Fragment key={row.key}>
+            <dt>{t(`ask.processing.${row.key}`)}</dt>
+            <dd>
+              {Array.isArray(row.value) ? (
+                <ul className="term-list">
+                  {row.value.map((term) => (
+                    <li key={term} className="mono" lang={contentLang(term, locale)}>
+                      {term}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <span lang={contentLang(row.value, locale)}>{row.value}</span>
+              )}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
 function truncate(text: string, length: number): string {
   return text.length > length ? `${text.slice(0, length - 1)}…` : text;
 }
@@ -473,6 +545,7 @@ function TurnView({
           </p>
         )}
         {result && !turn.error ? <CitationList citations={result.citations} onOpen={onOpenCitation} /> : null}
+        {result && !turn.error ? <QueryProcessing processed={result.processed_query} /> : null}
         {turn.status === "stopped" ? <p className="muted">{t("ask.stopped")}</p> : null}
         {result?.abstained ? (
           <div style={{ marginTop: 12 }}>

@@ -246,7 +246,7 @@ test("the graph is the namespace's with two namespaces exported", async ({ page,
   await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
   const headers = { "X-Console-Request": "1", ...(token ? { "X-Console-Token": token } : {}) };
   const { corpora } = (await (await page.request.get("/api/corpora", { headers })).json()) as { corpora: { ref: string }[] };
-  const started = await page.request.post("/api/jobs/ingest", { headers, data: { corpus: corpora[0]!.ref, index_value: "e2e-other" } });
+  const started = await page.request.post("/api/jobs/ingest", { headers, data: { corpus: corpora[0]!.ref, namespace: "e2e-other" } });
   expect(started.ok(), await started.text()).toBe(true);
   const { id } = (await started.json()) as { id: string };
   await expect
@@ -272,4 +272,22 @@ test("the graph is the namespace's with two namespaces exported", async ({ page,
   await expect(page.locator(".graph-canvas")).toHaveAttribute("data-traced", "1");
   await expect(picked()).toContainText("default");
   await expect(page.getByText("No graph of")).toHaveCount(0);
+
+  // The header's picker (arch E3) switches Graph and Ask to the other
+  // namespace, and keeps the choice across a reload.
+  const header = page.getByRole("combobox", { name: "Namespace" });
+  await page.goto("/graph");
+  await expect(header).toHaveValue("default");
+  await header.selectOption("e2e-other");
+  await expect(picked()).toContainText("e2e-other");
+  await expect(page.locator(".graph-canvas canvas").first()).toBeVisible({ timeout: 60_000 });
+  await page.reload();
+  await expect(header).toHaveValue("e2e-other");
+  await page.goto("/ask");
+  const asked = page.waitForRequest((request) => request.url().endsWith("/api/ask"));
+  await page.getByLabel("Question").fill("Who carries the lidar units to Kestrel Depot?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  expect(JSON.parse((await asked).postData() ?? "{}").namespace).toBe("e2e-other");
+  await expect(page.locator(".answer-meta").first()).toBeVisible({ timeout: 60_000 });
+  await header.selectOption("default");
 });

@@ -220,7 +220,7 @@ cost (`remedy: next_run`).
 | `kind` | When | `remedy` |
 |---|---|---|
 | `communities` | The community counters crossed an `indexing.community_compaction` threshold (the WARNING above) | `reset` |
-| `communities` (`settings: [community_reports]`) | The build record lists reports kept after the text they were written from was removed, which a run could not write again (`outdated_reports`, whatever `on_drift_recommendation`) | `next_run`: a model call per report |
+| `outdated_reports` | The build record lists reports kept after the text they were written from was removed, which a run could not write again (`outdated_reports`, whatever `on_drift_recommendation`) | `next_run`: a model call per report |
 | `answer_settings` | The community reports or description summaries the last full build wrote were made under other settings (their model, prompt, language, summarization switched on) than the config's: incremental runs write their delta's alone | `reset`: a model call per report or summary |
 | `extraction_settings` | The extraction settings changed since the last run (the changed paths in `settings`) | `next_run`: it extracts every document again |
 | `methodologies` | The config builds a corpus-wide artifact the namespace lacks | `next_run`: it rebuilds the namespace from the stored extractions |

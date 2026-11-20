@@ -13,11 +13,12 @@ stale, each with what applies it:
 - ``communities`` (``RebuildRemedy.RESET``): the community counters crossed
   an ``indexing.community_compaction`` threshold, or the run that wrote the
   record measured a drift that recommends one
-  (``community_drift.reset_reasons``); and (``RebuildRemedy.NEXT_RUN``),
-  whatever the thresholds, the record lists community reports kept after a
-  run removed text they were written from and could not write them again
-  from what remains (``IndexBuildRecord.outdated_reports``): they may state
-  it, and the next incremental run tries again (``report_refresh``).
+  (``community_drift.reset_reasons``).
+- ``outdated_reports`` (``RebuildRemedy.NEXT_RUN``), whatever the
+  thresholds: the record lists community reports kept after a run removed
+  text they were written from and could not write them again from what
+  remains (``IndexBuildRecord.outdated_reports``): they may state it, and
+  the next incremental run tries again (``report_refresh``).
 - ``answer_settings`` (reset): the community reports or description
   summaries the last full build wrote were made under other settings
   (prompt, model, language; ``cache_keys.corpus_answer_fingerprints``)
@@ -75,6 +76,7 @@ class RebuildRemedy(str, Enum):
 
 class RebuildReasonKind(str, Enum):
     COMMUNITIES = "communities"
+    OUTDATED_REPORTS = "outdated_reports"
     ANSWER_SETTINGS = "answer_settings"
     EXTRACTION_SETTINGS = "extraction_settings"
     METHODOLOGIES = "methodologies"
@@ -180,7 +182,7 @@ def _outdated_report_reasons(
         return []
     return [
         RebuildReason(
-            kind=RebuildReasonKind.COMMUNITIES,
+            kind=RebuildReasonKind.OUTDATED_REPORTS,
             remedy=RebuildRemedy.NEXT_RUN,
             detail=f"{len(outdated)} community reports were kept after "
             "documents they were written from were deleted or changed, and "

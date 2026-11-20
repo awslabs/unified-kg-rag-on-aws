@@ -103,8 +103,9 @@ def current_graph(
     config: Config,
     cache_directory: Path,
     providers: Callable[[], Providers] | None = None,
+    namespace: str | None = None,
 ) -> CurrentGraph:
-    """The visualization data of the config's index namespace that shows
+    """The visualization data of ``namespace`` (default: the config's) that shows
     what its stores hold (``current_visualization_data``, the builder
     ``run-visualization`` uses): the newest export under the cache (and
     ``graph.visualization.outputs_directory``) that names the build its
@@ -131,7 +132,7 @@ def current_graph(
         stored_export,
     )
 
-    suffix = resolve_namespace(config, None)
+    suffix = resolve_namespace(config, namespace)
     if not config.graph.visualization.export_data:
         return CurrentGraph("export_off", suffix)
     bundle = providers() if providers is not None else build_providers(config)
@@ -182,19 +183,24 @@ class GraphBuilder:
         self._lock = threading.Lock()
         self._providers: tuple[Config, Providers] | None = None
 
-    def current(self, load_config: Callable[[], Config]) -> CurrentGraph:
-        """:func:`current_graph` of the config ``load_config`` reads;
-        ``failed`` (logged) when either raises, the page then listing the
-        exports there are."""
+    def current(
+        self, load_config: Callable[[], Config], namespace: str | None = None
+    ) -> CurrentGraph:
+        """:func:`current_graph` of ``namespace`` (default: the config's)
+        under the config ``load_config`` reads; ``failed`` (logged) when
+        either raises, the page then listing the exports there are."""
         with self._lock:
-            namespace = None
+            asked, namespace = namespace, None
             reason = "config"
             try:
                 config = load_config()
-                namespace = resolve_namespace(config, None)
+                namespace = resolve_namespace(config, asked)
                 reason = "read"
                 return current_graph(
-                    config, self.cache_directory, lambda: self._bundle(config)
+                    config,
+                    self.cache_directory,
+                    lambda: self._bundle(config),
+                    namespace,
                 )
             except Exception as e:  # noqa: BLE001 - the page still lists the exports
                 log_error(

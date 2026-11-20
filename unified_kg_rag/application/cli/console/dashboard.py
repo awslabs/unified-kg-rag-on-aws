@@ -24,6 +24,9 @@ from unified_kg_rag.domain.pricing import price_of, usage_cost_usd
 from unified_kg_rag.domain.retrieval.abstention import REASON_QUERY_LIMIT
 from unified_kg_rag.shared.utils.stats import quantile
 
+# The usage counters a role's and a model's rows sum (LLMUsageCounts): a
+# role's or a model's requests of each kind, so the embedding model's row
+# and cost read its own.
 _COUNTERS = (
     "llm_calls",
     "input_tokens",
@@ -31,7 +34,12 @@ _COUNTERS = (
     "cache_hits",
     "failed_calls",
     "rerank_calls",
+    "embedding_calls",
+    "embedding_input_tokens",
 )
+# The counters of a request a price applies to: a model with one and no
+# price is named unpriced.
+_PRICED_REQUESTS = ("llm_calls", "rerank_calls", "embedding_calls")
 
 
 def _add(target: dict[str, float], counts: Mapping[str, Any]) -> None:
@@ -154,9 +162,10 @@ def summarize(
             priced_queries += 1
         for model, counts in (usage.get("by_model") or {}).items():
             _add(by_model[model], counts)
-            if (counts.get("llm_calls") or counts.get("rerank_calls")) and price_of(
-                config.models.prices, model
-            ) is None:
+            if (
+                any(counts.get(name) for name in _PRICED_REQUESTS)
+                and price_of(config.models.prices, model) is None
+            ):
                 unpriced.add(model)
         for role, counts in (usage.get("by_role") or {}).items():
             _add(by_role[role], counts)

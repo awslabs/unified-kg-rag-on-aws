@@ -151,6 +151,22 @@ Each strategy's results, reports and summary, and
 metrics; two questions show the mechanics only, so measure on a few hundred
 before you trust a difference.
 
+## Open the console
+
+The web console asks, ingests, evaluates and draws the graph on the same
+local stores. It needs the `console` extra and a build of its web client
+(Node.js 20.19 or later); `--backend local` works without a config file, as
+for the commands above:
+
+```sh
+uv sync --no-dev --inexact --extra console
+(cd console/web && npm ci && npm run build)
+uv run --no-dev run-console --backend local --source-directory .
+```
+
+Open the address it prints. [Console](../guides/console.md) describes
+each page.
+
 ## Next steps
 
 - [Local mode](../guides/local-mode.md): other model servers, the stores in

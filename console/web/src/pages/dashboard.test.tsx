@@ -3,7 +3,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n/i18n";
-import { DashboardPage } from "./DashboardPage";
+import { DashboardPage, rowRequests } from "./DashboardPage";
 
 function serve(refused: number, limited = 0, cancelled = 0, tokensPerQuery: number | null = 10) {
   const totals = { queries: 4, answered: 3, abstained: 0, decline_rate: 0, limited, errors: 0, refused, cancelled, latency_p50: 1, latency_p95: 2, cost_usd: null, priced_queries: 0 };
@@ -110,5 +110,13 @@ describe("DashboardPage", () => {
     );
     await screen.findByText("Refused");
     expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
+  });
+});
+
+describe("a usage row", () => {
+  it("counts every kind of request, the embedding model's too", () => {
+    const row = { llm_calls: 0, input_tokens: 0, output_tokens: 0, cache_hits: 0, failed_calls: 0, rerank_calls: 0, embedding_calls: 3, embedding_input_tokens: 120 };
+    expect(rowRequests(row)).toEqual({ calls: 3, inputTokens: 120 });
+    expect(rowRequests({ ...row, llm_calls: 2, input_tokens: 10, rerank_calls: 1, embedding_calls: undefined, embedding_input_tokens: undefined })).toEqual({ calls: 3, inputTokens: 10 });
   });
 });

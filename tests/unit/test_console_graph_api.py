@@ -192,7 +192,9 @@ def test_the_graph_page_builds_one_provider_bundle_per_config(
     )
     read: list[object] = []
 
-    def current(config: object, cache: Path, providers: Any) -> object:
+    def current(
+        config: object, cache: Path, providers: Any, namespace: Any = None
+    ) -> object:
         read.append(providers())
         return graph_api.CurrentGraph("unrecorded", "default")
 

@@ -121,7 +121,8 @@ class AskRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=MAX_QUESTION_CHARACTERS)
     search_strategy: SearchStrategy = SearchStrategy.AUTO
-    search_type: SearchType = SearchType.HYBRID
+    # None: the config's search.search_type, as RAGInput reads it.
+    search_type: SearchType | None = None
     top_k: int = Field(default=10, ge=1, le=MAX_SERVED_TOP_K)
     history: list[AskTurn] | None = Field(default=None, max_length=MAX_HISTORY_TURNS)
     filters: dict[str, Any] | None = None

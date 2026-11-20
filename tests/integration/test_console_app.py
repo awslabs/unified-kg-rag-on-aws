@@ -673,7 +673,9 @@ def test_the_graph_page_brings_the_namespace_s_graph_up_to_date(
 
     asked: list[Path] = []
 
-    def current(config: Any, cache: Path, providers: Any = None) -> None:
+    def current(
+        config: Any, cache: Path, providers: Any = None, namespace: Any = None
+    ) -> None:
         asked.append(cache)
         raise StoreConnectionError("graph store down")
 
@@ -954,6 +956,53 @@ def test_a_rebuild_then_an_added_file_ingests_in_one_run(
         for w in second["warnings"]
         for text in ("Missing cache", "settings changed", "Rewinding")
     ), second["warnings"]
+
+
+def test_the_pages_read_the_namespace_the_header_picks(client: Any) -> None:
+    # Ask, Evaluate and Graph read the configured namespace only: another
+    # one the console ingested could be neither asked nor evaluated.
+    files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
+    assert _upload(client, "picked", files).status_code == 200
+    ingested = _ingest(client, "uploads:picked", namespace="picked")
+    assert ingested["status"] == "succeeded", ingested["log"]
+    assert ingested["command"][ingested["command"].index("--namespace") + 1] == "picked"
+    listed = client.get("/api/namespaces").json()
+    # The config's first, then each the stores hold.
+    assert listed["default"] == "default" and listed["listed"] is True
+    assert listed["namespaces"][0] == "default" and "picked" in listed["namespaces"]
+    events = _ask(
+        client, query="Who carries parts?", search_strategy="naive", namespace="picked"
+    )
+    (result,) = [e for e in events if e["kind"] == "result"]
+    assert result["namespace"] == "picked" and not result["error"]
+    held = client.get("/api/namespace/methodologies", params={"namespace": "picked"})
+    assert held.json()["namespace"] == "picked" and held.json()["indexed"]
+    graphs = client.get("/api/graphs", params={"namespace": "picked"}).json()
+    assert graphs["current"]["namespace"] == "picked"
+    assert client.get("/api/graphs", params={"namespace": "Bad"}).status_code == 400
+    job = client.post(
+        "/api/jobs/evaluate",
+        json={
+            "dataset": "workspace:datasets/demo-eval.json",
+            "strategies": ["naive"],
+            "namespace": "picked",
+        },
+        headers=HEADERS,
+    ).json()
+    assert job["namespace"] == "picked"
+    assert job["command"][job["command"].index("--namespace") + 1] == "picked"
+    assert _wait(client, job["id"])["status"] == "succeeded"
+
+
+def test_a_question_searches_the_config_s_search_type_unless_it_names_one(
+    client: Any,
+) -> None:
+    # The page and the MCP tools sent hybrid whatever search.search_type set.
+    from unified_kg_rag.application.cli.console.ask import AskRequest
+
+    assert AskRequest(query="q").search_type is None
+    status = client.get("/api/status").json()
+    assert status["search_type"] == "hybrid"
 
 
 def test_ingestion_refuses_the_workspace_itself_and_a_file(client: Any) -> None:

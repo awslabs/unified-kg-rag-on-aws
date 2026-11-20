@@ -69,6 +69,10 @@ from unified_kg_rag.application.cli.console.settings_api import (
 )
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.cli.conventions import host_without_port, is_loopback
+from unified_kg_rag.application.cli.provider_args import (
+    apply_provider_arguments,
+    parse_provider_flags,
+)
 from unified_kg_rag.application.cli.trusted_identity import TrustedIdentity
 from unified_kg_rag.application.config import get_config
 from unified_kg_rag.application.plugins import load_plugins
@@ -136,6 +140,12 @@ class ConsoleOptions:
     web_directory: Path | None = None
     trace_url_template: str | None = None
     sample_questions: list[str] = field(default_factory=list)
+    # run-console's provider flags (--backend, ...), applied to the config
+    # the pages read and passed on to every job, as each CLI applies them.
+    provider_flags: tuple[str, ...] = ()
+    # run-console --namespace: the namespace the pages and jobs default to
+    # (None: the config's).
+    namespace: str | None = None
     # The per-launch access token every request must carry (the cookie the
     # tokenised URL sets, or the X-Console-Token header); None turns the
     # check off (tests of the other checks only).
@@ -215,6 +225,7 @@ class IngestBody(_Request):
 
 class EvaluateBody(_Request):
     dataset: str = Field(min_length=1, max_length=1024)
+    namespace: str | None = Field(default=None, max_length=128)
     strategies: list[str] = Field(min_length=1, max_length=12)
     repeats: int = Field(default=1, ge=1, le=20)
     closed_book: bool = False
@@ -313,6 +324,7 @@ class ConsoleState:
             load_config=self.load_config,
             on_ingest_end=self.ask.reset,
             read_held=self._held,
+            cli_flags=list(options.provider_flags),
         )
         self.graphs = graph_api.GraphBuilder(options.cache_directory)
         self._build_roots()
@@ -360,11 +372,31 @@ class ConsoleState:
             # a file type or a kind one registers is known to every page
             # (a plugin that cannot be loaded is the config error shown).
             load_plugins()
-            self._config = get_config(
-                self.options.config_path,
-                allow_unknown_keys=self.options.allow_unknown_keys,
+            self._config = self._overridden(
+                get_config(
+                    self.options.config_path,
+                    allow_unknown_keys=self.options.allow_unknown_keys,
+                )
             )
         return self._config
+
+    def _overridden(self, config: Config) -> Config:
+        """``config`` with run-console's provider flags and ``--namespace``
+        applied, as run-rag applies its own.
+
+        Raises:
+            ConfigurationError: A value the configuration refuses.
+        """
+        options = self.options
+        if options.provider_flags:
+            args = parse_provider_flags(list(options.provider_flags))
+            args.config_path = options.config_path
+            config = apply_provider_arguments(config, args)
+        if options.namespace:
+            config = config.updated(
+                {"processing.document_parsing.namespace": options.namespace}
+            )
+        return config
 
     def try_config(self) -> Config | None:
         try:
@@ -667,6 +699,8 @@ def create_app(
             "config_path": str(options.config_path) if options.config_path else None,
             "config_error": state.config_error,
             "namespace": resolve_namespace(config, None) if config else None,
+            # What a question without a search type searches with.
+            "search_type": config.search.search_type.value if config else None,
             "backend": (
                 {
                     "llm": providers.llm.kind,
@@ -704,6 +738,20 @@ def create_app(
             "directories": {
                 name: str(root.path) for name, root in state.roots.roots.items()
             },
+        }
+
+    @app.get("/api/namespaces")
+    async def namespaces() -> dict[str, Any]:
+        """The namespaces the header's picker offers: those the stores hold
+        an index for, and the config's (``default``), first; ``listed``
+        false when the stores cannot tell (only the config's is offered)."""
+        config = state.load_config()
+        current = resolve_namespace(config, None)
+        held = await asyncio.to_thread(_held_namespaces, config)
+        return {
+            "default": current,
+            "namespaces": list(dict.fromkeys([current, *sorted(held or [])])),
+            "listed": held is not None,
         }
 
     # -- ask --------------------------------------------------------------
@@ -923,6 +971,7 @@ def create_app(
             pairwise_judge=body.pairwise_judge,
             fail_if=body.fail_if,
             max_failure_rate=body.max_failure_rate,
+            namespace=body.namespace,
         )
         return state.jobs.get(job.id)
 
@@ -991,11 +1040,14 @@ def create_app(
     # -- graph ------------------------------------------------------------
 
     @app.get("/api/graphs")
-    async def graphs() -> dict[str, Any]:
-        # The namespace's graph, built when the page opens and the stores
-        # changed since the newest export (no job exports one); ``current``
-        # says why there is none (the page's empty state).
-        current = await asyncio.to_thread(state.graphs.current, state.load_config)
+    async def graphs(namespace: str | None = None) -> dict[str, Any]:
+        # The namespace's graph (default: the config's), built when the page
+        # opens and the stores changed since the newest export (no job
+        # exports one); ``current`` says why there is none (the page's
+        # empty state).
+        current = await asyncio.to_thread(
+            state.graphs.current, state.load_config, _namespace(namespace, None)
+        )
         names = tuple(
             n for n in ("cache", "visualization", "workspace") if n in state.roots.roots
         )
@@ -1091,6 +1143,18 @@ def create_app(
 
     _mount_web(app, options.web_directory)
     return app
+
+
+def _held_namespaces(config: Config) -> list[str] | None:
+    """The namespaces the vector store holds an index for (None: it cannot
+    tell, or cannot be reached: the picker then offers the config's)."""
+    from unified_kg_rag.application.storage.inspection import ingested_namespaces
+
+    try:
+        return ingested_namespaces(config)
+    except Exception as e:  # noqa: BLE001 - the picker still offers the config's
+        log_error(logger, logging.WARNING, "Listing the namespaces failed: %s", error=e)
+        return None
 
 
 def _namespace(namespace: str | None, suffix: str | None) -> str | None:
