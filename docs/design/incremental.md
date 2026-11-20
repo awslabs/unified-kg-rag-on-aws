@@ -592,7 +592,8 @@ nothing to index included, tries again. A property test checks that the
 model is asked with what a full build's detector packs for the same
 community over the surviving graph
 (`tests/property/test_report_refresh_properties.py`). Each delta's
-root communities join every cut of the hierarchy, so global search's cut
+first-pass communities (depth 0) join every cut of the hierarchy, so global
+search's cut
 grows until a rebuild; the cap and the shallower-cut fallback (§6.1.1) bound
 it, and the drift metrics report it (`added_roots`). Rejected alternatives:
 leaving delta communities of already clustered entities out of the cuts

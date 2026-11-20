@@ -153,7 +153,7 @@ signals tell you when a rebuild is due. Neither resets anything on its own.
 
 The indexing stage reports `community_drift` metrics: `delta_communities`,
 `clustered_entities`, `overlapping_entities`, `stale_communities`,
-`added_roots` (each adds a report to every global-search cut) and
+`added_roots` (communities of the first Leiden pass, depth 0: each adds at least one report to every global-search cut) and
 `overlap_share`. When at least `indexing.community_drift_threshold`
 (default `0.5`) of the entities the run clustered also belong to an earlier
 level-0 community, the run logs a WARNING and reports

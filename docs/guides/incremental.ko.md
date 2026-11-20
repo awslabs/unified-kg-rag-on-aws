@@ -125,7 +125,7 @@ ID는 전체 빌드와 같지만 순서는 다를 수 있습니다. 재구축할
 
 인덱싱 단계는 `community_drift` 지표를 보고합니다. `delta_communities`,
 `clustered_entities`, `overlapping_entities`, `stale_communities`,
-`added_roots`(하나마다 모든 전역 검색 절단에 리포트가 하나씩 늘어남), `overlap_share`입니다.
+`added_roots`(첫 Leiden 분할의 커뮤니티, 즉 깊이 0. 하나마다 모든 전역 검색 절단에 리포트가 하나 이상 늘어남), `overlap_share`입니다.
 실행이 군집화한 엔티티 중 `indexing.community_drift_threshold`(기본값 `0.5`) 이상이 이전
 수준 0 커뮤니티에도 속하면 실행은 WARNING을 남기고 `community_rebuild_recommended: 1`을
 보고합니다(이 수는 상한값입니다). 텍스트 단위를 제거하는 실행은 `outdated_reports`도

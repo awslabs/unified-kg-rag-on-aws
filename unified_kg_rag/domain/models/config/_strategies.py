@@ -22,7 +22,7 @@ from ._common import ConfigSection
 class GlobalSearchConfig(ConfigSection):
     """MS GraphRAG global search: map over a cut of the community hierarchy.
 
-    The reports of one cut (``community_depth``), or of a root-down dynamic
+    The reports of one cut (``community_depth``), or of a top-down dynamic
     selection (``use_dynamic_selection``), are all mapped in token-sized
     batches; a cut larger than ``max_reports_per_level`` gives way to a
     shallower one, and similarity caps it only when no cut fits.
@@ -33,24 +33,19 @@ class GlobalSearchConfig(ConfigSection):
         ge=0,
         description=(
             "The cut of the community hierarchy whose reports global search "
-            "maps over, counted from the root: the communities at this depth "
-            "plus the leaves above it, so every entity is covered once. 0 = "
-            "the root communities (fewest, broadest reports); a large value = "
-            "the leaves. MS GraphRAG's community_level (default 2 there too) "
-            "counts from the first Leiden pass over the whole graph, while the "
-            "root here sits above the coarser levels built over that pass "
-            "(graph.community_detection.max_levels), so depth D here is "
-            "upstream's level D - k, where k is the number of coarser levels "
-            "the corpus produced. With use_dynamic_selection it bounds only "
-            "the depths a selection that found nothing relevant rates whole "
-            "(MS GraphRAG's max_level); relevant reports are followed to the "
+            "maps over, counted as MS GraphRAG's community_level (default 2 "
+            "there too): the communities at this depth plus the leaves above "
+            "it, so every entity is covered once. 0 = the communities of the "
+            "first Leiden pass over the whole graph (fewest, broadest reports "
+            "of a cut), one more per split below it; a large value = the "
+            "leaves. The coarser levels built above that pass "
+            "(graph.community_detection.max_levels) have negative depths and "
+            "are in no cut. With use_dynamic_selection it bounds only the "
+            "depths a selection that found nothing relevant rates whole (MS "
+            "GraphRAG's max_level); relevant reports are followed to the "
             "leaves."
         ),
-        json_schema_extra=evidence(
-            "deviation",
-            "MS GraphRAG's community_level, 2, counted from the first Leiden "
-            "pass, not from the coarser levels above it",
-        ),
+        json_schema_extra=evidence("upstream", "MS GraphRAG's community_level, 2"),
     )
     max_reports_per_level: int = Field(
         default=100,
@@ -59,7 +54,7 @@ class GlobalSearchConfig(ConfigSection):
             "Upper bound on the reports one cut (or one step of the dynamic "
             "selection) contributes. A cut with more reports gives way to the "
             "deepest shallower cut that fits (global_cut_depth in the search "
-            "metadata); when even the root cut does not fit, or under a filter "
+            "metadata); when even the depth-0 cut does not fit, or under a filter "
             "on a report key (community_id, level, rating), to the reports "
             "of the cut most similar to the query (a hybrid search restricted "
             "to the cut, global_level_capped). "
@@ -75,7 +70,8 @@ class GlobalSearchConfig(ConfigSection):
         default=False,
         description=(
             "MS GraphRAG dynamic community selection instead of a fixed cut: "
-            "rate the root reports for the query with "
+            "rate the reports at depth 0 (the first Leiden pass, upstream's "
+            "level 0) for the query with "
             "models.roles.community_relevance, descend into the children of "
             "the relevant ones down to the leaves (dropping a parent once a "
             "child is relevant), and rate the whole next depth when a depth "

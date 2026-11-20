@@ -49,6 +49,13 @@ class Community(Named):
         None, description="The size of the community (Amount of text units)"
     )
     period: str | None = Field(None, description="The period of the community")
+    depth: int | None = Field(
+        None,
+        description="Its depth below the first Leiden pass over the whole "
+        "graph (HierarchicalCommunity.depth), which its report's place in "
+        "the global search cuts follows; None for a community not built by "
+        "the hierarchy, whose depth is its distance from its root",
+    )
 
 
 class HierarchicalCommunity(BaseModel):
@@ -76,6 +83,13 @@ class HierarchicalCommunity(BaseModel):
         description="Short display label: the level and the head of the "
         "content-derived community_id (e.g. 'L0_C1a2b3c4d'), so it is stable "
         "across runs as long as the membership is",
+    )
+    depth: int = Field(
+        default=0,
+        description="Its depth below the first Leiden pass over the whole "
+        "graph, MS GraphRAG's community_level: 0 for a community of that "
+        "pass, one more per split below it; negative for the coarser levels "
+        "above it (-1 for the first)",
     )
 
     def __hash__(self) -> int:

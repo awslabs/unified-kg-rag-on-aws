@@ -209,3 +209,85 @@ def test_partition_tree_matches_graspologic_hierarchical_leiden(name: str) -> No
     theirs = nx.community.modularity(graph, list(native_final.values()))
     assert ours == pytest.approx(theirs, abs=0.02)
     assert len(leaves) == pytest.approx(len(native_final), rel=0.1)
+
+
+@pytest.mark.parametrize("name", ["planted-40x50", "lfr-0"])
+def test_depth_zero_is_graspologic_level_zero(name: str) -> None:
+    """A1-1: ``community_depth`` counts as MS GraphRAG's ``community_level``.
+
+    Upstream's level 0 is the first pass of ``hierarchical_leiden``
+    (``graphrag/graphs/hierarchical_leiden.py:29-40``, whose
+    ``community_level`` filter keeps ``level <= community_level``,
+    ``query/indexer_adapters.py:87-89,219-225``, and whose dynamic selection
+    starts at level 0, ``query/context_builder/dynamic_community_selection.py:
+    70-71``). The coarser levels built above it here have negative depths:
+    the depth-0 communities are that pass, however many coarser levels the
+    corpus produced (the depth used to count from the coarser root, so depth
+    1 was upstream's level 0 on these graphs).
+    """
+    graph, _ = GRAPHS[name]()
+    config = CommunityDetectionConfig(
+        max_cluster_size=20,
+        random_state=42,
+        trials=1,
+        extra_forced_iterations=0,
+        min_community_size=1,
+    )
+    hierarchy = build_hierarchy(graph, config)
+    communities, _ = hierarchical_communities(
+        hierarchy.partitions, (), hierarchy.first_pass_levels
+    )
+    edges = sorted(
+        (min(u, v), max(u, v), float(d["weight"])) for u, v, d in graph.edges(data=True)
+    )
+    level_0: dict[int, set[str]] = {}
+    for entry in graspologic_native.hierarchical_leiden(
+        edges=edges,
+        max_cluster_size=20,
+        seed=42,
+        starting_communities=None,
+        resolution=1.0,
+        randomness=0.001,
+        use_modularity=True,
+        iterations=1,
+    ):
+        if entry.level == 0:
+            level_0.setdefault(entry.cluster, set()).add(entry.node)
+
+    # The corpus has coarser levels above the first pass.
+    assert len(hierarchy.partitions) > hierarchy.first_pass_levels
+    assert any(c.depth < 0 for c in communities.values())
+    assert {frozenset(c.nodes) for c in communities.values() if c.depth == 0} == {
+        frozenset(members) for members in level_0.values()
+    }
+
+
+def test_the_detectors_communities_and_reports_carry_the_first_pass_depth() -> None:
+    from unified_kg_rag.adapters.ingestion.community_detector import (
+        CommunityDetector,
+    )
+    from unified_kg_rag.domain.ingestion.community_hierarchy import (
+        attach_report_hierarchy,
+    )
+    from unified_kg_rag.domain.models import CommunityReport, Config
+
+    graph, _ = GRAPHS["planted-40x50"]()
+    for node in graph:
+        graph.nodes[node]["name"] = node
+    config = Config()
+    config.graph.community_detection.report_generation.enabled = False
+    detector = CommunityDetector(config, show_progress=False)
+    communities = detector(graph).generate_community_objects()
+    roots = partition_tree(graph, config.graph.community_detection)
+
+    assert any(c.depth is not None and c.depth < 0 for c in communities)
+    assert {frozenset(c.entity_ids or []) for c in communities if c.depth == 0} == {
+        frozenset(root.members) for root in roots
+    }
+    # A report sits at its community's depth: the cuts follow it.
+    reports = [
+        CommunityReport(id=f"r-{c.id}", community_id=c.id, name=c.name)
+        for c in communities
+    ]
+    attach_report_hierarchy(reports, communities)
+    assert [r.depth for r in reports] == [c.depth for c in communities]

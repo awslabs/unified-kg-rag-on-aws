@@ -265,10 +265,11 @@ class CommunityDetector:
     def analyze_hierarchy(self) -> None:
         """Build the community hierarchy of ``self.graph`` (``build_hierarchy``)
         and its communities (:meth:`_process_hierarchical_partitions`)."""
-        partitions, self.base_modularity = build_hierarchy(
-            self.graph, self.community_detection_config
+        hierarchy = build_hierarchy(self.graph, self.community_detection_config)
+        self.base_modularity = hierarchy.modularity
+        self._process_hierarchical_partitions(
+            hierarchy.partitions, hierarchy.first_pass_levels
         )
-        self._process_hierarchical_partitions(partitions)
 
     def _collect_community_text_unit_ids(self, node_ids: Any) -> list[str]:
         """Union the source text-unit ids of a community's member entities.
@@ -287,11 +288,14 @@ class CommunityDetector:
         return sorted(collected)
 
     def _process_hierarchical_partitions(
-        self, partitions: list[list[set[str]]]
+        self, partitions: list[list[set[str]]], first_pass_levels: int | None = None
     ) -> None:
         """Replace the communities with those of ``partitions``
-        (``hierarchical_communities``)."""
-        communities, node_to_l0 = hierarchical_communities(partitions, self.unclustered)
+        (``hierarchical_communities``; ``first_pass_levels``: the levels of
+        the first Leiden pass, ``Hierarchy.first_pass_levels``)."""
+        communities, node_to_l0 = hierarchical_communities(
+            partitions, self.unclustered, first_pass_levels
+        )
         self.all_communities.clear()
         self.all_communities.update(communities)
         self.node_to_community_l0.clear()
@@ -412,6 +416,7 @@ class CommunityDetector:
             # global search's community text-unit fusion bucket matched nothing.
             text_unit_ids=self._collect_community_text_unit_ids(hier_comm.nodes),
             size=len(hier_comm.nodes),
+            depth=hier_comm.depth,
             period=None,
             attributes=community_attributes,
             created_at=datetime.now(),

@@ -112,3 +112,23 @@ def test_counts_the_roots_every_cut_gains() -> None:
     )
     drift = measure_community_drift(entities, communities, 0.5)
     assert drift is not None and drift.added_roots == 2
+
+
+def test_the_cuts_gain_the_first_pass_communities_not_the_coarser_ones() -> None:
+    # A1-1: a coarser community above the first Leiden pass (negative depth)
+    # is in no cut; the first pass's communities (depth 0) under it are.
+    first = _community("a", 0, ["x", "y", "z"]).model_copy(
+        update={"parent": "top", "depth": 0}
+    )
+    second = _community("b", 0, ["u", "v", "w"]).model_copy(
+        update={"parent": "top", "depth": 0}
+    )
+    top = _community("top", 1, ["x", "y", "z", "u", "v", "w"]).model_copy(
+        update={"depth": -1}
+    )
+    communities = [first, second, top]
+    entities = with_level0_community_ids(
+        [Entity(id=e, name=e) for e in "xyzuvw"], communities
+    )
+    drift = measure_community_drift(entities, communities, 0.5)
+    assert drift is not None and drift.added_roots == 2

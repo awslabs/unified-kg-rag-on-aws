@@ -28,6 +28,7 @@ from tests.fixtures.store_backends import (
     backends,
     open_harness,
 )
+from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
 from unified_kg_rag.domain.ingestion.report_references import (
     REPORT_FINDINGS_FIELD,
     REPORT_OUTDATED_FIELD,
@@ -2245,3 +2246,58 @@ def test_incremental_run_maps_the_findings_of_an_earlier_reports_index(
     _write(harness, "community_reports", "upsert", [_report_with_findings()])
     (hit,) = _report_hits(harness)
     assert report_cited_ids(hit.metadata)[1] == ["r-supplies", "r-ships"]
+
+
+@pytest.mark.parametrize("harness", backends(RETRIEVERS), indirect=True)
+def test_a_cut_holds_no_coarser_report_above_the_first_pass(
+    harness: StoreHarness,
+) -> None:
+    # A1-1: the depth counts from the first Leiden pass; a coarser level
+    # above it is stored at a negative depth, which no cut at a depth of 0
+    # or more holds, on every store.
+    (report,) = _reports(None)
+
+    def placed(rid: str, depth: int, children: list[str]) -> CommunityReport:
+        return report.model_copy(
+            update={
+                "id": rid,
+                "community_id": rid,
+                "depth": depth,
+                "child_community_ids": children,
+            }
+        )
+
+    _write(
+        harness,
+        "community_reports",
+        "upsert",
+        [
+            placed("coarse", -1, ["root"]),
+            placed("root", 0, ["leaf-a", "leaf-b"]),
+            placed("leaf-a", 1, []),
+            placed("leaf-b", 1, []),
+        ],
+    )
+    assert harness.vector_retriever is not None
+    prefix = harness.config.indexing.opensearch.community_reports_index_prefix
+
+    async def cut(depth: int) -> set[str]:
+        retriever = harness.vector_retriever()
+        try:
+            hits = await retriever.aretrieve(
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=10,
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefix],
+                    filters=cut_filter(depth),
+                    source_fields=[],
+                )
+            )
+        finally:
+            await retriever.aclose()
+        return {str(hit.source) for hit in hits}
+
+    assert asyncio.run(cut(0)) == {"root"}
+    assert asyncio.run(cut(1)) == asyncio.run(cut(2)) == {"leaf-a", "leaf-b"}

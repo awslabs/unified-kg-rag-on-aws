@@ -2044,7 +2044,7 @@ def test_isolated_entities_do_not_decide_the_hierarchy(isolated: int) -> None:
     graph = _two_triangle_graph()
     for i in range(isolated):
         graph.add_node(f"x{i}", name=f"X{i}")
-    partitions, _ = build_hierarchy(graph, Config().graph.community_detection)
+    partitions = build_hierarchy(graph, Config().graph.community_detection).partitions
     assert len(partitions) == 1
 
 
