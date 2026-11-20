@@ -605,3 +605,54 @@ run-eval --data-path eval.json --search-strategy local \
 
 The full rules (what each warning compares, when a cost gate fails):
 [Evaluation output: Rebuilding and gating rules](../reference/evaluation-output.md#rebuilding-and-gating-rules).
+
+## Golden metrics (the CI regression gate)
+
+A change to a default, a fusion rule or the graph build can lower retrieval
+quality and still pass every unit test. The `golden-metrics` CI job catches
+that without a model or AWS: it ingests the repository's synthetic corpora
+on the embedded SQLite stores with deterministic fake models and runs
+`run-eval` with every strategy and every `--search-type` (`hybrid`,
+`lexical` and `vector`), scored by the LLM-free evaluators only
+(`retrieval`, `answer_match`, `graph_aware`). Each score must equal the
+committed baseline, `tests/fixtures/golden_metrics.json`.
+
+- **Data.** The `structural` benchmark (`prepare-benchmark structural
+  --size small --seed 0`, generated at run time, 42 questions) and the
+  English, Korean, Japanese and Chinese bridge questions of
+  `tests/fixtures/bridge_corpus.py` (one each; only the passage citing both
+  facts' people answers it).
+- **Models.** `FakeOllama` answering with the console demo's responder:
+  extraction finds the corpus' names, the answer is the context sentences
+  that share the most words with the question. Embeddings hash words and
+  Hangul, Kana and Han bigrams. The reranker is off, so the ranking scored
+  is the retrieval's own.
+- **Splits.** The gate compares the structural benchmark's `test` half and
+  the whole of the unsplit bridge set. The `tune` half's differences are
+  printed and never fail the job: it is for development (see
+  [Choosing settings on one half](#choosing-settings-on-one-half-reporting-on-the-other)).
+- **Exact equality.** The run is deterministic: the same scores came out
+  under different `PYTHONHASHSEED` values, on 1, 2 and 8 cores, and with
+  OpenBLAS forced to its AVX2 kernels. The source scope is fixed, so
+  document ids, and the order of tied scores, do not depend on the
+  temporary directory. Any difference is a change in the pipeline, so no
+  tolerance applies.
+- **What it does not measure.** Answer quality: the fake answers are
+  extractive. A change of prompt shows up only in a real-model run.
+
+Run it locally (about two minutes on one core; `-n` spreads its 15 tests):
+
+```bash
+GOLDEN_METRICS=1 uv run pytest tests/integration/test_golden_metrics.py -n 4
+```
+
+When the change is intended, regenerate the baseline and commit it with the
+change. The script prints every score that moved, and the baseline's diff
+shows them in the pull request:
+
+```bash
+uv run python scripts/gen_golden_metrics.py
+```
+
+Regenerate it only when you mean the change; never regenerate to make a
+failing job pass without reading the diff.

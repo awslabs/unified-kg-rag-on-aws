@@ -1,0 +1,66 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""The golden-metrics regression gate (docs/guides/evaluate.md "Golden
+metrics"): every search strategy and search type answers the synthetic
+structural and bridge datasets on fake models, and every score of a gated
+partition (the structural benchmark's held-out ``test`` half, the whole of
+the unsplit bridge datasets) must equal the committed baseline
+(``tests/fixtures/golden_metrics.json``). The ``tune`` half's differences
+are printed, not gated.
+
+About two minutes on one core (each case and search type is a test of its
+own, so ``-n`` spreads them), so skipped unless ``GOLDEN_METRICS=1`` (the
+``golden-metrics`` CI job sets it)::
+
+    GOLDEN_METRICS=1 uv run pytest tests/integration/test_golden_metrics.py
+
+A change you meant: ``uv run python scripts/gen_golden_metrics.py``
+rewrites the baseline, and its diff shows every score that moved.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from tests.fixtures import golden_metrics
+from tests.integration.test_embedded_e2e import no_aws as _no_aws  # noqa: F401
+from unified_kg_rag.domain.models import SearchType
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.slow,
+    pytest.mark.usefixtures("_no_aws"),
+    pytest.mark.skipif(
+        os.getenv("GOLDEN_METRICS") != "1",
+        reason="set GOLDEN_METRICS=1 (about two minutes)",
+    ),
+]
+
+
+@pytest.mark.timeout(600)
+@pytest.mark.parametrize(
+    "search_type", golden_metrics.SEARCH_TYPES, ids=lambda t: t.value
+)
+@pytest.mark.parametrize("case", golden_metrics.CASES)
+def test_the_scores_equal_the_golden_baseline(
+    tmp_path: Path, case: str, search_type: SearchType
+) -> None:
+    measured = {
+        "schema_version": golden_metrics.SCHEMA_VERSION,
+        "cases": {
+            case: golden_metrics.measure_case(case, tmp_path / case, (search_type,))
+        },
+    }
+    baseline = golden_metrics.select(golden_metrics.read_baseline(), case, search_type)
+    gated, reported = golden_metrics.compare(baseline, measured)
+    for line in reported:
+        print(f"tune (not gated): {line}")
+    assert not gated, (
+        "The golden metrics moved (a gated partition):\n"
+        + "\n".join(gated)
+        + "\nIf the change is intended, run "
+        "`uv run python scripts/gen_golden_metrics.py` and commit the baseline."
+    )

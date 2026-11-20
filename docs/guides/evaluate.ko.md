@@ -495,3 +495,44 @@ run-eval --data-path eval.json --search-strategy local \
 전체 규칙(경고마다 비교하는 항목, 비용 게이트가 실패하는 경우)은
 [Evaluation output: Rebuilding and gating rules](../reference/evaluation-output.md#rebuilding-and-gating-rules)(영문)에
 있습니다.
+
+## 골든 지표(CI 회귀 게이트)
+
+기본값, 융합 규칙이나 그래프 구성을 바꾸면 검색 품질이 떨어져도 단위 테스트는 모두 통과할
+수 있습니다. `golden-metrics` CI 작업은 모델이나 AWS 없이 이런 변화를 잡습니다. 저장소의
+합성 말뭉치를 내장 SQLite 저장소에 결정적인 가짜 모델로 수집하고, 모든 전략과 모든
+`--search-type`(`hybrid`, `lexical`, `vector`)으로 `run-eval`을 실행해 LLM이 필요 없는
+평가기(`retrieval`, `answer_match`, `graph_aware`)로만 채점합니다. 모든 점수가 커밋된 기준선
+`tests/fixtures/golden_metrics.json`과 같아야 합니다.
+
+- **데이터.** `structural` 벤치마크(`prepare-benchmark structural --size small --seed 0`,
+  실행할 때 생성, 질문 42개)와 `tests/fixtures/bridge_corpus.py`의 영어, 한국어, 일본어,
+  중국어 다리(bridge) 질문(언어마다 하나, 두 사실의 인물을 모두 인용한 단락만 답을 담음)입니다.
+- **모델.** `FakeOllama`가 콘솔 데모의 응답기로 답합니다. 추출은 말뭉치의 이름을 찾고,
+  답변은 질문과 겹치는 단어가 가장 많은 맥락 문장입니다. 임베딩은 단어와 한글, 가나, 한자
+  바이그램을 해시합니다. 재순위화는 꺼 두므로 채점하는 순위는 검색 자체의 순위입니다.
+- **분할.** 게이트는 structural 벤치마크의 `test` 절반과 분할하지 않은 bridge 데이터 전체를
+  비교합니다. `tune` 절반의 차이는 출력만 하고 작업을 실패시키지 않습니다. 개발용이기
+  때문입니다([한쪽 절반으로 고르고 다른 절반으로 보고하기](#한쪽-절반으로-고르고-다른-절반으로-보고하기) 참고).
+- **정확히 같아야 함.** 실행은 결정적입니다. `PYTHONHASHSEED` 값을 바꿔도, 코어 1개, 2개,
+  8개에서도, OpenBLAS를 AVX2 커널로 강제해도 점수가 같았습니다. 소스 범위(source scope)를
+  고정하므로 문서 ID와 동점 점수의 순서가 임시 디렉터리에 따라 달라지지 않습니다. 차이가 있으면
+  파이프라인이 바뀐 것이므로 허용 오차를 두지 않습니다.
+- **측정하지 않는 것.** 답변 품질입니다. 가짜 답변은 추출식이므로 프롬프트 변경은 실제 모델로
+  실행해야 드러납니다.
+
+로컬에서 실행하기(코어 1개로 약 2분, `-n`이 15개 테스트를 나눠 실행):
+
+```bash
+GOLDEN_METRICS=1 uv run pytest tests/integration/test_golden_metrics.py -n 4
+```
+
+의도한 변경이면 기준선을 다시 만들어 변경과 함께 커밋하세요. 스크립트가 바뀐 점수를 모두
+출력하고, 풀 리퀘스트에서는 기준선의 diff로 보입니다.
+
+```bash
+uv run python scripts/gen_golden_metrics.py
+```
+
+변경을 의도했을 때만 다시 만드세요. 실패한 작업을 통과시키려고 diff를 읽지 않고 다시 만들지
+마세요.

@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.fixtures.bridge_corpus import CORPORA, SUPPORT
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
@@ -56,65 +57,6 @@ from unified_kg_rag.shared.exceptions import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("_no_aws")]
 
-# Per language: the people (A founded C; B is the mayor of D), the files and
-# the question. accord.txt, the bridge, is the only passage citing A and B;
-# each decoy repeats the question's words and names C alone (no fact), so a
-# seed cites it. A passage is one chunk (under 60 characters).
-_CORPORA: dict[LanguageCode, dict[str, Any]] = {
-    LanguageCode.EN: {
-        "names": ("Alvar Pell", "Corin Works", "Bex Lund", "Dorrit"),
-        "files": {
-            "founder.txt": "Alvar Pell founded Corin Works.",
-            "mayor.txt": "Bex Lund is the mayor of Dorrit.",
-            "accord.txt": "Alvar Pell and Bex Lund signed the Tarn Accord.",
-            **{
-                f"decoy{i}.txt": f"Corin Works founder and mayor: what was signed? {i}"
-                for i in range(4)
-            },
-        },
-        "question": "What did the founder of Corin Works and the mayor of Dorrit sign?",
-    },
-    LanguageCode.KO: {
-        "names": ("홍길동", "가나다상사", "김철수", "도리시"),
-        "files": {
-            "founder.txt": "홍길동은 가나다상사를 설립했다.",
-            "mayor.txt": "김철수는 도리시의 시장이다.",
-            "accord.txt": "홍길동과 김철수는 타른협정에 서명했다.",
-            **{
-                f"decoy{i}.txt": f"가나다상사 설립자와 시장이 서명한 것은 무엇인가 {i}"
-                for i in range(4)
-            },
-        },
-        "question": "가나다상사 설립자와 도리시 시장이 서명한 것은 무엇인가?",
-    },
-    LanguageCode.JA: {
-        "names": ("山田太郎", "青葉商事", "佐藤花子", "緑市"),
-        "files": {
-            "founder.txt": "山田太郎は青葉商事を設立した。",
-            "mayor.txt": "佐藤花子は緑市の市長である。",
-            "accord.txt": "山田太郎と佐藤花子は北浜協定に署名した。",
-            **{
-                f"decoy{i}.txt": f"青葉商事の設立者と市長が署名したものは何か{i}"
-                for i in range(4)
-            },
-        },
-        "question": "青葉商事の設立者と緑市の市長が署名したものは何か？",
-    },
-    LanguageCode.ZH: {
-        "names": ("王小明", "青松公司", "李华", "绿城"),
-        "files": {
-            "founder.txt": "王小明创立了青松公司。",
-            "mayor.txt": "李华是绿城的市长。",
-            "accord.txt": "王小明和李华签署了北海协定。",
-            **{
-                f"decoy{i}.txt": f"青松公司的创立者和市长签署了什么{i}"
-                for i in range(4)
-            },
-        },
-        "question": "青松公司的创立者和绿城的市长签署了什么？",
-    },
-}
-
 
 def _extraction(text: str, names: tuple[str, ...]) -> str:
     """The fake model's extraction: the known names in the text, each pair
@@ -146,7 +88,7 @@ def _setup(
     relationship_vectors: bool = True,
     **search: Any,
 ) -> tuple[Config, Any]:
-    corpus = _CORPORA[language]
+    corpus = CORPORA[language]
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     # HippoRAG reads no community report: by default an index built for it
     # alone, without them.
@@ -193,8 +135,6 @@ def _file_names(results: list[Any]) -> list[str]:
 
 
 _LANGUAGES = [LanguageCode.EN, LanguageCode.KO, LanguageCode.JA, LanguageCode.ZH]
-# The passages the answer needs: both facts and the bridge.
-_SUPPORT = {"founder.txt", "mayor.txt", "accord.txt"}
 
 
 def _decoys_after(names: list[str], name: str) -> bool:
@@ -210,7 +150,7 @@ def test_ppr_ranks_the_bridge_passage_above_the_decoys(
     tmp_path: Path, language: LanguageCode
 ) -> None:
     config, providers = _setup(tmp_path, language)
-    question = _CORPORA[language]["question"]
+    question = CORPORA[language]["question"]
     chain = GraphRAGChain(config, providers=providers)
     try:
         naive = chain.search(
@@ -240,7 +180,7 @@ def test_ppr_ranks_the_bridge_passage_above_the_decoys(
     assert meta["ppr"]["relationships"] >= 3
     assert meta["sources"][PPR_PASSAGES] >= 1
     names = _file_names([r for r in searched.results if r.retriever_type == "text"])
-    assert _SUPPORT <= set(names), names
+    assert SUPPORT <= set(names), names
 
     # The answer cites the passages and facts it saw, with their provenance.
     assert isinstance(out, RAGOutput) and out.answer == e2e.ANSWER
@@ -252,7 +192,7 @@ def test_ppr_ranks_the_bridge_passage_above_the_decoys(
         if metadata["section_type"] == "text":
             # As every strategy's text source: the chunk, its file.
             assert metadata["chunk_id"] == source["source"]
-            assert metadata["attributes"]["file_name"] in _CORPORA[language]["files"]
+            assert metadata["attributes"]["file_name"] in CORPORA[language]["files"]
             assert {"document_ids", "attributes", "id", "text"} <= set(metadata)
         else:
             assert metadata["text_unit_ids"]
@@ -269,7 +209,7 @@ def test_local_ppr_ranking_and_the_retrieval_evaluator(tmp_path: Path) -> None:
         (Methodology.GRAPHRAG, Methodology.LIGHTRAG),
         local_search__text_unit_ranking="ppr",
     )
-    question = _CORPORA[LanguageCode.EN]["question"]
+    question = CORPORA[LanguageCode.EN]["question"]
     chain = GraphRAGChain(config, providers=providers)
     try:
         local = chain.invoke(
@@ -347,7 +287,7 @@ def test_the_guardrail_screens_a_ppr_query_and_its_answer(
             patch.setattr(PPRSearchStrategy, "asearch", spy)
             out = chain.invoke(
                 RAGInput(
-                    query=_CORPORA[LanguageCode.EN]["question"],
+                    query=CORPORA[LanguageCode.EN]["question"],
                     search_strategy=SearchStrategy.PPR,
                 )
             )
@@ -374,7 +314,7 @@ def test_a_ppr_query_stops_at_its_deadline(tmp_path: Path) -> None:
             with pytest.raises(QueryTimeoutError):
                 chain.invoke(
                     RAGInput(
-                        query=_CORPORA[LanguageCode.EN]["question"],
+                        query=CORPORA[LanguageCode.EN]["question"],
                         search_strategy=SearchStrategy.PPR,
                     )
                 )
@@ -389,7 +329,7 @@ def test_ppr_answers_on_a_lightrag_only_namespace(tmp_path: Path) -> None:
     try:
         out = chain.invoke(
             RAGInput(
-                query=_CORPORA[LanguageCode.EN]["question"],
+                query=CORPORA[LanguageCode.EN]["question"],
                 search_strategy=SearchStrategy.PPR,
             )
         )
@@ -412,7 +352,7 @@ def test_ppr_is_refused_where_hipporag_is_not_held(tmp_path: Path) -> None:
         relationship_vectors=False,
         local_search__text_unit_ranking="ppr",
     )
-    question = _CORPORA[LanguageCode.EN]["question"]
+    question = CORPORA[LanguageCode.EN]["question"]
     chain = GraphRAGChain(config, providers=providers)
     try:
         with pytest.raises(MethodologyNotIndexedError, match="hipporag"):
