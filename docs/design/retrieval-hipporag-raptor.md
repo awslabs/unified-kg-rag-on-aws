@@ -344,7 +344,11 @@ earlier stage keeps its cache key), run when `raptor` is selected, `application/
    committed store, not the run's context, makes the tree a function of
    what is stored: an incremental run and a full build of the same corpus
    build the same tree, and a run with an empty delta can build a tree
-   that is missing.
+   that is missing. What is stored includes the ids, which embed the
+   namespace: the leaves are ordered, and the clustering's initial centers
+   picked, by id, so the same corpus under another namespace builds
+   another tree
+   ([Scopes and namespaces](../concepts/scopes-and-namespaces.md#source-scope)).
 2. *Trigger.* The leaf-set digest (each leaf's id, a hash of the text the
    tree reads, its translation when it holds one, and its document
    `filters`: a reset that re-chunks, re-translates or re-filters text units

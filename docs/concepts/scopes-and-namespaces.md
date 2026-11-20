@@ -62,6 +62,15 @@ ids derive from the scope too, so set `source_scope` for ids that are
 reproducible across paths and machines (the same corpus indexed from another
 directory or host otherwise gets other ids).
 
+The namespace is part of those ids as well, and a build step that orders by
+id orders by it too: the summary tree's leaf walk and the initial centers of
+its clustering (picked by an id hash), and the order of an entity's merged
+description lines (the input of its description summary). So one corpus built into two namespaces,
+or from two source scopes, is two builds rather than two copies: its tree
+and some of its descriptions differ. Compare configurations on one
+namespace (an A/A arm measures the noise there), not against a copy built
+under another name.
+
 Keeping a corpus at one source, moving it, and what a mass deletion asks:
 [Incremental indexing: Deletion scope](../guides/incremental.md#deletion-scope).
 
