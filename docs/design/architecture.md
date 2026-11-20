@@ -550,18 +550,23 @@ by default**.
 ## 14. CI/CD and Security
 
 - **CI** (`.github/workflows/`, one row per workflow). The `main` branch
-  ruleset requires ten checks to pass before a pull request merges:
+  ruleset requires 14 checks to pass before a pull request merges:
   `quality`, `oldest-python`, `core-install`, `local-stores`,
-  `optional-parsers (3.11)`, `optional-parsers (3.12)`, `iac`, `docker`,
-  `docker-unstructured` and `ash-scan`. Every other job reports without
-  blocking a merge. The local checks are in
+  `optional-parsers (3.11)`, `optional-parsers (3.12)`, `test-isolation`,
+  `console-web`, `console-smoke`, `iac`, `docker`, `docker-unstructured`,
+  `ash-scan` and `pip-audit`. Every other job reports without blocking a
+  merge. `licenses` is not required: its workflow runs only when a pull
+  request changes the dependency set (a path filter), and a required check
+  that never reports would block every other pull request. `console-smoke`
+  runs on every pull request and passes at once when the change touches
+  only docs, IaC or Markdown, so it always reports. The local checks are in
   [CONTRIBUTING.md](../../CONTRIBUTING.md#checks-to-run-before-pushing).
 
   | Workflow | Runs on | Jobs (required ones marked *) |
   |---|---|---|
-  | `quality` | pull requests, pushes to `main` | `quality`* (lint, types, tests with the coverage floor), `oldest-python`* (the suite on the `requires-python` floor), `core-install`* (no extras), `local-stores`* (the container store backends), `optional-parsers`* (3.11 and 3.12), `iac`* (CDK synth with cdk-nag), `docker`* and `docker-unstructured`* (the images, with a Trivy scan), `test-isolation` (each test file in its own process), `coverage-combined` (informational), `python-3-13` (early warning, `continue-on-error`), `console-web` (type check, lint, unit tests, build, bundled licenses, `npm audit`), `console-smoke` (a browser pass on the demo workspace), `golden-metrics` (every strategy's LLM-free scores on the synthetic corpora with fake models, equal to a committed baseline: [Evaluation: Golden metrics](../guides/evaluate.md#golden-metrics-the-ci-regression-gate)) |
-  | `security` | pull requests, pushes to `main` | `ash-scan`* (ASH; fails on an unsuppressed finding at MEDIUM or above, suppressions in `.ash/.ash.yaml`), `pip-audit` (known vulnerabilities of the locked runtime dependencies) |
-  | `licenses` | pull requests and pushes that change `pyproject.toml` or `uv.lock` | `licenses` (copyleft, source-available or unlabeled runtime licenses) |
+  | `quality` | pull requests, pushes to `main` | `quality`* (lint, types, tests with the coverage floor), `oldest-python`* (the suite on the `requires-python` floor), `core-install`* (no extras), `local-stores`* (the container store backends), `optional-parsers`* (3.11 and 3.12), `iac`* (CDK synth with cdk-nag), `docker`* and `docker-unstructured`* (the images, with a Trivy scan), `test-isolation`* (each test file in its own process), `coverage-combined` (informational), `python-3-13` (early warning, `continue-on-error`), `console-web`* (type check, lint, unit tests, build, bundled licenses, `npm audit`), `console-smoke`* (a browser pass on the demo workspace), `golden-metrics` (every strategy's LLM-free scores on the synthetic corpora with fake models, equal to a committed baseline: [Evaluation: Golden metrics](../guides/evaluate.md#golden-metrics-the-ci-regression-gate)) |
+  | `security` | pull requests, pushes to `main` | `ash-scan`* (ASH; fails on an unsuppressed finding at MEDIUM or above, suppressions in `.ash/.ash.yaml`), `pip-audit`* (known vulnerabilities of the locked runtime dependencies) |
+  | `licenses` | pull requests and pushes that change `pyproject.toml` or `uv.lock` | `licenses` (3.11 and 3.12; copyleft, source-available or unlabeled runtime licenses; not required, as it runs only on those changes) |
   | `fidelity` | weekly, on demand | `parity`: the parity tests and recorded answers against the original HippoRAG 2, RAPTOR, MS GraphRAG, LightRAG and BenchmarkQED at pinned commits and versions; fails on a skipped test |
   | `hypothesis-explore` | weekly, on demand | the property tests from a fresh seed with a larger example budget |
   | `pin-freshness` | weekly, on demand | the pins Dependabot does not move (`scripts/check_pins.py`) and a Trivy scan of the image with the opt-in extras; files or updates an issue |
