@@ -64,6 +64,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     normalize_source_scope,
     registry_namespace,
     relative_source_path,
+    stamp_path_filters,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_document, is_seed_path
 from unified_kg_rag.domain.models import (
@@ -163,6 +164,10 @@ def assign_document_identity(
     recorded for the file it was read from, and a seed graph's shard (a
     virtual document, ``seed_graph.seed_document``) the path naming the seed
     and the shard.
+
+    A corpus document also gets the path filters of that relative path
+    (:func:`stamp_path_filters`: ``file``, ``folder``); a seed graph's
+    items carry their seed graph's filters instead.
     """
     if is_seed_document(document):
         relative = document.metadata[RELATIVE_PATH_KEY]
@@ -173,6 +178,8 @@ def assign_document_identity(
             or normalize_source_path(document.file_path)
         )
     document.metadata[RELATIVE_PATH_KEY] = relative
+    if not is_seed_document(document):
+        stamp_path_filters(document, relative)
     document.metadata[REGISTRY_NAMESPACE_KEY] = registry_namespace(
         _document_suffix(document), additional_suffix, store_tag
     )

@@ -4026,7 +4026,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # namespace holds: a key only an index it lacks declares would be
         # dropped everywhere.
         filter_validation.check_requested_filter_keys(
-            self, rag_input, input_dict["held_artifacts"]
+            self, rag_input, input_dict["held_artifacts"], holdings
         )
 
     @staticmethod

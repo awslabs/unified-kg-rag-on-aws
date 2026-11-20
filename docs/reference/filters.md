@@ -41,6 +41,28 @@ store (an item from several documents carries all their values).
 as the `attr_<key>` property) apply it alike, strictly. A graph holds no
 document metadata and no nested attribute path (`attributes.<key>.<sub>`).
 
+## Path filters
+
+Ingestion stamps two document filters on every document from its path
+relative to the corpus root (POSIX `/`; an `insert_documents` id is that
+path): `file`, the path itself, and `folder`, each folder that holds it,
+outermost first (`contracts/2024/acme.txt` has `file`
+`contracts/2024/acme.txt` and `folder` `["contracts", "contracts/2024"]`; a
+document at the root has no `folder`). They are document filters like any
+other, so `attr_file` and `attr_folder` apply wherever an `attr_<key>`
+does, on every store: `attr_folder:contracts` matches
+every document at any depth below `contracts/`, and a list of values
+(`--filters-json '{"attr_file": ["a.txt", "b.txt"]}'`) any of them. A key a
+document's own filters give (`InputDocument.filters`, or a pre-parsed
+document's `filters` metadata) keeps its value. A seed graph's items carry
+their seed graph's filters instead, so a path filter leaves them out.
+
+A namespace built before ingestion stamped them (its build record names no
+`document_filter_keys`), or indexed incrementally since such a build, holds
+documents without them: a query with `attr_file` or `attr_folder` (or their
+`attributes.filters.<key>` form) is refused there (`InvalidFilterError`,
+exit 2) until a run with `indexing.reset: true` rebuilds it.
+
 ## Values, case and dates
 
 Entity and claim `type` and claim `status` are stored lowercase (a claim's

@@ -102,6 +102,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.document_identity import (
+    PATH_FILTER_KEYS,
     RELATIVE_PATH_KEY,
     config_registry_namespace,
     is_unparsed,
@@ -3372,6 +3373,9 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=__version__,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
+            # Every document this run indexed carries the path filters; a
+            # rewritten record does not know what the stored ones carry.
+            document_filter_keys=None if rewritten else list(PATH_FILTER_KEYS),
             # A full build wrote every report and summary under this config;
             # an incremental record keeps the stored ones (over()), and a
             # rewritten record does not know them.

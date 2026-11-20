@@ -187,8 +187,9 @@ def test_incremental_runs_keep_relationship_filters_current(
     create = BaseChunker._create_text_unit
 
     def with_filters(self: BaseChunker, chunk_text: str, document: Any, *a: Any) -> Any:
+        # Beside the path filters ingestion stamped (file).
         if filters := per_file[Path(document.file_name).stem]:
-            document.metadata["filters"] = dict(filters)
+            document.metadata["filters"] = {**document.metadata["filters"], **filters}
         return create(self, chunk_text, document, *a)
 
     labels = (
@@ -214,6 +215,7 @@ def test_incremental_runs_keep_relationship_filters_current(
             for k, v in per_file["logistics"].items()
         }
         both = {k: v[0] if len(v) == 1 else v for k, v in both.items()}
+        both["file"] = ["contract.txt", "logistics.txt"]
         stored = _stored_filters(config, providers)
         assert {label: stored[label] for label in labels} == dict.fromkeys(labels, both)
 
@@ -221,7 +223,9 @@ def test_incremental_runs_keep_relationship_filters_current(
         context = e2e._ingest(config, providers, source, tmp_path / "run-3")
         assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     stored = _stored_filters(config, providers)
-    assert {label: stored[label] for label in labels} == dict.fromkeys(labels, after)
+    assert {label: stored[label] for label in labels} == dict.fromkeys(
+        labels, {**after, "file": "contract.txt"}
+    )
     rag = GraphRAGChain(config, providers=providers)
     try:
         for strategy in (SearchStrategy.LOCAL, SearchStrategy.MIX):

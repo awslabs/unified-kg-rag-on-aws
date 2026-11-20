@@ -86,6 +86,11 @@ checked the same way; with `--filters`, each key in one of the two.
   OpenSearch applies it strictly (fail-closed): an item without the
   attribute is excluded. An entity, relationship, claim or community report
   from several documents matches when one of its documents does.
+- Every document carries its path filters: `file`, its path relative to the
+  corpus root (an `insert_documents` id), and `folder`, each folder holding
+  it. `--filters attr_folder:contracts` scopes a question to every document
+  below `contracts/`, `attr_file:contracts/2024/acme.txt` to one file
+  ([Path filters](../reference/filters.md#path-filters)).
 - Entity and claim `type` and claim `status` are stored lowercase, and a
   filter value of theirs matches its lowercase form too: `type:PERSON`
   matches `person`.

@@ -115,10 +115,14 @@ def test_documents_from_memory_are_added_updated_and_deleted(
     }
     assert _entity_names(providers) == {"Vendor", "Buyer", "Depot"}
     filters = _unit_filters(config, providers)
+    # The given filters and the id's path filters (file, folder).
     assert filters["Vendor supplies widgets to Buyer. 공급자는 납품한다."] == {
         "category": "contract",
         "year": 2024,
+        "file": "contracts/supply.txt",
+        "folder": ["contracts"],
     }
+    assert filters["Depot stores widgets for Vendor."] == {"file": "ticket-1"}
     assert set(first.incremental_delta.new) and not first.incremental_delta.kept
 
     # Another insert keeps what it does not name (a corpus run deletes it).
