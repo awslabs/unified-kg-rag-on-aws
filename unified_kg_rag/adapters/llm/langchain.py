@@ -14,23 +14,23 @@ from collections.abc import Callable, Iterable, Mapping
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-import tenacity
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import BaseOutputParser, XMLOutputParser
 from lxml import etree
 from pydantic import BaseModel, ConfigDict, Field
 from structlog.contextvars import bound_contextvars
-from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.adapters.llm.retry import (
     DEFAULT_CALL_TIMEOUT_SECONDS,
-    backoff_delay,
+    acall_with_retry,
     call_timeout_for,
+    call_with_retry,
     never_retried,
     record_failure,
+    retry_wait,
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
@@ -251,18 +251,6 @@ class ProgressLogger:
             rate,
             eta,
         )
-
-
-def _retry_wait(state: RetryCallState, policy: RetryPolicy) -> float:
-    """The wait before an item's next call: none after output that did not
-    parse (the model's answer, which a new call may fix at once), else
-    ``policy``'s backoff, which waits out a throttled quota or a stalled
-    model."""
-    outcome = state.outcome
-    error = outcome.exception() if outcome is not None and outcome.failed else None
-    if isinstance(error, OutputParserException):
-        return 0.0
-    return backoff_delay(state.attempt_number, policy)
 
 
 class BatchProcessor(BaseModel):
@@ -640,67 +628,67 @@ class BatchProcessor(BaseModel):
     def _create_retry_decorator(
         self, operation_name: str, abandoned: threading.Event | None = None
     ) -> Callable[..., Any]:
-        # The one backoff of every retrying caller (backoff_delay; full jitter
-        # by default here) spreads concurrent retries, so a throttled Bedrock
-        # endpoint is not hammered in lock-step. Only retryable errors are
-        # retried, so a permanent failure (access denied, validation, missing
-        # model) fails fast. Once ``abandoned`` is set no retry is made and a
-        # backoff wait ends.
+        # The one retry loop (call_with_retry) under the one schedule of a
+        # loop of its own (retry_wait: the attempts, the shared backoff, full
+        # jitter by default here, and the budget), which spreads concurrent
+        # retries, so a throttled Bedrock endpoint is not hammered in
+        # lock-step. Only retryable errors are retried, so a permanent
+        # failure (access denied, validation, missing model) fails fast. Once
+        # ``abandoned`` is set no retry is made and a backoff wait ends. The
+        # last attempt's error is raised unchanged.
         retry_policy = self.retry
-        stop: tenacity.stop.stop_base = tenacity.stop_after_attempt(
-            retry_policy.max_attempts
-        )
-        if retry_policy.max_total_seconds is not None:
-            stop = stop | tenacity.stop_before_delay(retry_policy.max_total_seconds)
-        options: dict[str, Any] = {}
-        if abandoned is not None:
-            stop = stop | tenacity.stop_when_event_set(abandoned)
-            options["sleep"] = abandoned.wait
-        policy: dict[str, Any] = {
-            "retry": tenacity.retry_if_exception(self._is_retryable),
-            "wait": lambda state: _retry_wait(state, retry_policy),
-            "stop": stop,
-            "before_sleep": self._create_retry_log_callback(operation_name),
-            "reraise": True,
-        }
-        # Not tenacity.retry: its wrapper keeps one statistics dict for every
-        # call of the wrapped function and clears it on each call (tenacity
-        # 9.2), so a worker about to back off read another's cleared stats
-        # (KeyError 'idle_for', not retried: the item failed). Each call runs
-        # on a copy of the policy, with statistics of its own (in a thread or
-        # a coroutine alike).
-        retrying = tenacity.Retrying(**policy, **options)
-        aretrying = tenacity.AsyncRetrying(**policy)
+
+        def next_wait(
+            error: Exception, attempt: int, started_at: float
+        ) -> float | None:
+            if not self._is_retryable(error) or (
+                abandoned is not None and abandoned.is_set()
+            ):
+                return None
+            # No wait after output that did not parse (the model's answer,
+            # which a new call may fix at once), else the backoff, which
+            # waits out a throttled quota or a stalled model.
+            delay = retry_wait(
+                retry_policy,
+                attempt,
+                started_at,
+                delay=0.0 if isinstance(error, OutputParserException) else None,
+            )
+            if delay is not None:
+                logger.warning(
+                    "Retrying '%s' (attempt %s failed). Waiting %.1fs",
+                    operation_name,
+                    attempt,
+                    delay,
+                )
+            return delay
+
+        # The waits go to the batch's abandon event: a wait ends once the
+        # batch is abandoned.
+        wait = abandoned.wait if abandoned is not None else None
 
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
                 async def acall(*args: Any, **kwargs: Any) -> Any:
-                    return await aretrying.copy()(func, *args, **kwargs)
+                    return await acall_with_retry(
+                        functools.partial(func, *args, **kwargs), next_delay=next_wait
+                    )
 
                 return acall
 
             @functools.wraps(func)
             def call(*args: Any, **kwargs: Any) -> Any:
-                return retrying.copy()(func, *args, **kwargs)
+                return call_with_retry(
+                    functools.partial(func, *args, **kwargs),
+                    next_delay=next_wait,
+                    wait=wait,
+                )
 
             return call
 
         return decorator
-
-    @staticmethod
-    def _create_retry_log_callback(operation_name: str) -> Callable[..., Any]:
-        def log_retry(retry_state: RetryCallState) -> None:
-            wait_time = retry_state.next_action.sleep if retry_state.next_action else 0
-            logger.warning(
-                "Retrying '%s' (attempt %s failed). Waiting %.1fs",
-                operation_name,
-                retry_state.attempt_number,
-                wait_time,
-            )
-
-        return log_retry
 
     async def aexecute_with_fallback(
         self,

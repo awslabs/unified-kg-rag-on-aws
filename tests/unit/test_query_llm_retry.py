@@ -371,7 +371,7 @@ async def test_rag_query_non_transient_error_fails_after_one_call() -> None:
 
 
 def test_batch_processor_chain_is_not_double_retried() -> None:
-    # Ingestion chains get no chain-level retry; BatchProcessor's tenacity
+    # Ingestion chains get no chain-level retry; BatchProcessor's
     # retry is the only one, so max_attempts N => N model calls in total (not
     # 3 per attempt).
     model = _ScriptedModel([_model_error() for _ in range(10)])

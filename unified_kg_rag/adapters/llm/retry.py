@@ -535,15 +535,20 @@ def past_budget(policy: RetryPolicy, started_at: float, delay: float) -> bool:
     return budget is not None and time.monotonic() - started_at + delay > budget
 
 
-def retry_wait(policy: RetryPolicy, retry: int, started_at: float) -> float | None:
+def retry_wait(
+    policy: RetryPolicy, retry: int, started_at: float, *, delay: float | None = None
+) -> float | None:
     """The wait before retry ``retry`` (1-based) of a call started at
     ``started_at`` (``time.monotonic``) under ``policy``, or None when no
     retry is left: its attempts are spent, or the wait would cross its
-    budget. The one schedule of every retry loop of its own (the indexers,
-    the bulk resends, the registry batches)."""
+    budget. ``delay`` is the wait when it is not the backoff (a batch item
+    whose output did not parse is asked again at once). The one schedule of
+    every retry loop of its own (the batch items, the indexers, the bulk
+    resends, the registry batches)."""
     if retry >= policy.max_attempts:
         return None
-    delay = backoff_delay(retry, policy)
+    if delay is None:
+        delay = backoff_delay(retry, policy)
     return None if past_budget(policy, started_at, delay) else delay
 
 
@@ -593,6 +598,80 @@ def next_transient_retry_delay(
     return delay
 
 
+# What decides a retry: the error of attempt ``attempt`` (1-based) of a call
+# started at ``started_at`` (``time.monotonic``) -> the wait before the next
+# attempt, or None to give up and raise the error.
+NextDelay = Callable[[Exception, int, float], float | None]
+
+
+def call_with_retry(
+    func: Callable[[], T],
+    *,
+    next_delay: NextDelay,
+    wait: Callable[[float], object] | None = None,
+) -> T:
+    """Call ``func`` until it returns or ``next_delay`` gives up: the one
+    retry loop (the transient retries, the batch items).
+
+    An error ``next_delay`` gives up on is raised unchanged; a stop (a
+    ``BaseException`` that is not an ``Exception``) is never retried. No
+    attempt starts after the query stopped (``shared.query_stop``), and
+    ``wait`` (default :func:`~unified_kg_rag.shared.query_stop.backoff_wait`,
+    which ends at the stop with ``asyncio.CancelledError``) waits between
+    attempts.
+    """
+    started_at = time.monotonic()
+    attempt = 1
+    while True:
+        raise_if_stopped()
+        try:
+            return func()
+        except Exception as exc:
+            delay = next_delay(exc, attempt, started_at)
+            if delay is None:
+                raise
+            if wait is None:
+                backoff_wait(delay, _sleep)
+            else:
+                wait(delay)
+            attempt += 1
+
+
+async def acall_with_retry(
+    func: Callable[[], Awaitable[T]], *, next_delay: NextDelay
+) -> T:
+    """Async twin of :func:`call_with_retry` (backs off without blocking,
+    :func:`~unified_kg_rag.shared.query_stop.abackoff_wait`)."""
+    started_at = time.monotonic()
+    attempt = 1
+    while True:
+        raise_if_stopped()
+        try:
+            return await func()
+        except Exception as exc:
+            delay = next_delay(exc, attempt, started_at)
+            if delay is None:
+                raise
+            await abackoff_wait(delay)
+            attempt += 1
+
+
+def _transient_delay(
+    is_transient: TransientErrorPredicate, operation: str, policy: RetryPolicy
+) -> NextDelay:
+    def next_delay(exc: Exception, attempt: int, started_at: float) -> float | None:
+        return next_transient_retry_delay(
+            exc,
+            is_transient=is_transient,
+            operation=operation,
+            attempt=attempt,
+            started_at=started_at,
+            policy=policy,
+        )
+
+    return next_delay
+
+
 def call_with_transient_retry(
     func: Callable[[], T],
     *,
@@ -610,25 +689,9 @@ def call_with_transient_retry(
     its deadline, ``shared.query_stop``): no attempt starts after the stop, and a wait
     under way ends at it, raising ``asyncio.CancelledError``.
     """
-    started_at = time.monotonic()
-    attempt = 1
-    while True:
-        raise_if_stopped()
-        try:
-            return func()
-        except Exception as exc:
-            delay = next_transient_retry_delay(
-                exc,
-                is_transient=is_transient,
-                operation=operation,
-                attempt=attempt,
-                started_at=started_at,
-                policy=policy,
-            )
-            if delay is None:
-                raise
-            backoff_wait(delay, _sleep)
-            attempt += 1
+    return call_with_retry(
+        func, next_delay=_transient_delay(is_transient, operation, policy)
+    )
 
 
 async def acall_with_transient_retry(
@@ -639,22 +702,6 @@ async def acall_with_transient_retry(
     policy: RetryPolicy,
 ) -> T:
     """Async twin of :func:`call_with_transient_retry` (backs off without blocking)."""
-    started_at = time.monotonic()
-    attempt = 1
-    while True:
-        raise_if_stopped()
-        try:
-            return await func()
-        except Exception as exc:
-            delay = next_transient_retry_delay(
-                exc,
-                is_transient=is_transient,
-                operation=operation,
-                attempt=attempt,
-                started_at=started_at,
-                policy=policy,
-            )
-            if delay is None:
-                raise
-            await abackoff_wait(delay)
-            attempt += 1
+    return await acall_with_retry(
+        func, next_delay=_transient_delay(is_transient, operation, policy)
+    )

@@ -4358,7 +4358,6 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "structlog" },
-    { name = "tenacity" },
     { name = "tqdm" },
 ]
 
@@ -4493,7 +4492,6 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'cross-encoder'", specifier = ">=5.1.0" },
     { name = "snowballstemmer", marker = "extra == 'local'", specifier = ">=2.2" },
     { name = "structlog", specifier = ">=25.4.0" },
-    { name = "tenacity", specifier = ">=9.1.2" },
     { name = "tiktoken", marker = "extra == 'local'", specifier = ">=0.12.0" },
     { name = "tqdm", specifier = ">=4.70.0" },
     { name = "unstructured", extras = ["md"], marker = "extra == 'unstructured'", specifier = ">=0.27.37" },

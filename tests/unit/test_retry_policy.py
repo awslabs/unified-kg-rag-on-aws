@@ -32,7 +32,7 @@ pytestmark = pytest.mark.unit
 # (max_attempts, base, max delay, total budget, jitter) each caller had.
 _FORMER = {
     "model": (5, 2.0, 16.0, 60.0, "equal"),
-    "ingestion_item": (5, 30.0, 120.0, None, "full"),  # tenacity 30 / 120
+    "ingestion_item": (5, 30.0, 120.0, None, "full"),
     "model_server": (3, 2.0, 16.0, 60.0, "equal"),
     "graph_store": (4, 2.0, None, None, "full"),
     "query_store": (3, 0.5, 4.0, None, "equal"),
@@ -115,9 +115,8 @@ def test_the_registry_batch_waits_are_the_former_ones(
 def test_the_ingestion_item_wait_is_drawn_under_its_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # tenacity's wait_random_exponential(30, 120) drew from [0, 30 x 2^(n-1)]
-    # capped at 120; the batch processor draws the same through the shared
-    # backoff.
+    # Drawn from [0, 30 x 2^(n-1)] capped at 120 (tenacity's
+    # wait_random_exponential(30, 120) before the shared backoff).
     monkeypatch.setattr(llm_retry._jitter_rng, "uniform", lambda a, b: b)
     slept: list[float] = []
     processor = BatchProcessor(retry=Config().retry.ingestion_item)

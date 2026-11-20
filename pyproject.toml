@@ -84,7 +84,6 @@ dependencies = [
     # compatibility.
     "rich>=14.3.3,<15.0.0",
     "structlog>=25.4.0",
-    "tenacity>=9.1.2",
     "tqdm>=4.70.0",
 ]
 

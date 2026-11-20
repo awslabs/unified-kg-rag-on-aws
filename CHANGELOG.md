@@ -306,6 +306,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - The `unstructured` extra requires `unstructured>=0.27.37` (locked at 0.27.37, from 0.24.1), the first release that
   allows filelock 4, so the lockfile no longer overrides its filelock cap and a `pip install` gets the patched
   filelock too.
+- `tenacity` is no longer a dependency of the package (langchain-core still installs it): a batch item retries through
+  the package's one retry loop and schedule, with the same attempts, waits, budget, stops and log line.
 
 ### Deprecated
 
