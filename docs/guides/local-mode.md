@@ -64,9 +64,13 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
 - **Quality.** Small local models extract noticeably worse (more failed
   chunks, weaker resolution and reports): use the largest model the hardware
   runs. The `ragas` and `assertion` judges score less reliably.
-- **Model behaviour.** No prompt caching or reasoning effort; a response cut
-  at the output limit is not detected (keep `max_output_tokens` at what the
-  model can generate); token counts and so context budgets are estimates. A
+- **Model behaviour.** No prompt caching or reasoning effort. A response cut
+  at the output limit is detected as on Bedrock (Ollama's `done_reason`, an
+  OpenAI-compatible server's `finish_reason`): the ingestion item fails
+  without a retry, as the same input stops at the same limit again, so a
+  small model that repeats itself until `max_output_tokens` leaves its text
+  unit without an extraction. Token counts and so context budgets are
+  estimates. A
   server that refuses a call (HTTP 4xx) or stays unreachable fails the query
   with the client's error instead of answering "could not find".
 - **Reasoning models.** A leading `<think>` (or `<thinking>`, `<reasoning>`)
