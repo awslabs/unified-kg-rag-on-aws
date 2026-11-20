@@ -1275,8 +1275,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             body["track_scores"] = True
         return body
 
-    @staticmethod
-    def _build_lexical_query(query: SearchQuery, fields: list[str]) -> dict[str, Any]:
+    def _build_lexical_query(
+        self, query: SearchQuery, fields: list[str]
+    ) -> dict[str, Any]:
         if not query.query or query.query == "*":
             return {"match_all": {}}
 
@@ -1287,17 +1288,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             query.query, min(_MAX_LEXICAL_QUERY_TERMS, budget)
         )
         main_query: dict[str, Any] = {"multi_match": {"query": text, "fields": fields}}
-        # AUTO allows one edit on a 3-5 character term. On Latin words that
-        # absorbs a typo; on Hangul/Han/Kana, where one character is a whole
-        # syllable or morpheme, it matches a different word ("가나라상사" for
-        # "가나다상사"). A query containing such text is matched exactly, as
-        # is a long one (see _MAX_FUZZY_QUERY_TERMS).
+        # search.hybrid.lexical_fuzziness (AUTO: one edit on a 3-5 character
+        # term). On Latin words that absorbs a typo; on Hangul/Han/Kana,
+        # where one character is a whole syllable or morpheme, it matches a
+        # different word ("가나라상사" for "가나다상사"). A query containing
+        # such text is matched exactly, as is a long one (see
+        # _MAX_FUZZY_QUERY_TERMS).
+        fuzziness = self._config.search.hybrid.lexical_fuzziness
         if (
-            not has_dense_script(text)
+            fuzziness != "0"
+            and not has_dense_script(text)
             and terms <= _MAX_FUZZY_QUERY_TERMS
             and terms * _FUZZY_MAX_EXPANSIONS <= budget
         ):
-            main_query["multi_match"]["fuzziness"] = "AUTO"
+            main_query["multi_match"]["fuzziness"] = fuzziness
             main_query["multi_match"]["max_expansions"] = _FUZZY_MAX_EXPANSIONS
             terms *= _FUZZY_MAX_EXPANSIONS
 

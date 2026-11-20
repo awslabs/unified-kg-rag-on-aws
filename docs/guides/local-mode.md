@@ -85,7 +85,8 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   CJK character bigrams instead of morphological analysis: a name still
   matches inside a longer word (홍길동 in 홍길동으로부터), but ranking differs.
 - `english` stems only with `snowballstemmer` from the `[local]` extra (else
-  one warning); emoji are not indexed. There is no fuzzy matching, so a typo,
+  one warning); emoji are not indexed. There is no fuzzy matching
+  (`search.hybrid.lexical_fuzziness` applies on OpenSearch only), so a typo,
   and under `standard` an inflected form ("vendors"), matches only through
   the vector side.
 - kNN is exact (every filtered document is scored), so cost grows linearly.

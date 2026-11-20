@@ -231,6 +231,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `usage_schema` 4) and `models.prices.<id>.embedding_per_million_tokens`, which every USD figure adds.
 - With tracing on, `run-eval` reports per-span latency (`stage_latency_seconds`: answers, mean, p50, p95) in the run
   summary and per comparison strategy, from each answer's `stage_seconds`.
+- `search.hybrid.lexical_fuzziness` (default `AUTO`, the fixed value before; `AUTO:<low>,<high>`, `1`, `2`, or `0` to
+  match exactly): the OpenSearch fuzziness of a short lexical query. A synthetic name-lookup A/B (dev and held-out
+  splits) found no value better on both exact and misspelled names, so the default is unchanged
+  ([Defaults and evidence](docs/concepts/defaults-and-evidence.md#lexical-fuzziness)).
 
 ### Changed
 

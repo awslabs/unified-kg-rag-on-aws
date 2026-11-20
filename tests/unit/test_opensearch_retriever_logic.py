@@ -246,6 +246,32 @@ def test_build_lexical_query_matches_a_long_question_exactly(retriever) -> None:
     assert "max_expansions" not in body["multi_match"]
 
 
+@pytest.mark.parametrize("fuzziness", ["1", "2", "AUTO:4,7"])
+def test_build_lexical_query_uses_the_configured_fuzziness(
+    retriever, fuzziness: str
+) -> None:
+    retriever._config.search.hybrid.lexical_fuzziness = fuzziness
+    body = retriever._build_lexical_query(SearchQuery(query="alice"), ["name"])
+    assert body["multi_match"]["fuzziness"] == fuzziness
+    assert body["multi_match"]["max_expansions"] == 10
+
+
+def test_build_lexical_query_fuzziness_zero_matches_exactly(retriever) -> None:
+    # No fuzzy expansion, so the optional keywords keep the whole term budget.
+    retriever._config.search.hybrid.lexical_fuzziness = "0"
+    q = SearchQuery(query="alice", optional_keywords=["acme"])
+    body = retriever._build_lexical_query(q, ["name"])
+    main = body["bool"]["must"][0]["multi_match"]
+    assert "fuzziness" not in main
+    assert "max_expansions" not in main
+
+
+@pytest.mark.parametrize("value", ["auto", "3", "AUTO:4", "AUTO:a,b", "", "-1"])
+def test_lexical_fuzziness_must_be_an_opensearch_fuzziness(value: str) -> None:
+    with pytest.raises(ValueError, match="lexical_fuzziness"):
+        Config.model_validate({"search": {"hybrid": {"lexical_fuzziness": value}}})
+
+
 @pytest.mark.parametrize("text", ["가나다상사", "青空海運", "カタカナ", "가나다 Corp"])
 def test_build_lexical_query_no_fuzziness_for_dense_scripts(retriever, text) -> None:
     # One Hangul/Han/Kana character is a whole syllable or morpheme, so the

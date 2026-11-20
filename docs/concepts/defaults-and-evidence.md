@@ -772,6 +772,26 @@ dimensions, OpenSearch 2.19.3,
 A synthetic set is not a corpus's embeddings, so measure
 recall on your own corpus before choosing a level.
 
+## Lexical fuzziness
+
+`search.hybrid.lexical_fuzziness` (OpenSearch only) trades near-miss names
+for typos. On synthetic name lookups (180 made-up organizations, 30 of them
+one edit from another, as "Acme" and "Acne"; 60 exact and 40 one-typo
+queries per split; lexical search, OpenSearch 2.19.7,
+`tests/integration/test_lexical_fuzziness.py`), dev / held-out:
+
+| Setting | Exact name: hit@1 | Exact name: other names in top 10 | One typo: hit@1 |
+|---|---|---|---|
+| `AUTO` (default) | 0.98 / 0.97 | 0.42 / 0.48 | 0.98 / 0.98 |
+| `AUTO:4,7` | 0.98 / 0.97 | 0.37 / 0.45 | 0.90 / 0.95 |
+| `0` (exact) | 1.0 / 1.0 | 0 / 0 | 0 / 0 |
+
+No setting is better on both kinds of query: which one wins depends on how
+often a corpus's queries misspell a name, which a synthetic set cannot say,
+so the default stays `AUTO`. A hybrid search's vector side also finds some
+typos. Set `0` where names are typed exactly (codes, identifiers) and
+near-miss names must not match.
+
 ## Ontology and RDF parse cost
 
 An `owl` [schema source](../guides/ontology.md#load-cost) and an `rdf`
