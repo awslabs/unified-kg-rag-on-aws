@@ -165,6 +165,41 @@ def test_documents_from_memory_are_added_updated_and_deleted(
     assert any(isinstance(s, ps.DocumentParsingStage) for s in pipeline.stages)
 
 
+def test_the_build_record_names_the_path_filters_only_while_every_document_has_them(
+    setup,
+) -> None:
+    # An id that starts with a drive is no path under the corpus root and
+    # gets no path filters: the record must stop naming them, so a filter
+    # on them is refused instead of leaving that document out unseen.
+    config, providers, pipeline = setup
+
+    def filter_keys() -> list[str] | None:
+        indexer = providers.build_vector_indexer()
+        try:
+            return (indexer.read_build_record(None) or {})["document_filter_keys"]
+        finally:
+            indexer.close()
+
+    _ok(
+        pipeline.insert_documents(
+            [
+                InputDocument(
+                    id="contracts/supply.txt", text="Vendor supplies widgets."
+                ),
+                InputDocument(id="notes 10:30.txt", text="Buyer pays for widgets."),
+            ]
+        )
+    )
+    assert filter_keys() == ["file", "folder"]
+    _ok(
+        pipeline.insert_documents(
+            [InputDocument(id="C:ledger.txt", text="Depot stores widgets for Vendor.")]
+        )
+    )
+    assert _unit_filters(config, providers)["Depot stores widgets for Vendor."] is None
+    assert filter_keys() == []
+
+
 def test_scopes_keep_their_documents_apart(setup, tmp_path: Path) -> None:
     config, providers, pipeline = setup
     _ok(pipeline.insert_documents([{"id": "a", "text": "Vendor supplies Buyer."}]))

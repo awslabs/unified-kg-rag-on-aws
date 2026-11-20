@@ -177,7 +177,8 @@ class IndexBuildRecord(BaseModel):
         description=(
             "The document filter keys ingestion stamped on every document "
             "of the suffix (document_identity.PATH_FILTER_KEYS: file, "
-            "folder), a seed graph's aside. An incremental record keeps "
+            "folder), a seed graph's aside; none when one was not (a path "
+            "outside the corpus root). An incremental record keeps "
             "those the stored record names too. None in a record written "
             "by an earlier version, whose documents carry none."
         ),

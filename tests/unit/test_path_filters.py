@@ -6,11 +6,13 @@ without them (``IndexBuildRecord.document_filter_keys``)."""
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from unified_kg_rag.application.ingestion.pipeline_stages import _stamped_filter_keys
 from unified_kg_rag.application.retrieval.filter_validation import (
     check_path_filter_keys,
 )
@@ -20,7 +22,9 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     path_filters,
 )
 from unified_kg_rag.domain.ingestion.methodologies import namespace_holdings
-from unified_kg_rag.domain.models import Config, Document, IndexBuildRecord
+from unified_kg_rag.domain.ingestion.seed_graph import SEED_UNIT_PREFIX
+from unified_kg_rag.domain.models import Config, Document, IndexBuildRecord, TextUnit
+from unified_kg_rag.domain.retrieval.filters import typed_filter_values
 from unified_kg_rag.shared import InvalidFilterError
 
 pytestmark = pytest.mark.unit
@@ -139,3 +143,75 @@ def test_a_path_filter_is_refused_on_a_namespace_without_it(
     check_path_filter_keys(
         {"attr_region": "emea", "attributes.folder": "x"}, holdings, "tenant"
     )
+
+
+_NFD_FOLDER = unicodedata.normalize("NFD", "서류")
+
+
+def test_the_stamped_path_filters_are_nfc_and_the_identity_path_as_given() -> None:
+    # macOS (and many archive tools) give a Hangul name decomposed; a user
+    # types it composed, and the stores compare filter values as written.
+    assert _NFD_FOLDER != "서류"
+    document = _document(f"{_NFD_FOLDER}/memo.txt")
+    assign_document_identity(document, "/corpus")
+    assert document.metadata["filters"] == {"file": "서류/memo.txt", "folder": ["서류"]}
+    # The document's identity (its relative path, so its ids) is unchanged.
+    assert document.metadata["relative_path"] == f"{_NFD_FOLDER}/memo.txt"
+
+
+@pytest.mark.parametrize("key", ["attr_folder", "attributes.filters.folder"])
+def test_a_path_filter_value_matches_its_nfc_form(key: str) -> None:
+    assert typed_filter_values({key: _NFD_FOLDER}) == {key: [_NFD_FOLDER, "서류"]}
+    assert typed_filter_values({key: [_NFD_FOLDER, "a"]}) == {
+        key: [_NFD_FOLDER, "서류", "a"]
+    }
+    # Already NFC: as given.
+    assert typed_filter_values({key: "서류"}) == {key: "서류"}
+    # Another document key is compared as written.
+    assert typed_filter_values({"attr_region": _NFD_FOLDER}) == {
+        "attr_region": _NFD_FOLDER
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("notes 10:30.txt", {"file": "notes 10:30.txt"}),
+        ("2024:Q1/r.txt", {"file": "2024:Q1/r.txt", "folder": ["2024:Q1"]}),
+        ("C:/corpus/r.txt", None),
+        ("c:r.txt", None),
+        ("s3://bucket/r.txt", None),
+        ("https://host/r.txt", None),
+    ],
+)
+def test_only_a_drive_or_a_url_scheme_is_not_a_relative_path(
+    path: str, expected: dict | None
+) -> None:
+    document = _document("x.txt")
+    document.file_path = f"/elsewhere/{path}"
+    document.metadata["relative_path"] = path
+    assign_document_identity(document, "/corpus")
+    assert document.metadata.get("filters") == expected
+
+
+def _unit(unit_id: str, filters: dict | None) -> TextUnit:
+    attributes = None if filters is None else {"filters": filters}
+    return TextUnit(id=unit_id, text="Vendor supplies widgets.", attributes=attributes)
+
+
+def test_the_build_record_names_the_path_filters_only_when_every_document_has_them() -> (
+    None
+):
+    stamped = _unit("t1", {"file": "a/b.txt", "folder": ["a"]})
+    at_root = _unit("t2", {"file": "b.txt"})
+    seed = _unit(f"{SEED_UNIT_PREFIX}products", {"seed_graph": "products"})
+    assert _stamped_filter_keys([stamped, at_root, seed]) == ["file", "folder"]
+    assert _stamped_filter_keys([]) == ["file", "folder"]
+    # A document whose path is not under the corpus root carries none, so
+    # the namespace refuses the keys instead of answering without it.
+    for unstamped in (_unit("t3", None), _unit("t4", {"region": "emea"})):
+        keys = _stamped_filter_keys([stamped, unstamped])
+        assert keys == []
+        holdings = namespace_holdings({"document_filter_keys": keys}, Config())
+        with pytest.raises(InvalidFilterError, match="attr_file"):
+            check_path_filter_keys({"attr_file": "b.txt"}, holdings, "tenant")

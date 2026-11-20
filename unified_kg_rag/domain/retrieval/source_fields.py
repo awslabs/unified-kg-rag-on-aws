@@ -16,6 +16,7 @@ every reader re-wrapped them before. Past that boundary a list field is a
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -115,6 +116,13 @@ def file_name(metadata: Mapping[str, Any]) -> str | None:
     return None
 
 
+# A path that names a place, not a path under the corpus root: a Windows
+# drive (``C:``, ``C:/x``) or a URL scheme (``s3://``). Any other ``:`` is
+# part of a name (``notes 10:30.txt``, a folder ``2024:Q1``), legal on
+# POSIX and macOS.
+_DRIVE_OR_SCHEME = re.compile(r"^(?:[A-Za-z]:|[A-Za-z][A-Za-z0-9+.-]*://)")
+
+
 def safe_relative_path(value: Any) -> str | None:
     """``value`` as a path relative to the corpus root, or ``None`` when it
     is not one (absolute, a drive or URL, or climbing out with ``..``): a
@@ -122,7 +130,7 @@ def safe_relative_path(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     path = value.strip().replace("\\", "/")
-    if path.startswith("/") or ":" in path:
+    if path.startswith("/") or _DRIVE_OR_SCHEME.match(path):
         return None
     parts = [p for p in path.split("/") if p not in ("", ".")]
     if not parts or ".." in parts:
