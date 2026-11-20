@@ -29,6 +29,7 @@ from moto import mock_aws
 import unified_kg_rag.adapters.schema_sources.file as file_source
 from tests.fixtures.extras import requires_ontology
 from tests.fixtures.ontology_models import PROCURE_GOLDEN
+from tests.fixtures.url_credentials import userinfo_url
 from unified_kg_rag.adapters.schema_sources import (
     SchemaSourceContext,
     get_schema_source,
@@ -419,7 +420,7 @@ def test_an_unreachable_s3_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
     "path",
     [
         "s3://Not_A_Bucket/x.yaml",
-        "s3://user:token@bucket/x.yaml",  # gitleaks:allow
+        userinfo_url("s3://bucket/x.yaml", password="token"),
         "s3:///x",
     ],
 )

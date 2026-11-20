@@ -29,6 +29,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 from opentelemetry.trace import StatusCode
 
+from tests.fixtures.url_credentials import userinfo_url
 from unified_kg_rag.adapters.observability import otel
 from unified_kg_rag.adapters.observability.endpoints import (
     LANGFUSE_OTLP_PATH,
@@ -205,9 +206,8 @@ def test_settings_repr_and_description_hold_no_secret() -> None:
         assert _SECRET not in text and token not in text and _PUBLIC not in text
     assert "headers=authorization,x-langfuse-ingestion-version" in settings.describe()
     # A fake credential the test checks gets stripped.
-    url = (
-        "https://user:pw@collector.example.com:4318"  # gitleaks:allow
-        "/v1/traces?key=s#f"
+    url = userinfo_url(
+        "https://collector.example.com:4318/v1/traces?key=s#f", password="pw"
     )
     assert safe_url(url) == "https://collector.example.com:4318/v1/traces"
 
@@ -216,7 +216,10 @@ def test_settings_repr_and_description_hold_no_secret() -> None:
     ("url", "safe"),
     [
         ("http://[::1]:4318/v1/traces?key=s", "http://[::1]:4318/v1/traces"),
-        ("http://u:p@[2001:db8::7]/v1", "http://[2001:db8::7]/v1"),  # gitleaks:allow
+        (
+            userinfo_url("http://[2001:db8::7]/v1", user="u", password="p"),
+            "http://[2001:db8::7]/v1",
+        ),
         ("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1"),
     ],
 )

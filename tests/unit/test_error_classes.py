@@ -23,6 +23,7 @@ import httpx
 import pytest
 from urllib3 import exceptions as urllib3_exc
 
+from tests.fixtures.url_credentials import userinfo_url
 from unified_kg_rag.adapters.llm.reachability import (
     is_unreachable_error,
     model_unreachable_error,
@@ -313,7 +314,7 @@ def test_the_message_names_a_server_without_the_credentials_of_its_url() -> None
     config = Config(backend="local", models={"default": "chat-m"})
     config.providers.llm.kind = "openai_compatible"
     # A fake credential the test checks gets stripped.
-    url = "http://alice:secret@127.0.0.1:9/v1?api-key=QQQ"  # gitleaks:allow
+    url = userinfo_url("http://127.0.0.1:9/v1?api-key=QQQ", user="alice")
     config.providers.llm.base_url = url
     message = str(model_unreachable_error(httpx.ConnectError("refused"), config))
     assert "providers.llm (openai_compatible at http://127.0.0.1:9/v1)" in message
