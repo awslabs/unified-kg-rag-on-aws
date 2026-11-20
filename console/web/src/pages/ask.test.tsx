@@ -6,7 +6,7 @@ import { I18nProvider, useI18n, type Locale } from "../i18n/i18n";
 import { ApiError, errorMessage } from "../lib/api";
 import { TrailProvider } from "../lib/trail";
 import type { Status } from "../lib/types";
-import { AskPage, turnErrorText } from "./AskPage";
+import { AskPage, graphParams, turnErrorText } from "./AskPage";
 
 const status = { config_path: "c.yaml", namespace: "default", jobs: [], sample_questions: ["Who ships parts?"], max_top_k: 40 } as unknown as Status;
 
@@ -139,5 +139,37 @@ describe("a failure inside the server", () => {
       key === "common.sentenceSeparator" ? " " : `${key}${vars ? JSON.stringify(vars) : ""}`;
     expect(errorMessage(t, new ApiError(500, masked, { code: "failure", error: masked }))).toBe("error.failure");
     expect(errorMessage(t, new ApiError(500, masked, { code: "failure", trace_id: "ab12" }))).toBe('error.failure error.traceId{"trace_id":"ab12"}');
+  });
+});
+
+describe("the filter box", () => {
+  it("sends its lines as typed and shows the server's refusal", async () => {
+    const refusal = "invalid filter 'attr_year 2024': expected 'key:value'";
+    serveStream([
+      { kind: "start", query_id: "q1", trace_id: null, trace_url: null },
+      { kind: "error", error_kind: "invalid_filter", message: refusal, query_id: "q1" },
+    ]);
+    renderAsk();
+    await screen.findByText("Who ships parts?");
+    const box = screen.getByPlaceholderText("attr_<key>: value");
+    fireEvent.change(box, { target: { value: "attr_code: 007\nattr_year 2024" } });
+    fireEvent.click(screen.getByText("Who ships parts?"));
+    expect(await screen.findByText(refusal)).toBeInTheDocument();
+    const calls = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+    const [, init] = calls.find(([url]) => String(url).endsWith("/api/ask"))!;
+    const body = JSON.parse(String(init.body));
+    // The value stays the string "007" (as a number, 7, it matched nothing).
+    expect(body.filter_text).toBe("attr_code: 007\nattr_year 2024");
+    expect(body).not.toHaveProperty("filters");
+  });
+});
+
+describe("Show in the graph", () => {
+  it("opens the graph of the namespace the answer searched", () => {
+    const entity = { kind: "entity", id: "e1" } as unknown as Parameters<typeof graphParams>[0];
+    expect(graphParams(entity, "v2")).toEqual({ namespace: "v2", focus: "e1" });
+    const community = { kind: "community", community_id: "c7" } as unknown as Parameters<typeof graphParams>[0];
+    expect(graphParams(community, "default")).toEqual({ namespace: "default", community: "c7" });
+    expect(graphParams(entity, null)).toEqual({ focus: "e1" });
   });
 });

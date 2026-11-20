@@ -143,6 +143,41 @@ def test_an_export_older_than_its_namespace_s_build_is_outdated() -> None:
     assert [g["outdated"] for g in graphs] == [False, True, False, True, False]
 
 
+def test_the_page_opens_the_export_of_the_config_s_namespace() -> None:
+    """The Graph page (and an answer's "Show in the graph") opens the
+    config namespace's graph, never the newest export of another one."""
+
+    def export(ref: str, namespace: str | None) -> dict[str, object]:
+        return {"ref": ref, "namespace": namespace}
+
+    graphs = [  # newest first, as find_graphs lists them
+        export("cache:v2", "v2"),
+        export("cache:old", None),
+        export("cache:default-new", "default"),
+        export("cache:default-old", "default"),
+    ]
+    current = graph_api.CurrentGraph("current", "default", "2026-11-03T00:00:00Z")
+    # The export the build record names, wherever it is listed.
+    assert graph_api.default_graph(graphs, current, "cache:default-old") == (
+        "cache:default-old"
+    )
+    # No current export (the build failed): the namespace's newest.
+    failed = graph_api.CurrentGraph("failed", "default", reason="read")
+    assert graph_api.default_graph(graphs, failed, None) == "cache:default-new"
+    # A current path outside the listed roots: the namespace's newest too.
+    assert graph_api.default_graph(graphs, current, "cache:gone") == (
+        "cache:default-new"
+    )
+    # Nothing of the namespace: no default, whatever else is listed.
+    other = graph_api.CurrentGraph("unrecorded", "tenant-b")
+    assert graph_api.default_graph(graphs, other, None) is None
+    # The config could not be read: no namespace to match.
+    assert (
+        graph_api.default_graph(graphs, graph_api.CurrentGraph("failed", None), None)
+        is None
+    )
+
+
 def test_the_graph_page_builds_one_provider_bundle_per_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

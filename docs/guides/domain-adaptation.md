@@ -56,7 +56,10 @@ your config.
 
 - The tuned `graph_extraction_system` and `community_report_system` are a
   domain preamble followed by the built-in rules and output format, verbatim;
-  generated few-shot examples come last.
+  generated few-shot examples come last, in a `<domain_examples>` block the
+  prompt declares as data. The profile's domain, language and persona are
+  each kept to one short line without `<`, so a sampled document cannot add
+  instructions to the tuned prompts.
 - Entity categories still come from `processing.graph_extraction.entity_types`
   (`{entity_types}`): copy the profile's `entity_types` there.
 - The few-shot examples are extracted with the profile's entity types, so

@@ -480,6 +480,8 @@
   "graph.outdated": "obsolète",
   "graph.noneTitle": "Rien n’est encore indexé dans « {{namespace}} »",
   "graph.none": "Ingérez un corpus dans cet espace de noms ; son graphe est construit à partir des magasins à l’ouverture de cette page.",
+  "graph.noExportTitle": "Aucun graphe de « {{namespace}} » à afficher",
+  "graph.noExport": "Aucune exportation du graphe de cet espace de noms n’est listée. Choisissez un autre graphe ci-dessus, ou reconstruisez l’espace de noms pour en exporter un.",
   "graph.exportOffTitle": "Le graphe est désactivé",
   "graph.exportOff": "graph.visualization.export_data est désactivé dans cette configuration : aucun graphe n’est construit. Activez-le dans les Paramètres pour voir le graphe de l’espace de noms.",
   "graph.unrecordedTitle": "« {{namespace}} » n’a pas d’enregistrement de construction",

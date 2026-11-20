@@ -253,3 +253,33 @@ def test_the_translated_text_field_names_a_language_by_its_code() -> None:
     assert translated_text_field(LanguageCode.KO) == "translated_text_ko"
     assert translated_text_field("ja") == "translated_text_ja"
     assert field_kind(translated_text_field("zh")) is FieldKind.TEXT
+
+
+# --- key:value pairs (run-rag --filters, the console's filter box) ----------
+
+
+def test_filter_pairs_read_each_line_as_its_key_and_string_value() -> None:
+    from unified_kg_rag.domain.retrieval.filters import filter_pairs
+
+    # Values stay strings (the query types a field's): "007" is not 7.
+    assert filter_pairs(["attr_code: 007", " in_schema:false ", "url:a:b"]) == {
+        "attr_code": "007",
+        "in_schema": "false",
+        "url": "a:b",
+    }
+    assert filter_pairs([]) == {}
+
+
+@pytest.mark.parametrize("item", ["attr_year 2024", "attr_year:", ": 2024", "  "])
+def test_a_malformed_filter_pair_is_refused(item: str) -> None:
+    from unified_kg_rag.domain.retrieval.filters import filter_pairs
+
+    with pytest.raises(InvalidFilterError, match="expected 'key:value'"):
+        filter_pairs(["attr_code: 1", item])
+
+
+def test_a_filter_key_given_twice_is_refused() -> None:
+    from unified_kg_rag.domain.retrieval.filters import filter_pairs
+
+    with pytest.raises(InvalidFilterError, match="attr_year given more than once"):
+        filter_pairs(["attr_year: 2024", "attr_code: 1", "attr_year : 2025"])

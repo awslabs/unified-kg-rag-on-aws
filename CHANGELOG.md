@@ -461,6 +461,24 @@ Bugs present in 0.3.0.
 - An `auto` query's speculative extraction left running past its query failed silently once its retries ran out; its
   failure is logged at WARNING (type and digest; the text at DEBUG).
 - An Ollama model's capability check (`/api/show`) left its connection's socket unclosed; the client is closed.
+- `run-prompt-tuning` wrote corpus-derived text into the tuned system prompts unfenced: the profile's sample sat in
+  plain quotes, the model's domain, language and persona answers could span lines, and the few-shot examples were
+  pasted bare, so a sampled document could add instructions to every later extraction and report. The sample and the
+  examples sit in tag blocks the prompts declare as data (their tags neutralised), and each answer is one short line
+  without `<`.
+- The console's Graph page drew the newest export of any namespace, so once a second namespace was ingested it, and an
+  answer's "Show in the graph", opened another namespace's graph under the config's name. It opens the config
+  namespace's current export (`/api/graphs` names it as `current.ref`), and "Show in the graph" the graph of the
+  namespace the answer searched; the picker still lists the others.
+- The console's filter box read its lines unlike `run-rag --filters`: a malformed line was dropped (the question ran
+  unfiltered), a repeated key kept its last value and a number-like value was sent as a number (`attr_code: 007`
+  matched no `"007"`). The page sends the text as typed (`filter_text`), the server reads it with the pair parser
+  `run-rag --filters` uses (`filter_pairs`), and a malformed line or a repeated key refuses the question with the
+  reason; the example is `attr_<key>: value`. `run-rag --filters` no longer keeps the space after a pair's `:` in its
+  value (`attr_code: 007` matched nothing).
+- The Graph page's Analysis tab cut off the last column of its schema conformance and evidence tables in the side
+  panel (English and German, at 1440 and 1920 px): each table lists the parts as rows, entities and relationships as
+  columns.
 
 ## [0.3.0] - 2026-11-14
 

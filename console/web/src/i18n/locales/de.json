@@ -463,6 +463,8 @@
   "graph.outdated": "veraltet",
   "graph.noneTitle": "In „{{namespace}}“ ist noch nichts indexiert",
   "graph.none": "Nehmen Sie ein Korpus in diesen Namespace auf; sein Graph wird beim Öffnen dieser Seite aus den Speichern erstellt.",
+  "graph.noExportTitle": "Kein Graph von „{{namespace}}“ vorhanden",
+  "graph.noExport": "Für den Graphen dieses Namespace ist kein Export aufgeführt. Wählen Sie oben einen anderen Graphen, oder erstellen Sie den Namespace neu, um einen zu exportieren.",
   "graph.exportOffTitle": "Der Graph ist ausgeschaltet",
   "graph.exportOff": "graph.visualization.export_data ist in dieser Konfiguration aus, daher wird kein Graph erstellt. Schalten Sie es in den Einstellungen ein, um den Graphen des Namespace zu sehen.",
   "graph.unrecordedTitle": "„{{namespace}}“ hat keinen Build-Eintrag",

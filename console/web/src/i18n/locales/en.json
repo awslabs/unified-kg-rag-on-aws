@@ -463,6 +463,8 @@
   "graph.outdated": "outdated",
   "graph.noneTitle": "Nothing is indexed in “{{namespace}}” yet",
   "graph.none": "Ingest a corpus into this namespace; its graph is built from the stores when you open this page.",
+  "graph.noExportTitle": "No graph of “{{namespace}}” to show",
+  "graph.noExport": "No export of this namespace’s graph is listed. Choose another graph above, or rebuild the namespace to export one.",
   "graph.exportOffTitle": "The graph is turned off",
   "graph.exportOff": "graph.visualization.export_data is off in this config, so no graph is built. Turn it on in Settings to see the namespace's graph.",
   "graph.unrecordedTitle": "“{{namespace}}” has no build record",

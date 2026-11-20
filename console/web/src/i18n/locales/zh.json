@@ -446,6 +446,8 @@
   "graph.outdated": "已过时",
   "graph.noneTitle": "“{{namespace}}”中还没有任何索引内容",
   "graph.none": "请向此命名空间导入语料库；打开此页面时会从存储构建其图谱。",
+  "graph.noExportTitle": "没有“{{namespace}}”的图谱可显示",
+  "graph.noExport": "列表中没有此命名空间图谱的导出。请在上方选择其他图谱，或重建该命名空间以导出图谱。",
   "graph.exportOffTitle": "图谱已关闭",
   "graph.exportOff": "此配置中 graph.visualization.export_data 已关闭，因此不会构建图谱。要查看命名空间的图谱，请在设置中开启它。",
   "graph.unrecordedTitle": "“{{namespace}}”没有构建记录",

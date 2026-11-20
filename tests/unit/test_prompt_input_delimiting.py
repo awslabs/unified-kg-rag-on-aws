@@ -30,6 +30,7 @@ from unified_kg_rag.domain.prompts.retrieval import (
     GlobalMapPrompt,
     QueryRewritePrompt,
 )
+from unified_kg_rag.domain.prompts.tuning import CorpusProfilePrompt
 
 pytestmark = pytest.mark.unit
 
@@ -53,6 +54,7 @@ _WRAPPED: list[tuple[type[BasePrompt], str, str]] = [
     (DriftActionPrompt, "context", "context"),
     (QueryRewritePrompt, "conversation_history", "conversation_history"),
     (QueryRewritePrompt, "query", "query"),
+    (CorpusProfilePrompt, "corpus_sample", "corpus_sample"),
 ]
 
 

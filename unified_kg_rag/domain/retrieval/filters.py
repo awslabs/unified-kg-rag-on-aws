@@ -573,6 +573,39 @@ def source_kinds_values(value: Any) -> list[str]:
     return list(value) if isinstance(value, list) else [value]
 
 
+def split_filter_pair(item: str) -> tuple[str, str]:
+    """A ``key:value`` pair (``run-rag --filters``, a line of the console's
+    filter box) as its key and value, split at the first ``:`` and each
+    stripped; the value stays a string (the query types a boolean or
+    numeric field's, :func:`typed_filter_values`).
+
+    Raises:
+        InvalidFilterError: No ``:``, no key or no value: a pair left out
+            would widen the search, one read otherwise empty it.
+    """
+    key, colon, value = item.partition(":")
+    if not colon or not key.strip() or not value.strip():
+        raise InvalidFilterError(f"invalid filter '{item}': expected 'key:value'")
+    return key.strip(), value.strip()
+
+
+def filter_pairs(items: Iterable[str]) -> dict[str, str]:
+    """``key:value`` pairs as one mapping (:func:`split_filter_pair`).
+
+    Raises:
+        InvalidFilterError: A pair is malformed, or a key is given twice
+            (the later value replacing the earlier one changed the search).
+    """
+    pairs = [split_filter_pair(item) for item in items]
+    keys = [key for key, _ in pairs]
+    if repeated := sorted({key for key in keys if keys.count(key) > 1}):
+        raise InvalidFilterError(
+            f"filter key {', '.join(repeated)} given more than once; give each "
+            "key once"
+        )
+    return dict(pairs)
+
+
 def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None:
     """``filters`` with each string value of a boolean or numeric field
     converted to that type, in a list and in range bounds too:

@@ -40,6 +40,19 @@ interface CurrentGraph {
   namespace: string | null;
   built_at: string | null;
   reason?: "config" | "setting" | "read" | "write" | null;
+  /** The export of the namespace the page opens (the one the build record
+   * names, else the namespace's newest); null when none is listed. */
+  ref?: string | null;
+}
+
+/** The export the page draws: the one chosen in the picker (or a link's
+ * ``graph``), else the newest of the namespace a link names (an answer's
+ * "Show in the graph") when it is not the config's, else the config
+ * namespace's (``current.ref``); never another namespace's newest. */
+export function pickGraph(files: { graphs: GraphFile[]; current: CurrentGraph }, chosen: string | null, namespace: string | null): string | null {
+  if (chosen) return chosen;
+  if (namespace && namespace !== files.current.namespace) return files.graphs.find((g) => g.namespace === namespace)?.ref ?? null;
+  return files.current.ref ?? null;
 }
 
 /** The catalog key of what a failed build says: the part that failed. */
@@ -56,9 +69,14 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
   const { t, date } = useI18n();
   const files = useApi(() => get<{ graphs: GraphFile[]; current: CurrentGraph }>("graphs"), []);
   const [chosen, setChosen] = useState<string | null>(params.get("graph"));
-  const ref = chosen ?? files.data?.graphs[0]?.ref ?? null;
+  // A link's namespace (an answer's "Show in the graph"): the graph it searched.
+  const wanted = params.get("namespace");
+  const ref = files.data ? pickGraph(files.data, chosen, wanted) : null;
   const graph = useApi(() => (ref ? get<GraphData>("graphs/data", { ref }) : Promise.resolve(null)), [ref]);
-  const none = !!files.data && !files.data.graphs.length;
+  // Nothing of the namespace to draw (other namespaces' exports stay in the picker).
+  const none = !!files.data && !ref;
+  // A link named another namespace than the config's, which has no export.
+  const foreign = none && !!wanted && wanted !== files.data?.current.namespace;
   // No build record: an empty namespace, or one indexed before build
   // records were written (the stores answer, yet no graph is current).
   const unrecorded = none && files.data?.current.state === "unrecorded";
@@ -81,6 +99,7 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
             <label className="field" style={{ minWidth: 240 }}>
               <span className="field-label">{t("graph.file")}</span>
               <select className="select" value={ref ?? ""} onChange={(e) => setChosen(e.target.value)}>
+                {ref ? null : <option value="">—</option>}
                 {files.data.graphs.map((g) => (
                   <option key={g.ref} value={g.ref}>
                     {fileLabel(g)}
@@ -92,7 +111,11 @@ export function GraphPage({ params }: { params: URLSearchParams }) {
         }
       />
       <ErrorText error={files.error ?? graph.error} />
-      {none ? <NoGraph state={files.data!.current.state} reason={files.data!.current.reason} indexed={held.data?.indexed ?? null} namespace={files.data!.current.namespace} /> : null}
+      {foreign ? (
+        <Empty title={t("graph.noExportTitle", { namespace: wanted ?? "" })}>{t("graph.noExport")}</Empty>
+      ) : none ? (
+        <NoGraph state={files.data!.current.state} reason={files.data!.current.reason} indexed={held.data?.indexed ?? null} namespace={files.data!.current.namespace} />
+      ) : null}
       {/* Building failed with exports to show: the newest is drawn, marked
           outdated in the picker when the namespace was built since. */}
       {!none && files.data?.current.state === "failed" ? <Notice tone="warn" title={t("graph.failedTitle")}>{t(failedKey(files.data.current.reason))}</Notice> : null}
@@ -486,64 +509,18 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                 </div>
                 <CountTable title={t("graph.stats.types")} rows={data.stats.types} total={data.stats.nodes} percent={percent} number={number} />
                 <CountTable title={t("graph.stats.relations")} rows={data.stats.relation_types} total={data.stats.edges} percent={percent} number={number} />
-                <div>
-                  <h3 className="field-label" style={{ margin: "0 0 6px" }}>
-                    {t("graph.stats.schema")}
-                  </h3>
-                  <div className="table-wrap" tabIndex={0}>
-                    <table className="table table-compact">
-                      <thead>
-                        <tr>
-                          <th>
-                            <span className="visually-hidden">{t("graph.stats.what")}</span>
-                          </th>
-                          <th className="num">{t("graph.inSchema")}</th>
-                          <th className="num">{t("graph.offSchema")}</th>
-                          <th className="num">{t("graph.unannotated")}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(["entities", "relationships"] as const).map((k) => (
-                          <tr key={k}>
-                            <td>{t(`graph.stats.${k}`)}</td>
-                            <td className="num">{number(data.stats.schema[k].in_schema)}</td>
-                            <td className="num">{number(data.stats.schema[k].off_schema)}</td>
-                            <td className="num">{number(data.stats.schema[k].unannotated)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <div>
-                  <h3 className="field-label" style={{ margin: "0 0 6px" }}>
-                    {t("graph.stats.evidence")}
-                  </h3>
-                  <div className="table-wrap" tabIndex={0}>
-                    <table className="table table-compact">
-                      <thead>
-                        <tr>
-                          <th>
-                            <span className="visually-hidden">{t("graph.stats.what")}</span>
-                          </th>
-                          <th className="num">{t("graph.evidence.document")}</th>
-                          <th className="num">{t("graph.evidence.seed_graph")}</th>
-                          <th className="num">{t("graph.evidence.both")}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(["entities", "relationships"] as const).map((k) => (
-                          <tr key={k}>
-                            <td>{t(`graph.stats.${k}`)}</td>
-                            <td className="num">{number(data.stats.evidence[k].document ?? 0)}</td>
-                            <td className="num">{number(data.stats.evidence[k].seed_graph ?? 0)}</td>
-                            <td className="num">{number(data.stats.evidence[k].both ?? 0)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <SplitTable
+                  title={t("graph.stats.schema")}
+                  rows={[
+                    [t("graph.inSchema"), data.stats.schema.entities.in_schema, data.stats.schema.relationships.in_schema],
+                    [t("graph.offSchema"), data.stats.schema.entities.off_schema, data.stats.schema.relationships.off_schema],
+                    [t("graph.unannotated"), data.stats.schema.entities.unannotated, data.stats.schema.relationships.unannotated],
+                  ]}
+                />
+                <SplitTable
+                  title={t("graph.stats.evidence")}
+                  rows={(["document", "seed_graph", "both"] as const).map((k) => [t(`graph.evidence.${k}`), data.stats.evidence.entities[k] ?? 0, data.stats.evidence.relationships[k] ?? 0])}
+                />
               </div>
             ) : null}
           </div>
@@ -620,6 +597,42 @@ export function EntityTable({ nodes, communityName, onPick }: { nodes: EntityRow
         </>
       ) : null}
     </details>
+  );
+}
+
+/** Entities and relationships counted by one split (schema conformance,
+ * evidence): one row per part, so the side panel's narrow width holds the
+ * two count columns whatever the language (a column per part was cut off). */
+function SplitTable({ title, rows }: { title: string; rows: [string, number, number][] }) {
+  const { t, number } = useI18n();
+  return (
+    <div>
+      <h3 className="field-label" style={{ margin: "0 0 6px" }}>
+        {title}
+      </h3>
+      <div className="table-wrap" tabIndex={0}>
+        <table className="table table-compact">
+          <thead>
+            <tr>
+              <th>
+                <span className="visually-hidden">{t("graph.stats.what")}</span>
+              </th>
+              <th className="num">{t("graph.stats.entities")}</th>
+              <th className="num">{t("graph.stats.relationships")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([label, entities, relationships]) => (
+              <tr key={label}>
+                <td>{label}</td>
+                <td className="num">{number(entities)}</td>
+                <td className="num">{number(relationships)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

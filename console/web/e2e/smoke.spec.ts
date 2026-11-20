@@ -45,7 +45,7 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
   await page.locator('.source[data-kind="entity"] > button').first().click();
   await expect(page.getByText("Stated in passages")).toBeVisible();
   await page.getByRole("button", { name: "Show in the graph" }).click();
-  await expect(page).toHaveURL(/\/graph\?focus=/);
+  await expect(page).toHaveURL(/\/graph\?namespace=default&focus=/);
   await expect(page.locator(".trail-banner")).toContainText("From your question");
   await expect(page.locator(".graph-canvas")).toHaveAttribute("data-traced", "1");
   await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
@@ -211,3 +211,65 @@ for (const locale of ["en", "de"]) {
     expect(violations).toEqual([]);
   });
 }
+
+// Regression (arch E14): the Graph page's Analysis tables (schema
+// conformance, evidence) cut off their last column in the side panel at
+// 1440 and 1920 px in English and German. Every table there fits its panel.
+for (const locale of ["en", "de", "fr", "ru", "es", "it", "pt", "ko", "ja", "zh"]) {
+  for (const width of [1440, 1920]) {
+    test(`the graph analysis tables fit at ${width} px in ${locale}`, async ({ page, baseURL }) => {
+      const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+      await page.setViewportSize({ width, height: 1000 });
+      await page.addInitScript((code) => window.localStorage.setItem("ukr-console-locale", code), locale);
+      const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+      await page.goto(token ? `/graph?token=${encodeURIComponent(token)}` : "/graph");
+      await expect(page.locator(".graph-canvas canvas").first()).toBeVisible({ timeout: 60_000 });
+      await page.getByRole("tab").nth(2).click();
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      const wraps = page.locator('[role="tabpanel"] .table-wrap');
+      await expect(wraps.first()).toBeVisible();
+      const cut = await wraps.evaluateAll((elements) => elements.map((element) => element.scrollWidth - element.clientWidth));
+      expect(cut.length).toBeGreaterThanOrEqual(2);
+      expect(cut.every((overflow) => overflow <= 0), JSON.stringify(cut)).toBe(true);
+    });
+  }
+}
+
+// Regression (arch E1): with a second namespace ingested, the Graph page
+// opened that namespace's newer export and an answer's "Show in the graph"
+// drew another namespace's graph. Both open the config namespace's.
+test("the graph is the namespace's with two namespaces exported", async ({ page, baseURL }) => {
+  test.setTimeout(240_000);
+  const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+  await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+  const headers = { "X-Console-Request": "1", ...(token ? { "X-Console-Token": token } : {}) };
+  const { corpora } = (await (await page.request.get("/api/corpora", { headers })).json()) as { corpora: { ref: string }[] };
+  const started = await page.request.post("/api/jobs/ingest", { headers, data: { corpus: corpora[0]!.ref, index_value: "e2e-other" } });
+  expect(started.ok(), await started.text()).toBe(true);
+  const { id } = (await started.json()) as { id: string };
+  await expect
+    .poll(async () => ((await (await page.request.get(`/api/jobs/${id}`, { headers })).json()) as { status: string }).status, { timeout: 180_000, intervals: [1000] })
+    .toBe("succeeded");
+  // The other namespace's export is the newest one listed.
+  const listed = (await (await page.request.get("/api/graphs", { headers })).json()) as { graphs: { ref: string; namespace: string | null }[]; current: { namespace: string; ref: string | null } };
+  expect(listed.graphs[0]?.namespace).toBe("e2e-other");
+  expect(listed.current.namespace).toBe("default");
+  const picked = () => page.locator(".page-head select option:checked");
+
+  await page.goto("/graph");
+  await expect(page.locator(".graph-canvas canvas").first()).toBeVisible({ timeout: 60_000 });
+  await expect(picked()).toContainText("default");
+
+  await page.goto("/ask");
+  await page.getByLabel("Question").fill("Who carries the lidar units to Kestrel Depot?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".answer-meta").first()).toBeVisible({ timeout: 60_000 });
+  await page.locator('.source[data-kind="entity"] > button').first().click();
+  await page.getByRole("button", { name: "Show in the graph" }).click();
+  await expect(page).toHaveURL(/\/graph\?namespace=default&focus=/);
+  await expect(page.locator(".graph-canvas")).toHaveAttribute("data-traced", "1");
+  await expect(picked()).toContainText("default");
+  await expect(page.getByText("No graph of")).toHaveCount(0);
+});

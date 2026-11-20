@@ -581,6 +581,60 @@ async def test_a_follow_up_passes_the_page_s_conversation_as_history(
     await service.close()
 
 
+async def test_the_filter_box_is_read_as_run_rag_reads_its_filters(
+    tmp_path: Path,
+) -> None:
+    # One pair parser (domain filter_pairs): each value stays a string, which
+    # the query types by its field ("007" is not 7, which matched nothing).
+    chain = _StreamingChain(_output(), [])
+    service = AskService(
+        Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+    )
+    text = "attr_code: 007\n\n in_schema:false \nattr_url: https://a.example:8080\n"
+    _ = [e async for e in service.ask(AskRequest(query="q", filter_text=text))]
+    assert chain.inputs[0].filters == {
+        "attr_code": "007",
+        "in_schema": "false",
+        "attr_url": "https://a.example:8080",
+    }
+    # Blank text is no filter.
+    _ = [e async for e in service.ask(AskRequest(query="q", filter_text=" \n"))]
+    assert chain.inputs[1].filters is None
+    await service.close()
+
+
+@pytest.mark.parametrize(
+    ("text", "says"),
+    [
+        ("attr_year 2024", "expected 'key:value'"),
+        ("attr_year:", "expected 'key:value'"),
+        ("attr_year: 2024\nattr_year: 2025", "attr_year given more than once"),
+    ],
+)
+async def test_a_malformed_filter_box_is_refused_before_the_question(
+    tmp_path: Path, text: str, says: str
+) -> None:
+    # It ran unfiltered (a malformed line dropped) or with the last value of
+    # a repeated key, with no word on the page.
+    chain = _StreamingChain(_output(), [])
+    service = AskService(
+        Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+    )
+    events = [e async for e in service.ask(AskRequest(query="q", filter_text=text))]
+    assert events[-1]["kind"] == "error"
+    assert events[-1]["error_kind"] == "invalid_filter"
+    assert says in events[-1]["message"]
+    assert chain.inputs == []
+    await service.close()
+
+
+def test_the_filter_box_and_a_filter_mapping_are_not_both_taken() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="filter_text or filters"):
+        AskRequest(query="q", filters={"a": 1}, filter_text="b: 2")
+
+
 def test_history_is_bounded_and_only_user_or_assistant() -> None:
     from pydantic import ValidationError
 

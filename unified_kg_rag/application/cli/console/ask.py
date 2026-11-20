@@ -33,7 +33,14 @@ import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
@@ -62,6 +69,7 @@ from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
 from unified_kg_rag.domain.models.usage import LLMUsage
 from unified_kg_rag.domain.pricing import usage_cost_usd
 from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
+from unified_kg_rag.domain.retrieval.filters import filter_pairs
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
@@ -86,6 +94,9 @@ EXCERPT_CHARACTERS = 600
 # A graph query result is its table: shown whole up to this.
 TABLE_CHARACTERS = 6000
 MAX_QUESTION_CHARACTERS = 4000
+# The Ask page's filter box, one key: value pair per line: room for a few
+# hundred pairs (a filter is a key and a short value).
+MAX_FILTER_TEXT_CHARACTERS = 20000
 # A follow-up's history as the page sends it; the chain bounds it further
 # (memory.max_messages_per_conversation, memory.max_history_tokens).
 MAX_HISTORY_TURNS = 100
@@ -112,6 +123,9 @@ class AskRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=MAX_SERVED_TOP_K)
     history: list[AskTurn] | None = Field(default=None, max_length=MAX_HISTORY_TURNS)
     filters: dict[str, Any] | None = None
+    # The page's filter box as typed: one ``key: value`` per line, read as
+    # ``run-rag --filters`` reads its pairs (:meth:`query_filters`).
+    filter_text: str | None = Field(default=None, max_length=MAX_FILTER_TEXT_CHARACTERS)
     suffix: str | None = Field(default=None, max_length=128)
 
     @field_validator("suffix")
@@ -119,6 +133,27 @@ class AskRequest(BaseModel):
     def _safe_suffix(cls, value: str | None) -> str | None:
         # An index namespace names store indexes and cache paths.
         return None if value is None else validate_safe_name(value, "suffix")
+
+    @model_validator(mode="after")
+    def _one_filter_form(self) -> AskRequest:
+        if self.filters is not None and self.filter_text is not None:
+            raise ValueError("give filter_text or filters, not both")
+        return self
+
+    def query_filters(self) -> dict[str, Any] | None:
+        """The question's filters: ``filters``, else the ``filter_text``
+        lines (blank ones skipped) as ``key:value`` pairs, each value a
+        string the query types by its field (``filter_pairs``, the parser of
+        ``run-rag --filters``); ``None`` without any.
+
+        Raises:
+            InvalidFilterError: A line is not ``key: value``, or a key is
+                given twice.
+        """
+        if self.filter_text is None:
+            return self.filters
+        lines = [line for line in self.filter_text.splitlines() if line.strip()]
+        return filter_pairs(lines) or None
 
 
 def trace_url(trace_id: str | None, template: str | None, config: Config) -> str | None:
@@ -574,7 +609,7 @@ class AskService:
                             for t in request.history
                         ]
                     ),
-                    filters=request.filters,
+                    filters=request.query_filters(),
                     suffix=request.suffix,
                 )
             ):

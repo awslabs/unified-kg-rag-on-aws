@@ -480,6 +480,8 @@
   "graph.outdated": "obsoleto",
   "graph.noneTitle": "In «{{namespace}}» non è ancora indicizzato nulla",
   "graph.none": "Acquisisci un corpus in questo namespace; il suo grafo viene costruito dagli archivi all’apertura di questa pagina.",
+  "graph.noExportTitle": "Nessun grafo di «{{namespace}}» da mostrare",
+  "graph.noExport": "Non è elencata alcuna esportazione del grafo di questo namespace. Scegli un altro grafo qui sopra, oppure ricostruisci il namespace per esportarne uno.",
   "graph.exportOffTitle": "Il grafo è disattivato",
   "graph.exportOff": "graph.visualization.export_data è disattivato in questa configurazione, quindi non viene costruito alcun grafo. Attivalo nelle Impostazioni per vedere il grafo del namespace.",
   "graph.unrecordedTitle": "«{{namespace}}» non ha un record di build",
