@@ -102,6 +102,11 @@ custom_prompts:
     with no other text.
 ```
 
+말뭉치 텍스트와 거기서 나온 텍스트는 내장 프롬프트처럼 태그 블록에 넣고(위의
+`<input_text>{input_text}</input_text>`), 그 블록이 데이터라고 적으세요. 체인은 변수를 담은
+모든 블록의 여는 태그와 닫는 태그를 채워 넣는 값마다 이스케이프하며, 재정의 프롬프트의 태그도
+마찬가지입니다. 그래서 `</input_text>`가 들어 있는 문단도 자기 블록을 닫지 못합니다.
+
 ### 재정의 키
 
 키마다 `_system`과 `_human` 필드가 있습니다: `graph_extraction`,

@@ -86,7 +86,7 @@ from unified_kg_rag.domain.models.graph_query import (
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.prompts import GraphQueryPlanPrompt
-from unified_kg_rag.domain.prompts.graph_query import REPAIR_FEEDBACK, schema_text
+from unified_kg_rag.domain.prompts.graph_query import repair_feedback, schema_text
 from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
@@ -569,7 +569,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             # The checker's reason may quote names the model chose.
             logger.info("Structured search: plan refused (%s)", text_digest(error))
             logger.debug("Structured search: plan refused (%s)", error)
-            feedback = REPAIR_FEEDBACK.format(error=error[:1500])
+            feedback = repair_feedback(error[:1500])
         # The last answer decides: still no JSON is a degraded step, a plan
         # the checks refuse a designed fallback.
         if error == _UNREADABLE:
@@ -585,7 +585,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     ) -> ValidatedPlan | str | None:
         """The validated plan of the planner's answer, the refusal to
         repair (a string), or ``None`` for an unanswerable question."""
-        # The planner's repair loop (REPAIR_FEEDBACK) is this prompt's fixer.
+        # The planner's repair loop (repair_feedback) is this prompt's fixer.
         try:
             parsed = parse_model_object(raw, answer_keys=_PLAN_KEYS)
         except ModelOutputError:

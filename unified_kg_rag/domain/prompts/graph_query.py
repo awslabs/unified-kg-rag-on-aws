@@ -21,6 +21,7 @@ from unified_kg_rag.domain.models.graph_query import GraphProfile, PropertyProfi
 from unified_kg_rag.domain.retrieval.graph_query import CORE_PROPERTIES
 
 from .base import BasePrompt
+from .delimiters import delimiter_tags, neutralise_delimiters
 
 # (question, plan) pairs shown to the model; each plan validates against a
 # profile with the neutral types.
@@ -270,6 +271,18 @@ YOUR PREVIOUS PLAN WAS REFUSED:
 {error}
 </refusal>
 Write a corrected plan."""
+
+
+def repair_feedback(error: str) -> str:
+    """The feedback of a repair call for the refusal ``error``.
+
+    The refusal may quote names the model chose from the question or the
+    schema; its block's tag is in the value, not the template, so the chain
+    does not neutralise it: the refusal must not close the block either.
+    """
+    return REPAIR_FEEDBACK.format(
+        error=neutralise_delimiters(error, delimiter_tags(REPAIR_FEEDBACK))
+    )
 
 
 # --- the schema text -------------------------------------------------------------
