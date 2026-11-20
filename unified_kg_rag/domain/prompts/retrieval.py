@@ -301,6 +301,8 @@ EXTRACTION RULES:
 OUTPUT SPECIFICATION:
 Provide ONLY entity names in comma-separated format.
 No metadata, categories, or additional formatting.
+If the query names no entity, return an empty answer: write nothing, not a word
+such as "none" or "N/A", which would be searched for as an entity.
 Target language: {target_language}
 
 EXAMPLE OUTPUT: "Amazon Web Services, Lambda, serverless architecture, API Gateway, microservices"

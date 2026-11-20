@@ -530,6 +530,8 @@ Bugs present in 0.3.0.
 - Bedrock's token-limit cut (`BedrockTokenCounter.truncate_to_token_limit`: embedding inputs, ragas contexts,
   summary-tree texts) could return text over the limit (15 of 300 mixed-script samples, by up to 202 tokens); it keeps
   the longest prefix that fits, by binary search as the local counter does.
+- The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
+  searched for as a focus entity; it asks for an empty answer, so the strategies search by the query.
 
 ## [0.3.0] - 2026-11-14
 

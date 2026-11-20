@@ -64,3 +64,15 @@ def test_items_are_stripped_non_empty_and_unique(text: str) -> None:
     items = split_entity_list(text)
     assert all(item and item == item.strip() for item in items)
     assert len(items) == len(set(items))
+
+
+def test_the_entity_prompt_asks_for_an_empty_answer_when_there_is_none() -> None:
+    """The prompt never said what to answer for a query that names no
+    entity, and a model answered "none", which was then searched for as a
+    focus entity (ARCH E9). It asks for an empty answer, which splits into
+    no entity, so the strategies search by the query itself."""
+    from unified_kg_rag.domain.prompts.retrieval import EntityExtractionPrompt
+
+    assert "return an empty answer" in EntityExtractionPrompt.system_prompt_template
+    assert split_entity_list("") == []
+    assert split_entity_list("  \n") == []
