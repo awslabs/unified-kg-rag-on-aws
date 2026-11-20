@@ -220,6 +220,33 @@ jobs:
           tests/integration/test_seed_graph_embedded.py
           tests/integration/test_seed_properties_embedded.py
 
+  golden-metrics:
+    # Retrieval and answer scores of every strategy and search type on the
+    # synthetic structural and bridge corpora, with deterministic fake models
+    # on the embedded stores, against tests/fixtures/golden_metrics.json:
+    # any change of a gated score fails (docs/guides/evaluate.md "Golden
+    # metrics"; scripts/gen_golden_metrics.py regenerates the baseline).
+    # About 2 minutes of tests on one core, 1.5 on four workers.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+
+      # run-eval needs the eval extra; the LLM judges it brings are not run.
+      - name: Sync dependencies
+        run: uv sync --locked --extra eval
+
+      - name: Golden metrics against the baseline
+        env:
+          GOLDEN_METRICS: "1"
+        run: uv run --frozen pytest -n auto -rA tests/integration/test_golden_metrics.py
+
   local-stores:
     # The container backend of the store conformance suites, the SQLite vs
     # OpenSearch parity tests and tests/integration/test_local_stores.py are

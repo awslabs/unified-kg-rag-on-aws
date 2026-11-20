@@ -240,6 +240,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   authenticating proxy's, such as an Application Load Balancer's `x-amzn-oidc-identity`) as their `user_id`, and a
   request without exactly one valid value is refused (401). Only behind a proxy that removes or overwrites any copy
   a client sends.
+- A `golden-metrics` CI job: every strategy and search type answers the synthetic structural and bridge datasets on
+  fake models, and the LLM-free scores of the held-out `test` half must equal `tests/fixtures/golden_metrics.json`,
+  which `scripts/gen_golden_metrics.py` regenerates
+  ([Golden metrics](docs/guides/evaluate.md#golden-metrics-the-ci-regression-gate)).
 
 ### Changed
 
