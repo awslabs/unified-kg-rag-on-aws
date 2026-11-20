@@ -1073,6 +1073,14 @@ deployed stack:
    ran.
 6. Run a query and one incremental ingestion before the next large run.
 
+A renamed configuration key, CLI flag or Python name keeps working for one
+minor release as a deprecated alias, with a WARNING (or a
+`DeprecationWarning`) that names its replacement, and is removed in the next
+one: the names the coming release deprecates are removed in 0.5.0, as
+*Deprecated* in the changelog lists them
+([deprecation policy](../CONTRIBUTING.md#deprecating-a-public-name)). Move
+them when step 3 warns, so the release that removes them needs no change.
+
 ## When a run fails
 
 ### Interrupted runs

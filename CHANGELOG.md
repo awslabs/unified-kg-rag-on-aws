@@ -69,7 +69,7 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    ([Deprecated keys](docs/reference/configuration.md#deprecated-keys) lists where each one goes) and
    `evaluation.prices` to `models.prices`. Python code that reads or sets them, or reads
    `EvaluationResult.enable_thinking`, needs the change now (*Breaking changes*); replace the deprecated Python names
-   (`on_answer_chunk`, `RAGInput.enable_thinking`, `TransientRetryConfig`) before they are removed.
+   (`on_answer_chunk`, `RAGInput.enable_thinking`, `TransientRetryConfig`) before 0.5.0 removes them.
 2. A CDK deployment's Korean indices were built with `cjk`, and the stacks now map `ko` to `cjk_script_split` (*Fixed*):
    an incremental run stops before any write (`'<field>' uses 'cjk' (needs 'cjk_script_split')`) until one run with
    `indexing.reset: true` rebuilds them ([Re-ingest](docs/operations.md#re-ingest)); deploy with
@@ -100,7 +100,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    again (one call each).
 9. Name the namespace `namespace` where you set it (*Deprecated*): `--namespace` for `--suffix`,
    `processing.document_parsing.namespace` (`UKR__PROCESSING__DOCUMENT_PARSING__NAMESPACE`) for `index_value`,
-   `RAGInput.namespace` for `suffix`, `run-eval --arm ...,namespace=` for `suffix=`. The old names still work.
+   `RAGInput.namespace` for `suffix`, `run-eval --arm ...,namespace=` for `suffix=`. The old names still work until
+   0.5.0.
 
 ### Added
 
@@ -346,6 +347,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   laying out 600 nodes takes about 1.4 s, 2000 about 15 s. Set it to 2000 for the former interactive page.
 
 ### Deprecated
+Each name below warns and still works, and is removed in 0.5.0
+([deprecation policy](CONTRIBUTING.md#deprecating-a-public-name)).
 
 - The namespace's old names warn and still work: `--suffix`, `RAGInput.suffix`,
   `processing.document_parsing.index_value` (file key, `UKR__` variable and Python attribute),

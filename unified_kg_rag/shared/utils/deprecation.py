@@ -10,6 +10,12 @@ from pathlib import Path
 
 import pydantic
 
+# The release that removes every name deprecated before it (CONTRIBUTING.md,
+# "Deprecating a public name": the next minor release after the one that
+# deprecates a name). tests/unit/test_deprecation_policy.py fails once the
+# package's version reaches it, so the names go, or the release moves, then.
+REMOVED_IN = "0.5.0"
+
 # The code a deprecation is never attributed to: this package's and
 # pydantic's (a validator runs under pydantic's own frames), compared by
 # real path, so a symlinked checkout or venv matches too.
