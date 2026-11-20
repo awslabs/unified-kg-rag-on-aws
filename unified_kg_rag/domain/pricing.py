@@ -22,7 +22,9 @@ estimate reads are bare, the ids a run records resolved.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from pydantic import ValidationError
 
 from unified_kg_rag.domain.models.config import ModelPrice, bare_model_id
 
@@ -33,6 +35,7 @@ __all__ = [
     "ModelPrice",
     "counts_cost_usd",
     "price_of",
+    "snapshot_cost_usd",
     "token_rates",
     "tokens_cost_usd",
     "unpriced_embedding_models",
@@ -135,3 +138,21 @@ def usage_cost_usd(
         if (price := price_of(prices, model)) is not None:
             usd += counts_cost_usd(counts, price)
     return float(usd), set()
+
+
+def snapshot_cost_usd(
+    usage: Mapping[str, Any] | None, prices: Mapping[str, ModelPrice]
+) -> tuple[float | None, list[str]]:
+    """:func:`usage_cost_usd` of a usage snapshot (``metadata["usage"]``, a
+    ``UsageMeter.snapshot()``): its USD (``None`` with a model unpriced, or
+    no readable snapshot) and the unpriced models, sorted."""
+    from unified_kg_rag.domain.models.usage import LLMUsage
+
+    if not usage:
+        return None, []
+    try:
+        spent = LLMUsage.model_validate(dict(usage))
+    except ValidationError:
+        return None, []
+    usd, unpriced = usage_cost_usd(spent, prices)
+    return usd, sorted(unpriced)

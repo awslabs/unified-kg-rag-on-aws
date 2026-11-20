@@ -239,6 +239,16 @@ def _reporting_degradation(asearch: Any) -> Any:
     return run
 
 
+def _ranked_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
+    """The first ``MAX_RECORDED_IDS`` results' ids in rank order and their
+    scores, two parallel span attributes (ids and floats: no text)."""
+    kept = [r for r in results if r.source][: observability.MAX_RECORDED_IDS]
+    return {
+        "kg_rag.source_ids": [str(r.source) for r in kept],
+        "kg_rag.scores": [float(r.score) for r in kept],
+    }
+
+
 def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     by_type: dict[str, int] = {}
     for result in results:
@@ -246,9 +256,7 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
         by_type[key] = by_type.get(key, 0) + 1
     attributes: dict[str, Any] = {
         "kg_rag.hits": len(results),
-        "kg_rag.source_ids": [
-            str(r.source) for r in results[: observability.MAX_RECORDED_IDS] if r.source
-        ],
+        **_ranked_attributes(results),
     }
     for result_type, count in by_type.items():
         attributes[f"kg_rag.hits.{result_type}"] = count
@@ -1674,6 +1682,8 @@ class BaseSearchStrategy(ABC):
                         "kg_rag.reranked": sum(
                             bool((r.metadata or {}).get("reranked")) for r in results
                         ),
+                        # The fused (and reranked) order and its scores.
+                        **_ranked_attributes(results),
                     }
                 )
             return results

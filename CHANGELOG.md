@@ -221,6 +221,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `cost_usd` and outcome, with the question and the answer as SHA-256 digests, never their text
   (`QueryAuditRecord`, `record_version` 1; [fields](docs/reference/telemetry.md#audit-record)).
   `logging.library_levels: {unified_kg_rag.audit: WARNING}` turns it off.
+- A query's spend and evidence in its trace and metrics: `metadata["cost_usd"]` (with `metadata["unpriced_models"]`)
+  prices its usage by `models.prices`, also on the query span (`kg_rag.cost_usd`) and as the `query_cost_usd`,
+  `query_input_tokens` and `query_output_tokens` query metrics; the query span names its `kg_rag.query_id` and the
+  ids the answer cites (`kg_rag.cited_source_ids`); the retrieval and fusion spans the first 50 results' ids with
+  their scores (`kg_rag.source_ids`, `kg_rag.scores`); the trace resource the package's `service.version`. The
+  telemetry reference lists the iterative and structured strategies' spans and every query-span attribute.
 - `--trusted-identity-header NAME` on `run-mcp-server --transport streamable-http` and `run-console`
   (`build_mcp_app(trusted_identity_header=...)`): off by default; on, each request's queries take that header (an
   authenticating proxy's, such as an Application Load Balancer's `x-amzn-oidc-identity`) as their `user_id`, and a

@@ -379,6 +379,22 @@ def test_phoenix_project_and_service_name_resource(no_global_provider: None) -> 
     )
 
 
+def test_the_resource_names_the_package_version_unless_the_environment_does(
+    no_global_provider: None,
+) -> None:
+    # G-4: no resource attribute told one release's traces from another's.
+    from unified_kg_rag import __version__
+
+    _, tracer = _install("otlp", environ={})
+    assert tracer._owned_provider.resource.attributes["service.version"] == (
+        __version__
+    )
+    own = {"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment=dev,service.version=7"}
+    _, tracer = _install("otlp", environ=own)
+    assert tracer._owned_provider.resource.attributes["service.version"] == "7"
+    assert otel._resource_keys(" a = 1 ,b=2,junk") == {"a", "b"}
+
+
 # --- session / user ------------------------------------------------------------
 
 

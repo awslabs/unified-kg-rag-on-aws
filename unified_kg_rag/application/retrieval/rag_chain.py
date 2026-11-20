@@ -156,6 +156,7 @@ from unified_kg_rag.domain.models import (
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.config import EffortLevel
+from unified_kg_rag.domain.pricing import snapshot_cost_usd
 from unified_kg_rag.domain.prompts import (
     BasePrompt,
     QueryRewritePrompt,
@@ -228,11 +229,14 @@ from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.metrics import (
     QUERY_ABSTAINED_METRIC,
+    QUERY_COST_METRIC,
     QUERY_DEGRADED_METRIC,
     QUERY_FAILED_METRIC,
+    QUERY_INPUT_TOKENS_METRIC,
     QUERY_LATENCY_METRIC,
     QUERY_LIMITED_METRIC,
     QUERY_METRICS_NAMESPACE,
+    QUERY_OUTPUT_TOKENS_METRIC,
     QUERY_THROTTLED_METRIC,
 )
 from unified_kg_rag.shared.model_responses import closing_responses
@@ -696,7 +700,10 @@ class RAGOutput(BaseModel):
     class name in ``metadata["error_type"]``.
     ``metadata["usage"]`` counts the query's model calls (``llm_calls``,
     ``input_tokens``, ``output_tokens``, ``cache_hits``, and the same
-    ``by_role`` and ``by_model``; ``domain.models.LLMUsage``). With a guardrail
+    ``by_role`` and ``by_model``; ``domain.models.LLMUsage``), and
+    ``metadata["cost_usd"]`` their USD by ``models.prices`` (``None`` when a
+    model called has no price there, named in
+    ``metadata["unpriced_models"]``). With a guardrail
     configured, ``metadata["guardrail"]`` lists its interventions (source,
     action, policies), and ``metadata["blocked"]`` is ``True`` when it
     blocked the query (the answer is then its blocked message and nothing
@@ -2787,7 +2794,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 self._identity(rag_input),
                 observability.bind_attributes(namespace=rag_input.suffix),
                 observability.span(
-                    "kg_rag.query", self._query_span_attributes(rag_input, search)
+                    "kg_rag.query",
+                    self._query_span_attributes(rag_input, search, query_id),
                 ) as span,
                 # Its calls past the query's limits are refused (shared.usage).
                 usage_scope(limits=self._usage_limits(rag_input, search)) as meter,
@@ -2838,6 +2846,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 # The query's model calls and tokens (shared.usage), and the
                 # ids that tie it to its log lines and trace.
                 result.metadata["usage"] = meter.snapshot()
+                # Its USD by models.prices (None with a model unpriced there).
+                (
+                    result.metadata["cost_usd"],
+                    result.metadata["unpriced_models"],
+                ) = snapshot_cost_usd(
+                    result.metadata["usage"], self.config.models.prices
+                )
                 result.metadata["query_id"] = log_context["query_id"]
                 result.metadata["trace_id"] = ids[0] if ids else None
                 span.set_attributes(
@@ -3068,6 +3083,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             metrics[QUERY_THROTTLED_METRIC] = float(
                 usage.get("throttled_requests") or 0
             )
+            # What it spent, a failed or stopped query's up to its end too.
+            metrics[QUERY_INPUT_TOKENS_METRIC] = float(usage.get("input_tokens") or 0)
+            metrics[QUERY_OUTPUT_TOKENS_METRIC] = float(usage.get("output_tokens") or 0)
+            cost, _ = snapshot_cost_usd(usage, self.config.models.prices)
+            if cost is not None:
+                metrics[QUERY_COST_METRIC] = cost
         # Log properties, not dimensions (QUERY_METRICS_DIMENSION_KEYS): the
         # namespace by the key the ingestion records use.
         properties = {"Strategy": strategy}
@@ -3176,11 +3197,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return {key: value for key, value in identity.items() if value}
 
     def _query_span_attributes(
-        self, rag_input: RAGInput, search: bool
+        self, rag_input: RAGInput, search: bool, query_id: str
     ) -> dict[str, Any]:
-        """Query-span attributes: the request's settings. The query text is
+        """Query-span attributes: the query's id (its log lines', metrics'
+        and audit record's) and the request's settings. The query text is
         recorded once screened (``_screened_query``), never before."""
         return {
+            "kg_rag.query_id": query_id,
             GEN_AI_CONVERSATION_ID: rag_input.conversation_id,
             "kg_rag.mode": "search" if search else "rag",
             "kg_rag.requested_strategy": rag_input.search_strategy,
@@ -3249,9 +3272,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 metadata, metadata.get(ERROR_CLASS_KEY)
             ),
         }
+        if (cost := metadata.get("cost_usd")) is not None:
+            attributes["kg_rag.cost_usd"] = cost
         if isinstance(output, RAGOutput):
             attributes["kg_rag.strategy"] = output.search_results.search_strategy
             attributes["kg_rag.sources"] = len(output.sources)
+            # The ids of the sections the answer cites (bounded, as the
+            # audit record's).
+            evidence = query_audit.evidence_of(output)
+            if evidence is not None:
+                attributes["kg_rag.cited_source_ids"] = evidence.cited_source_ids
         return attributes
 
     async def _ainvoke(

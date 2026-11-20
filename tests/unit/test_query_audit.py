@@ -365,7 +365,7 @@ def test_cited_ids_are_bounded_and_flagged() -> None:
             for i in range(count)
         ],
     )
-    evidence = query_audit._evidence(output)
+    evidence = query_audit.evidence_of(output)
     assert evidence is not None
     assert evidence.sources == count
     assert len(evidence.source_ids) == MAX_RECORDED_IDS and evidence.truncated
