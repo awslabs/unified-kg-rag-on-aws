@@ -11,6 +11,7 @@ import boto3
 from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
+from unified_kg_rag.adapters.aws.s3_transfer import s3_client
 from unified_kg_rag.domain.models import Config, S3EncryptionType
 from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
 from unified_kg_rag.shared import CacheSyncError, ConfigurationError, get_logger
@@ -93,7 +94,7 @@ class S3CacheManager:
     def s3_client(self) -> S3Client:
         if self._s3_client is None:
             try:
-                self._s3_client = self.boto_session.client("s3")
+                self._s3_client = s3_client(self.boto_session)
                 self._s3_client.head_bucket(Bucket=str(self.bucket_name))
             except NoCredentialsError:
                 logger.error(

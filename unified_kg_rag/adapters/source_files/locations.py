@@ -180,7 +180,10 @@ class SourceReader:
 
     def _s3(self) -> Any:
         if self._client is None:
-            self._client = self._context.client("s3")
+            # Imported here: a source read from local files loads no AWS SDK.
+            from unified_kg_rag.adapters.aws.s3_transfer import s3_client
+
+            self._client = s3_client(self._context)
         return self._client
 
     def head(self, location: str, *, prefix_hint: bool = False) -> SourceFile:
