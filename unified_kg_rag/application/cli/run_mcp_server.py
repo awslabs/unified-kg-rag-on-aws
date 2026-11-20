@@ -60,6 +60,7 @@ from unified_kg_rag.application.cli.preflight import (
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
 )
+from unified_kg_rag.application.cli.trusted_identity import header_name_argument
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval import graph_lookup
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
@@ -149,6 +150,17 @@ def build_parser() -> argparse.ArgumentParser:
         "authenticates no caller: put it behind a proxy or gateway that "
         "authenticates every request, and keep the port unreachable otherwise",
     )
+    parser.add_argument(
+        "--trusted-identity-header",
+        metavar="NAME",
+        type=header_name_argument,
+        help="Take each HTTP request's caller from this header, set by the "
+        "authenticating proxy (for example x-amzn-oidc-identity behind an "
+        "Application Load Balancer), as its queries' user_id; a request "
+        "without exactly one is refused (401). Off by default. Only behind a "
+        "proxy that removes or overwrites any copy the client sends: "
+        "otherwise a client names any user",
+    )
     add_metrics_sink_argument(
         parser,
         "Where to send query metrics: 'none' (default) or 'cloudwatch' "
@@ -168,10 +180,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.transport == "stdio" and (
-        args.host != DEFAULT_HOST or args.port != DEFAULT_PORT or args.allow_remote
+        args.host != DEFAULT_HOST
+        or args.port != DEFAULT_PORT
+        or args.allow_remote
+        or args.trusted_identity_header
     ):
         parser.error(
-            "--host, --port and --allow-remote apply to --transport streamable-http"
+            "--host, --port, --allow-remote and --trusted-identity-header "
+            "apply to --transport streamable-http"
         )
     if not is_loopback(args.host) and not args.allow_remote:
         parser.error(
@@ -182,8 +198,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-async def serve_http(tools: KnowledgeGraphTools, host: str, port: int) -> None:
-    """Serve ``tools`` over stateless streamable HTTP on ``host:port``.
+async def serve_http(
+    tools: KnowledgeGraphTools,
+    host: str,
+    port: int,
+    trusted_identity_header: str | None = None,
+) -> None:
+    """Serve ``tools`` over stateless streamable HTTP on ``host:port``
+    (``trusted_identity_header``: ``build_mcp_app``'s).
 
     Stateless: the tools keep no session state (an AgentCore Runtime MCP
     server is stateless too). On a loopback address the ``Host`` and
@@ -198,7 +220,9 @@ async def serve_http(tools: KnowledgeGraphTools, host: str, port: int) -> None:
     import uvicorn
 
     app = build_mcp_app(
-        tools, allowed_hosts=loopback_hosts(host) if is_loopback(host) else None
+        tools,
+        allowed_hosts=loopback_hosts(host) if is_loopback(host) else None,
+        trusted_identity_header=trusted_identity_header,
     )
     shown_host = f"[{host}]" if ":" in host else host
     logger.info(
@@ -261,7 +285,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
         if args.transport == "stdio":
             await build_mcp_server(tools).run_stdio_async()
         else:
-            await serve_http(tools, args.host, args.port)
+            await serve_http(tools, args.host, args.port, args.trusted_identity_header)
         return 0
     finally:
         await chain.aclose()

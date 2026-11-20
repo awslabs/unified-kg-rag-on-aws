@@ -232,6 +232,52 @@ def test_a_follow_up_carries_the_conversation_as_history(client: Any) -> None:
     assert response.status_code == 422
 
 
+def test_a_trusted_identity_header_names_who_asked(workspace: Path) -> None:
+    # G-2: the console never set RAGInput.user_id; behind a proxy that
+    # names the caller (--trusted-identity-header), its questions take it.
+    from fastapi.testclient import TestClient
+
+    from unified_kg_rag.application.cli.console.server import ConsoleOptions, create_app
+    from unified_kg_rag.application.retrieval import query_audit
+
+    seen: list[Any] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            data = record.msg if isinstance(record.msg, dict) else vars(record)
+            seen.append(data.get("user_id"))
+
+    audit = logging.getLogger(query_audit.AUDIT_LOGGER_NAME)
+    handler, saved = Capture(), audit.level
+    audit.addHandler(handler)
+    audit.setLevel(logging.INFO)
+    options = ConsoleOptions(
+        workspace=workspace,
+        cache_directory=workspace / "cache-identity",
+        config_path=workspace / "config.yaml",
+        token=TOKEN,
+        trusted_identity_header="x-amzn-oidc-identity",
+    )
+    try:
+        with TestClient(
+            create_app(options),
+            base_url="http://127.0.0.1",
+            headers={"X-Console-Token": TOKEN, "x-amzn-oidc-identity": "user-42"},
+        ) as identified:
+            events = _ask(identified, query="Who?", search_strategy="local")
+            assert events[-1]["kind"] == "result", events[-1]
+            refused = identified.post(
+                "/api/ask",
+                json={"query": "Who?"},
+                headers={**HEADERS, "x-amzn-oidc-identity": ""},
+            )
+            assert refused.status_code == 401
+    finally:
+        audit.removeHandler(handler)
+        audit.setLevel(saved)
+    assert seen == ["user-42"]
+
+
 def test_questions_are_recorded_for_history_and_the_dashboard(client: Any) -> None:
     _ask(
         client,

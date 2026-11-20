@@ -458,6 +458,19 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     return logger
 
 
+def get_channel_logger(name: str) -> structlog.stdlib.BoundLogger:
+    """A structlog logger of a named channel of the package's, not of a
+    module (``unified_kg_rag.audit``: the query audit records), so a host
+    routes or silences it by that name whichever module writes to it.
+    Every module logs under its own name otherwise (:func:`get_logger`)."""
+    if not name.startswith(f"{_PACKAGE_LOGGER}."):
+        raise ValueError(f"a channel is under '{_PACKAGE_LOGGER}.', not '{name}'")
+    if not structlog.is_configured():
+        _configure_structlog()
+    logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
+    return logger
+
+
 _warned_once: set[Hashable] = set()
 _warned_once_lock = threading.Lock()
 

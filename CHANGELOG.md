@@ -235,6 +235,18 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   match exactly): the OpenSearch fuzziness of a short lexical query. A synthetic name-lookup A/B (dev and held-out
   splits) found no value better on both exact and misspelled names, so the default is unchanged
   ([Defaults and evidence](docs/concepts/defaults-and-evidence.md#lexical-fuzziness)).
+- A per-query audit record: every query (an answer or a search, failed, timed out, refused or a stream closed early
+  included) writes one INFO record on the `unified_kg_rag.audit` logger from the chain, so every surface writes the
+  same one: who asked (`user_id`), the index build its admission read, the answer settings' fingerprint (the
+  `run-eval` manifest's `retrieval_config_sha256`), the strategy, the ids it rests on and cites, its models, usage,
+  `cost_usd` and outcome, with the question and the answer as SHA-256 digests, never their text
+  (`QueryAuditRecord`, `record_version` 1; [fields](docs/reference/telemetry.md#audit-record)).
+  `logging.library_levels: {unified_kg_rag.audit: WARNING}` turns it off.
+- `--trusted-identity-header NAME` on `run-mcp-server --transport streamable-http` and `run-console`
+  (`build_mcp_app(trusted_identity_header=...)`): off by default; on, each request's queries take that header (an
+  authenticating proxy's, such as an Application Load Balancer's `x-amzn-oidc-identity`) as their `user_id`, and a
+  request without exactly one valid value is refused (401). Only behind a proxy that removes or overwrites any copy
+  a client sends.
 
 ### Changed
 

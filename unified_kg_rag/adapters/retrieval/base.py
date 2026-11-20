@@ -122,8 +122,6 @@ def _always(_: Any) -> bool:
     return True
 
 
-# Source ids recorded per retrieval span; the hit count is always complete.
-_MAX_SPAN_SOURCE_IDS = 50
 # What the filtered walk reads of an edge: its endpoints and their names, the
 # order (rank, weight) and, under two or more filter keys, its text units.
 _WALK_EDGE_FIELDS = (
@@ -249,7 +247,7 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     attributes: dict[str, Any] = {
         "kg_rag.hits": len(results),
         "kg_rag.source_ids": [
-            str(r.source) for r in results[:_MAX_SPAN_SOURCE_IDS] if r.source
+            str(r.source) for r in results[: observability.MAX_RECORDED_IDS] if r.source
         ],
     }
     for result_type, count in by_type.items():

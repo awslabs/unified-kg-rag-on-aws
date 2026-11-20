@@ -861,6 +861,61 @@ def test_a_mounted_app_checks_the_hosts_it_is_given(index: Index) -> None:
         chain.close()
 
 
+@requires_mcp
+@pytest.mark.parametrize("trusted", [False, True], ids=["off", "on"])
+def test_a_trusted_identity_header_names_the_caller_of_its_queries(
+    index: Index, trusted: bool
+) -> None:
+    # G-2: no surface set RAGInput.user_id, so who asked was in no span or
+    # record of a multi-user server.
+    import logging
+
+    from starlette.testclient import TestClient
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_app
+    from unified_kg_rag.application.retrieval import query_audit
+
+    header = "x-amzn-oidc-identity"
+    call = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "kg_search",
+            "arguments": {"query": "Who stores widgets?", "strategy": "simple"},
+        },
+    }
+    seen: list[Any] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            data = record.msg if isinstance(record.msg, dict) else vars(record)
+            seen.append(data.get("user_id"))
+
+    audit = logging.getLogger(query_audit.AUDIT_LOGGER_NAME)
+    handler, saved = Capture(), audit.level
+    audit.addHandler(handler)
+    audit.setLevel(logging.INFO)
+    chain = index.chain()
+    app = build_mcp_app(chain, trusted_identity_header=header if trusted else None)
+    try:
+        with TestClient(app) as client:
+            answered = client.post(
+                "/mcp", json=call, headers={**_HEADERS, header: "user-42"}
+            )
+            assert answered.status_code == 200, answered.text
+            assert not answered.json()["result"].get("isError"), answered.text
+            missing = client.post("/mcp", json=call, headers=_HEADERS)
+            # Off: a client's copy is ignored, and none is needed.
+            assert missing.status_code == (401 if trusted else 200)
+            assert client.get("/mcp", headers=_HEADERS).status_code == 405
+    finally:
+        audit.removeHandler(handler)
+        audit.setLevel(saved)
+        chain.close()
+    assert seen == (["user-42"] if trusted else [None, None])
+
+
 def _free_port(host: str) -> int:
     import socket
 

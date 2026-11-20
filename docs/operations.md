@@ -1752,7 +1752,12 @@ cluster's `neptune_query_timeout` (120 s by default), and with the lab-mode
 Tracing is set up in [Observability](./guides/observability.md) (enable
 tracing; the Jaeger, Langfuse, Phoenix and CloudWatch recipes; export
 limits, private VPCs and privacy) and the [Telemetry reference](./reference/telemetry.md)
-(trace shape, span attributes, usage counters).
+(trace shape, span attributes, the per-query audit record, usage counters).
+Each query writes one audit record on the `unified_kg_rag.audit` logger (who
+asked, the index build and settings it read, the ids it rests on, its models,
+usage, cost and outcome; ids and digests, no text): on the CDK stacks it
+lands in the task's log group with the other logs, under its retention
+period ([fields](./reference/telemetry.md#audit-record)).
 
 ## Common errors
 

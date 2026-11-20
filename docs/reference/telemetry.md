@@ -1,8 +1,9 @@
 # Telemetry reference
 
 The spans the package emits when tracing is on (how to turn it on and where to
-send the traces: [Observability](../guides/observability.md)), and the model
-usage it counts with tracing on or off.
+send the traces: [Observability](../guides/observability.md)), the audit
+record it writes per query, and the model usage it counts with tracing on or
+off.
 
 ## Trace shape
 
@@ -62,6 +63,56 @@ Known limits:
   once: after a later configuration with other settings, the package's spans
   use the new exporter, but spans other libraries emit through the global API
   are dropped.
+
+## Audit record
+
+Every query writes one audit record, tracing on or off: an INFO record of the
+`unified_kg_rag.audit` logger whose event is `query_audit` and whose fields
+are its own keys (with `logging.log_format: structured`, one JSON object per
+line, next to the record's `timestamp`, `level` and `logger`). It is written
+where every query ends in `GraphRAGChain`, so `run-rag`, `run-eval`, the MCP
+server, the console and an embedded chain write the same record: an answer
+and a search (`kg_search`, `run-rag --mode search`), one that failed, timed
+out or was refused, and a stream its reader closed early. A cancelled
+`ainvoke` writes none, as it records no query metric: the MCP server records
+a call it gave up on at its backstop (`outcome` `failed`, `error_class`
+`timeout`).
+
+It holds ids, counts and digests, never the text of the question, the answer
+or a source: the question and the answer are their length and hex SHA-256
+(`question`, `answer`), so a stored answer can be checked against its
+record. A digest is no anonymization: a short or common question can be
+found by hashing guesses, so protect the logs as you would the questions.
+`user_id` is recorded as given (`RAGInput.user_id`, or the
+[trusted identity header](../guides/mcp.md#http-and-remote-deployment)): pass
+an opaque id.
+
+| Field | Meaning |
+|---|---|
+| `record_version` | `1`; raised when a field is renamed, removed or changes meaning (an added optional field keeps it) |
+| `query_id`, `trace_id` | The ids of the query's log lines and trace (`metadata.query_id`, `metadata.trace_id`) |
+| `finished_at`, `latency_ms` | When it ended (UTC) and how long it took, its admission included |
+| `mode` | `rag` (an answer) or `search` |
+| `namespace`, `user_id`, `conversation_id` | Its index namespace and `RAGInput.user_id` / `conversation_id` |
+| `requested_strategy`, `strategy` | The strategy asked for and the one that ran (`null` when none did: a blocked or failed query, a stream stopped before its route) |
+| `outcome` | `answered`, `abstained`, `blocked`, `error` (the error answer of `processing.ignore_errors`), `failed` (raised), `refused` (a caller's error, `ErrorClass.is_caller_error`) or `stopped` (its reader stopped) |
+| `error_class`, `degraded`, `query_limited` | A failure's class, whether it answered without a step, whether its limits cut it short (as the query metrics) |
+| `package_version`, `config_fingerprint` | The package that answered, and the hex SHA-256 of every setting that can change an answer (`run-eval`'s manifest `retrieval_config_sha256`: one value for one configuration) |
+| `build` | The index build it read, from its namespace's build record as its admission read it (cached for up to 300 s): `pipeline_id`, `mode`, `built_at`, `package_version`, `extraction_fingerprint`, and an incremental build's `full_build_pipeline_id`; `null` without a record or for a refused input |
+| `question`, `answer` | `{length, sha256}` of the question asked and the answer returned (`null`: none) |
+| `evidence` | `sources` (how many the answer model was given, or a search returned) and their `source_ids`, then the context sections the answer cites (`[n]`) as `cited_source_ids`, `cited_text_unit_ids` and `cited_document_ids`; at most 50 ids each, `truncated` when one was cut; empty cited lists for a strategy whose citations are off (`search.citations.strategies`) |
+| `models`, `usage` | The model ids it sent requests to, and its usage (the `metadata["usage"]` counts below) |
+| `cost_usd`, `unpriced_models` | Its USD cost by `models.prices`, `null` with a model that has no price there, named in `unpriced_models` |
+
+Nothing is built while the logger is off for INFO: a CLI writes the records
+at the default `logging.level` (`INFO`), `logging.library_levels:
+{unified_kg_rag.audit: WARNING}` turns them off, and an embedding
+application enables them with `logging.getLogger("unified_kg_rag.audit")`
+at INFO and a handler of its own (to keep them apart from the other logs,
+add the handler there and set `propagate = False`). On the CDK stacks the
+records go to the task's CloudWatch Logs group with the other logs, under
+its retention period; to keep them longer, subscribe a filter on
+`"query_audit"` to a destination of its own.
 
 ## Usage counters
 

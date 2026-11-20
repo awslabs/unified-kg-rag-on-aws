@@ -46,6 +46,11 @@ text remains outside it, by design or out of the package's reach:
   message template, or logs through a handler of its own is not filtered.
   Set its level in `logging.library_levels`.
 - Result output holds corpus and model text (below).
+- Each query's audit record (the `unified_kg_rag.audit` logger) holds its
+  `user_id` as given and the full SHA-256 of its question and answer, which
+  checks a stored answer but does not hide a short or common question from
+  anyone who hashes guesses
+  ([fields](docs/reference/telemetry.md#audit-record)).
 
 Result output is not a log record and holds corpus and model text by design:
 `run-ingestion` prints entity names, community titles and summaries and

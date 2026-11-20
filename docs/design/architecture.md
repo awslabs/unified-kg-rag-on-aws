@@ -138,7 +138,7 @@ unified_kg_rag/
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning/describe,
 │  │                    #   prepare-benchmark, run-mcp-server (mcp_tools, mcp_server: §8.4),
 │  │                    #   run-console + console/ (the web console's server, jobs, APIs: §10.1),
-│  │                    #   display (rich console helpers)
+│  │                    #   trusted_identity (a proxy's caller header), display (rich console helpers)
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages, IncrementalIndexer,
 │  │                    #   namespace lease, extraction-record store, stage cache
 │  │                    #   (cache_manager), resume (pipeline_manager; the resume
@@ -150,6 +150,7 @@ unified_kg_rag/
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output), its query
 │  │                    #   processing (query_processing) and filter-key checks
 │  │                    #   (filter_validation), methodology_check (what a namespace holds),
+│  │                    #   query_audit (the per-query audit record),
 │  │                    #   graph_lookup (the MCP tools' read-only store reads)
 │  ├─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 │  ├─ bootstrap.py      #   the composition root: build_providers, build_query_guard,

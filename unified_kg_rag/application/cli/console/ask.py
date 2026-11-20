@@ -45,6 +45,7 @@ from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
 from unified_kg_rag.application.cli.console.store import ConsoleStore
+from unified_kg_rag.application.cli.trusted_identity import caller_user_id
 from unified_kg_rag.application.presentation.answer_view import AnswerView, SourceView
 from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.application.retrieval.rag_chain import (
@@ -611,6 +612,8 @@ class AskService:
                     ),
                     filters=request.query_filters(),
                     suffix=request.suffix,
+                    # The trusted identity header's (--trusted-identity-header).
+                    user_id=caller_user_id(),
                 )
             ):
                 if isinstance(event, AnswerChunk):

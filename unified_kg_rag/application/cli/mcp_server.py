@@ -43,6 +43,10 @@ from unified_kg_rag.application.cli.mcp_tools import (
     SearchToolResult,
     describe_error,
 )
+from unified_kg_rag.application.cli.trusted_identity import (
+    TrustedIdentity,
+    unauthorized,
+)
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     validation_message,
@@ -214,10 +218,17 @@ def build_mcp_app(
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
     path: str = "/mcp",
+    trusted_identity_header: str | None = None,
 ) -> Any:
     """A stateless streamable-HTTP ASGI application of
     :func:`build_mcp_server`'s server, to mount in a host application
     behind an authenticating proxy.
+
+    ``trusted_identity_header`` (off by default): every request must carry
+    that one header, which its queries take as their ``user_id``, or is
+    refused with 401 (``application.cli.trusted_identity``). Set it only
+    behind a proxy that authenticates every request and removes or
+    overwrites any copy of the header a client sends.
 
     ``allowed_hosts`` (``Host`` values such as ``"mcp.example.com"`` or
     ``"127.0.0.1:*"``) turns the SDK's ``Host``/``Origin`` checks on, with
@@ -237,7 +248,12 @@ def build_mcp_app(
         json_response=True,
         transport_security=_security(allowed_hosts, allowed_origins),
     )
-    return _post_only(_cancelled_on_disconnect(app), path)
+    served = _cancelled_on_disconnect(app)
+    if trusted_identity_header is not None:
+        served = TrustedIdentity(
+            served, header=trusted_identity_header, refuse=unauthorized
+        )
+    return _post_only(served, path)
 
 
 def mcp_extra_error() -> str | None:
