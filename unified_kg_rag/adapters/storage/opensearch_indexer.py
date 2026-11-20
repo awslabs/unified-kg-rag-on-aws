@@ -781,7 +781,7 @@ class OpenSearchIndexer(VectorIndexer):
         A field the live index does not map yet would be mapped as a keyword
         by the ``strings_as_keywords`` dynamic template on the first write (or
         as a date, on an index built before date detection was turned off).
-        An engine with an ``analyzes_alike`` (the embedded one, where ``cjk``
+        An engine with an ``analyzes_alike`` (the embedded one, where ``nori``
         and ``standard`` are one analyzer) accepts a field whose analyzer it
         tokenizes alike under another name. A field that keeps its stored
         analyzer (``_keeps_stored_analyzer``, for its language in

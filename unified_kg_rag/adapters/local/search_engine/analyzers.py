@@ -20,16 +20,18 @@ with it. Approximations of the OpenSearch analyzers of the same names:
   characters in the run are left out of them.
   (OpenSearch's ``standard`` keeps a Hangul run as one token; the bigrams are
   deliberate.)
-- ``cjk``, ``cjk_script_split`` (the indexer's custom one,
-  ``adapters/storage/opensearch_analysis``), ``nori``, ``kuromoji`` and
-  ``smartcn``: the same analyzer as ``standard``, as are ``bengali``,
-  ``bulgarian``, ``galician``, ``latvian`` and ``sorani`` (no Snowball
-  stemmer: OpenSearch's stem, these do not).
-  The bigrams stand in for their morphological analysis: recall on a
-  word-in-compound query is comparable, ranking is not identical.
+- ``cjk`` and ``cjk_script_split`` (the indexer's custom one,
+  ``adapters/storage/opensearch_analysis``): ``standard`` after OpenSearch's
+  ``cjk_width`` fold (fullwidth ASCII to ASCII, halfwidth Katakana to
+  fullwidth) and without its English stop words (Lucene's CJK set).
   OpenSearch's ``cjk`` keeps Latin letters or digits joined to the Hangul
   written after them ("AWS를" is one token, ``aws를``); ``cjk_script_split``
   and ``nori`` split them, as this analyzer does.
+- ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``,
+  as are ``bengali``, ``bulgarian``, ``galician``, ``latvian`` and ``sorani``
+  (no Snowball stemmer: OpenSearch's stem, these do not).
+  The bigrams stand in for their morphological analysis: recall on a
+  word-in-compound query is comparable, ranking is not identical.
 - ``german``, ``french``, ``spanish``, ``italian``, ``portuguese``,
   ``russian``, ``arabic`` and ``hindi`` (the default ``language_analyzers``
   of those languages), and the other OpenSearch built-in language analyzers
@@ -302,8 +304,6 @@ def _tokens(
 
 @register_analyzer(
     STANDARD,
-    "cjk",
-    "cjk_script_split",
     "nori",
     "kuromoji",
     "smartcn",
@@ -324,6 +324,39 @@ ENGLISH_STOP_WORDS = frozenset(
     "a an and are as at be but by for if in into is it no not of on or such "
     "that the their then there these they this to was will with".split()
 )
+
+
+# The stop words of OpenSearch's ``cjk`` analyzer (Lucene's CJKAnalyzer
+# stopwords.txt): the ``_english_`` set without "an", with "s", "t" and
+# "www", as OpenSearch 2.19's ``_analyze`` drops them.
+CJK_STOP_WORDS = (ENGLISH_STOP_WORDS - {"an"}) | {"s", "t", "www"}
+
+# What Lucene's ``cjk_width`` filter folds: the fullwidth ASCII variants
+# (U+FF01-FF5E, to ASCII) and the halfwidth Katakana (U+FF65-FF9F, to
+# fullwidth Kana, a voiced mark composed with its letter). NFKC of these
+# ranges is that fold; of other text it is not (NFKC also turns "ﬁ" into
+# "fi", which cjk keeps).
+_CJK_WIDTH_VARIANTS = re.compile("[\uff01-\uff5e\uff65-\uff9f]+")
+
+
+def cjk_width_fold(text: str) -> str:
+    """``text`` with its fullwidth ASCII and halfwidth Katakana folded as
+    OpenSearch's ``cjk_width`` filter folds them ("ＡＢＣ" -> "ABC",
+    "ｶﾞ" -> "ガ")."""
+    return _CJK_WIDTH_VARIANTS.sub(
+        lambda match: unicodedata.normalize("NFKC", match.group()), text
+    )
+
+
+@register_analyzer("cjk", "cjk_script_split")
+def cjk_analyzer(text: str) -> list[str]:
+    """``standard`` after OpenSearch's ``cjk`` chain: the width fold
+    (:func:`cjk_width_fold`) and its English stop words
+    (:data:`CJK_STOP_WORDS`)."""
+    return _tokens(
+        cjk_width_fold(text),
+        lambda word: None if word in CJK_STOP_WORDS else word,
+    )
 
 
 @cache

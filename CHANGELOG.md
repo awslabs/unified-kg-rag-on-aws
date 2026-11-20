@@ -535,6 +535,10 @@ Bugs present in 0.3.0.
   the longest prefix that fits, by binary search as the local counter does.
 - The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
   searched for as a focus entity; it asks for an empty answer, so the strategies search by the query.
+- The embedded engine's `cjk` analyzer (the `ja` and `zh` default) did not fold width or drop stop words as
+  OpenSearch's does: fullwidth "ＡＢＣ" and halfwidth "ｶﾀｶﾅ" did not match "abc" and "カタカナ". It follows OpenSearch 2.19's
+  chain (checked with `_analyze`); queries see it at once (the engine analyzes stored text when it loads). A live
+  field mapped `standard` no longer passes for `cjk`.
 
 ## [0.3.0] - 2026-11-14
 

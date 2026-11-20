@@ -312,7 +312,7 @@ class SQLiteSearchEngine:
     engine_name: ClassVar[str] = "embedded SQLite search engine"
     # Whether two analyzer names tokenize alike here, so a live field mapped
     # with the other name takes this run's text (OpenSearchIndexer.
-    # check_index_settings): "standard" and "cjk", say.
+    # check_index_settings): "standard" and "nori", say.
     analyzes_alike = staticmethod(analyzes_alike)
 
     def __init__(

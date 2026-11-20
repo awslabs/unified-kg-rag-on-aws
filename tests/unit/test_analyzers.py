@@ -62,9 +62,46 @@ def test_mixed_scripts_split_at_script_boundaries() -> None:
     ]
 
 
-@pytest.mark.parametrize("name", ["standard", "cjk", "nori", "kuromoji", "smartcn"])
+@pytest.mark.parametrize("name", ["standard", "nori", "kuromoji", "smartcn"])
 def test_cjk_analyzer_names_share_the_bigram_analyzer(name: str) -> None:
     assert get_analyzer(name) is standard_analyzer
+
+
+# OpenSearch 2.19.7's ``cjk`` analyzer (``_analyze``, the compose file's
+# image): the width fold and the English stop words its chain adds to the
+# bigrams (ARCH B-4).
+_OPENSEARCH_CJK = [
+    ("ＡＢＣ ｄｅｆ １２３", ["abc", "def", "123"]),
+    ("ｶﾀｶﾅ ｶﾞｷﾞ", ["カタ", "タカ", "カナ", "ガギ"]),
+    ("the cat is a www s t thing", ["cat", "thing"]),
+    ("Ｈｅｌｌｏ\u3000Ｗｏｒｌｄ！", ["hello", "world"]),
+    ("①② ﬁle ㎏", ["ﬁle"]),  # no NFKC beyond the width fold
+    ("to be or not", []),
+    ("Ｔｈｅ ＴＨＥ The", []),
+    ("an apple", ["an", "apple"]),  # "an" is not a CJK stop word
+    ("café ｶﾌｪ", ["café", "カフ", "フェ"]),
+    ("ｶﾟ", ["カ\u309a"]),  # no composed form: the combining mark stays
+]
+
+
+@pytest.mark.parametrize(("text", "tokens"), _OPENSEARCH_CJK)
+def test_cjk_folds_width_and_drops_stop_words_as_opensearch(
+    text: str, tokens: list[str]
+) -> None:
+    assert get_analyzer("cjk")(text) == tokens
+
+
+def test_cjk_differs_from_opensearch_only_where_meant() -> None:
+    # The intended difference: a Latin run beside a Hangul one splits from
+    # it here (the bigrams stand in for morphology); OpenSearch keeps
+    # "aws를" whole.
+    assert get_analyzer("cjk")("ﾊﾟﾝ 한국어 ＡＷＳ를") == [
+        "パン",
+        "한국",
+        "국어",
+        "aws",
+        "를",
+    ]
 
 
 @pytest.mark.parametrize("name", sorted(set(DEFAULT_LANGUAGE_ANALYZERS.values())))
@@ -80,7 +117,10 @@ def test_every_default_language_analyzer_is_known_without_a_warning(
 
 
 def test_analyzes_alike_compares_the_registered_analyzers() -> None:
-    assert analyzes_alike("standard", "cjk")
+    assert analyzes_alike("standard", "nori")
+    # cjk folds width and drops stop words: a field mapped with it
+    # tokenizes otherwise.
+    assert not analyzes_alike("standard", "cjk")
     assert analyzes_alike("standard", None)
     assert analyzes_alike("no-such-analyzer-y", "standard")
     assert not analyzes_alike("english", "standard")
