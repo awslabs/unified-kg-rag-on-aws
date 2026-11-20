@@ -57,8 +57,6 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `indexing.reset: true` rebuilds them ([Re-ingest](docs/operations.md#re-ingest)); deploy with
    `-c opensearch_korean_analyzer=cjk` to keep them until then. A namespace indexed incrementally keeps the name
    matches 0.3.0's MinHash index made among the names it holds: a run
-   matches its delta's names with the new index. Run with `indexing.reset: true` to match the whole corpus again. With
-2. A namespace indexed incrementally keeps the name matches 0.3.0's MinHash index made among the names it holds: a run
    matches its delta's names with the new index; its community reports keep 0.3.0's depths, which global search reads
    one or more levels too coarse beside the depths a later run writes (*Breaking changes*). Run with
    `indexing.reset: true` to match the whole corpus again and write every report at its depth. With
