@@ -154,6 +154,24 @@ def source_keys(identifier: str) -> frozenset[str]:
     return frozenset(k for k in (name, stem) if k)
 
 
+def distinct_references(refs: Any) -> dict[str, str]:
+    """``{match key: display name}`` of the distinct references of ``refs``
+    (``reference_sources``), by the matcher's keys: two references are one
+    when a file matching one always matches the other, so one file never
+    counts as two relevant documents (nDCG's ideal ranked two where one
+    file gained once, and perfect retrieval scored 0.61). That is a
+    reference spelled as another's stem (``report-a`` beside
+    ``Report-A.pdf``, whose keys hold ``report-a``), or with the same key;
+    the more specific spelling stays. Two files of one stem
+    (``a.pdf``, ``a.docx``) stay two."""
+    references: dict[str, str] = {}
+    for ref in refs or []:
+        if isinstance(ref, str) and (key := reference_key(ref)):
+            references.setdefault(key, ref.strip())
+    stems = {stem for key in references for stem in source_keys(key) if stem != key}
+    return {key: name for key, name in references.items() if key not in stems}
+
+
 def ranked_files(
     sources: list[list[str]], types: list[str] | None = None
 ) -> list[frozenset[str]]:
@@ -251,11 +269,7 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         else:
             skipped[EvaluationMetricType.ATTRIBUTABLE_FRACTION.value] = "no_sources"
 
-        # reference match key -> its display name (deduplicated by key).
-        references: dict[str, str] = {}
-        for ref in result.metadata.get("reference_sources") or []:
-            if isinstance(ref, str) and (key := reference_key(ref)):
-                references.setdefault(key, ref.strip())
+        references = distinct_references(result.metadata.get("reference_sources"))
 
         files = ranked_files(sources, source_types)
         metadata: dict[str, Any] = {

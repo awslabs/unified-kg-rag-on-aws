@@ -160,6 +160,40 @@ class TestMetrics:
         assert out["metadata"]["first_relevant_rank"] == 2
         assert out["metadata"]["k"] == 2
 
+    def test_a_reference_spelled_as_another_s_stem_is_one_reference(
+        self, evaluator: RetrievalEvaluator
+    ) -> None:
+        # One file matches both spellings and gains once, while nDCG's ideal
+        # counted two relevant ranks: perfect retrieval scored
+        # 1 / (1 + 1/log2 3) = 0.613.
+        out = _score(evaluator, [["Report-A.pdf"]], ["report-a", "Report-A.pdf"])
+        assert out["metrics"] == {
+            "hit_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_k": 1.0,
+            "mrr": 1.0,
+        }
+        assert out["metadata"]["num_references"] == 1
+        # The specific spelling stays: another file of the stem names it not.
+        assert _score(evaluator, [["a.txt"]], ["a", "a.pdf"])["metrics"] == _MISS
+
+    def test_two_files_of_one_stem_stay_two_references(self, config: Config) -> None:
+        # a.pdf and a.docx are two documents; "a" is a spelling of either.
+        config.evaluation.retrieval_k = 3
+        out = _score(
+            RetrievalEvaluator(config),
+            [["a.pdf"], ["x.txt"], ["a.docx"]],
+            ["a", "a.pdf", "a.docx"],
+        )
+        # DCG 1 + 1/log2 4 = 1.5 over the ideal of two, 1 + 1/log2 3.
+        assert out["metrics"] == {
+            "hit_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_k": pytest.approx(1.5 / (1 + 1 / math.log2(3))),
+            "mrr": 1.0,
+        }
+        assert out["metadata"]["num_references"] == 2
+
     def test_k_counts_files_not_sources(self, evaluator: RetrievalEvaluator) -> None:
         # A community report attributed to many files must not fill the top k
         # with all of them: k=2 counts the first two distinct files.

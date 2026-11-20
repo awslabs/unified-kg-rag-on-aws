@@ -397,6 +397,9 @@ Bugs present in 0.3.0.
   `iterative`, 17 for `ppr` and 12 for `naive` (a strategy's own pools: LightRAG's per-type floors, iterative's
   rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
   results to `top_k` (times `retrieval_multiplier`) by rank; an answer's context keeps the strategy's pools.
+- `retrieval`'s nDCG@k counted two references a single file matches (`report-a` beside `Report-A.pdf`) as two
+  relevant documents, so perfect retrieval scored 0.61. References are deduplicated by the matcher's keys: one spelled
+  as another's stem is one reference, the specific spelling kept; two files of one stem stay two.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
   out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items
