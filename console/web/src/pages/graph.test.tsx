@@ -246,6 +246,32 @@ describe("GraphPage under the header's namespace", () => {
     expect(urls.some((url) => url.endsWith("/api/graphs?namespace=v2"))).toBe(true);
     expect(urls.some((url) => url.includes("namespace/methodologies?namespace=v2"))).toBe(true);
   });
+
+  it("asks for no graph before the header knows its namespace (RV4-11)", async () => {
+    // A namespace picked on an earlier visit is null until the status
+    // loads: the page fetched the config's graph first, then the picked one.
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        urls.push(String(url));
+        const body = String(url).includes("namespace/methodologies")
+          ? { namespace: "big", recorded: false, indexed: false, held: [], dropped: [] }
+          : { graphs: [], current: { state: "unrecorded", namespace: "big", built_at: null } };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+    const { rerender } = renderIn(<GraphPage params={new URLSearchParams()} namespace={null} ready={false} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(urls).toEqual([]);
+    rerender(
+      <I18nProvider initial="en">
+        <GraphPage params={new URLSearchParams()} namespace="big" ready />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("Nothing is indexed in “big” yet")).toBeInTheDocument();
+    expect(urls.filter((url) => url.includes("/api/graphs"))).toEqual([expect.stringMatching(/\/api\/graphs\?namespace=big$/)]);
+  });
 });
 
 describe("GraphPage when building the graph failed", () => {

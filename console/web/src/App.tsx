@@ -63,7 +63,8 @@ export function App() {
     ask: <AskPage status={status.data} namespace={namespace} />,
     ingest: <IngestPage status={status.data} namespace={namespace} onJobsChanged={status.reload} />,
     evaluate: <EvaluatePage status={status.data} namespace={namespace} onJobsChanged={status.reload} />,
-    graph: <GraphPage params={route.params} namespace={namespace} />,
+    // The header's namespace is known once the status loaded (or failed).
+    graph: <GraphPage params={route.params} namespace={namespace} ready={!status.loading || status.data !== null} />,
     dashboard: <DashboardPage />,
     settings: <SettingsPage onSaved={status.reload} />,
   };

@@ -65,12 +65,14 @@ type Panel = "entity" | "communities" | "analysis";
 const LEGEND_SLOTS = 8;
 const OTHER_GROUPS = "\u0000other";
 
-export function GraphPage({ params, namespace }: { params: URLSearchParams; namespace?: string | null }) {
+export function GraphPage({ params, namespace, ready = true }: { params: URLSearchParams; namespace?: string | null; ready?: boolean }) {
   const { t, date } = useI18n();
   // The namespace the header picked (undefined: the config's): its graph is
-  // brought up to date and opened.
+  // brought up to date and opened. Not before the header knows it
+  // (`ready`): a namespace picked earlier is null until the status loads,
+  // and the config's graph would be built and sent first (RV4-11).
   const picked = namespace ?? undefined;
-  const files = useApi(() => get<{ graphs: GraphFile[]; current: CurrentGraph }>("graphs", { namespace: picked }), [picked]);
+  const files = useApi(() => (ready ? get<{ graphs: GraphFile[]; current: CurrentGraph }>("graphs", { namespace: picked }) : Promise.resolve(null)), [picked, ready]);
   const [chosen, setChosen] = useState<string | null>(params.get("graph"));
   // Another namespace picked: the export chosen of the last one is not its.
   const [chosenOf, setChosenOf] = useState(picked);
