@@ -128,6 +128,13 @@ _LEXICAL_TERM_BUDGET = 200
 _LEXICAL_CLAUSE_BUDGET = 1000
 _MAX_FUZZY_QUERY_TERMS = 10
 _FUZZY_MAX_EXPANSIONS = 10
+# The order of a search scored by relevance: by score, equal scores by id
+# (every searched index maps ``id`` as a keyword), as the embedded engine
+# ranks; OpenSearch would rank a tie in its index order.
+_RELEVANCE_ORDER: list[dict[str, Any]] = [
+    {"_score": {"order": "desc"}},
+    {"id": {"order": "asc"}},
+]
 # The section a hit of each vector-store artifact's index reads as.
 _ARTIFACT_SECTIONS: dict[IndexArtifact | None, SectionType] = {
     IndexArtifact.TEXT_UNITS: SectionType.TEXT,
@@ -1212,6 +1219,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         normalization range does not depend on ``size`` (normalized over only
         the ``size`` hits returned, the top 4 of a 4-hit and a 40-hit query
         shared 75% of their hits); ``_fuse`` cuts to ``size``.
+
+        A search that scores by relevance ranks equal scores by id
+        (``_RELEVANCE_ORDER``), as the embedded engine does: OpenSearch
+        ranked a tie in index order, so a cut through it kept other hits
+        after a rebuild (an incremental index against a clean build of the
+        same corpus) and other hits than the embedded engine.
         """
         filters = self._build_filter_clauses(query.filters)
         if (any_of := parse_any_of(query.any_of)) is not None:
@@ -1235,13 +1248,16 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     query_vector, self._knn_k(size), vector_fields, filters, must_not
                 ),
                 size,
+                _RELEVANCE_ORDER,
             )
             if search_type == SearchType.VECTOR:
                 return [knn]
-            return [self._search_body(lexical, size), knn]
+            return [self._search_body(lexical, size, _RELEVANCE_ORDER), knn]
         if search_type != SearchType.LEXICAL and not query.query:
             # A filter browse: no text to score by.
             lexical = {"bool": scope} if scope else {"match_all": {}}
+        if sort is None and query.query and query.query != "*":
+            sort = _RELEVANCE_ORDER
         return [self._search_body(lexical, size, sort)]
 
     def _knn_k(self, size: int) -> int:
@@ -1497,7 +1513,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         for found in sub_hits:
             scored = []
             for hit in found:
-                key = f"{hit.get('_index', '')}\x00{hit.get('_id', '')}"
+                # By id first: equal fused scores rank by id
+                # (combine_min_max), whichever physical index holds them.
+                key = f"{hit.get('_id', '')}\x00{hit.get('_index', '')}"
                 hits.setdefault(key, hit)
                 scored.append((key, float(hit.get("_score") or 0.0)))
             sub_results.append(scored)

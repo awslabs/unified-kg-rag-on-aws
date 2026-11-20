@@ -1240,11 +1240,12 @@ async def test_model_written_results_are_screened_with_the_answer(
     assert output.search_results.total_results == len(contents)
     screened = [text for text, source, _ in guard.calls if source is GuardSource.OUTPUT]
     assert "Vendor and Buyer signed the supply agreement." not in screened
-    # The joined check's intervention, then each result's own.
+    # The joined check's intervention, then each result's own (in the
+    # results' order: the two tie, so by id).
     assert [(r["action"], r.get("scope")) for r in output.metadata["guardrail"]] == [
         ("blocked", "joined"),
-        ("blocked", None),
         ("masked", None),
+        ("blocked", None),
     ]
 
 

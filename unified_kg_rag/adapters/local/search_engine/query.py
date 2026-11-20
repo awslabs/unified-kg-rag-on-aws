@@ -7,7 +7,7 @@ Exactly the clauses ``OpenSearchRetriever`` and ``OpenSearchIndexer`` build:
 ``multi_match`` (``best_fields``; ``fuzziness``/``max_expansions`` are
 accepted and ignored), ``bool`` (``must``/``should``/``filter``/``must_not``)
 and ``knn`` (``vector``/``k``/``filter``). A body's ``sort`` takes ``{field: {"order":
-...}}`` entries (``sort_hits``). Any other clause or parameter raises
+...}}`` entries, ``_score`` among them (``sort_hits``). Any other clause or parameter raises
 ``StoreRequestRejectedError``, as OpenSearch answers a query it cannot parse
 with a 400, so a new query shape fails a test instead of silently matching
 something else.
@@ -652,6 +652,8 @@ Hit = tuple[LoadedIndex, str, float]
 
 # A search body's ``sort`` as parsed (``parse_sort``): (field, descending).
 SortFields = list[tuple[str, bool]]
+# The sort field that names a hit's score, as in OpenSearch.
+SCORE_SORT_FIELD = "_score"
 
 
 def parse_sort(sort: Any) -> SortFields:
@@ -686,12 +688,16 @@ def top_hits(hits: list[Hit], size: int) -> list[Hit]:
 
 def sort_values(hit: Hit, fields: SortFields) -> list[Any]:
     """The values ``hit`` sorts by under a body's sort ``fields`` (a hit's
-    ``sort`` in the response, which ``search_after`` takes back): a numeric
-    field's number, any other's keyword; of a multi-valued field the
+    ``sort`` in the response, which ``search_after`` takes back): its score
+    for ``_score``, a numeric field's number, any other's keyword; of a
+    multi-valued field the
     smallest ascending, the largest descending; ``None`` without one."""
-    index, doc_id, _score = hit
+    index, doc_id, score = hit
     values: list[Any] = []
     for path, descending in fields:
+        if path == SCORE_SORT_FIELD:
+            values.append(score)
+            continue
         spec = index.spec(path)
         raw = resolve_path(index.sources[doc_id], path)
         if spec is not None and spec.type in NUMERIC_TYPES:

@@ -49,6 +49,20 @@ def test_the_min_score_floor_keeps_the_order_of_near_minimum_hits() -> None:
     assert [doc_id for doc_id, _ in fused] == ["top", "near", "min"]
 
 
+def test_equal_scores_rank_by_id_whatever_order_the_hits_came_in() -> None:
+    # A store returns a tie in its index order, which differs after a
+    # rebuild and between stores: the fused ranking must not follow it.
+    lexical = [("b", 2.0), ("a", 2.0), ("c", 1.0)]
+    vector = [("c", 0.9), ("d", 0.5)]
+    for hits in (lexical, lexical[1::-1] + lexical[2:]):
+        fused = combine_min_max([hits, vector], [0.5, 0.5])
+        assert [doc_id for doc_id, _ in fused] == ["c", "a", "b", "d"]
+    assert combine_min_max([[("y", 1.0), ("x", 1.0)]], [1.0]) == [
+        ("x", 1.0),
+        ("y", 1.0),
+    ]
+
+
 def test_zero_weights_score_zero() -> None:
     assert combine_min_max([[("a", 1.0)]], [0.0]) == [("a", 0.0)]
 
