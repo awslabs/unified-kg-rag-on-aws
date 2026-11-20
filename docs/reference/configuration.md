@@ -594,7 +594,7 @@ RAPTOR's summary tree over the stored text units, which the tree strategy search
 | `min_nodes_to_cluster` | integer (≥ 2) | `11` | upstream: RAPTOR's reduction_dimension + 1 | A level of at most this many nodes is not clustered again: its nodes are the roots (RAPTOR's reduction_dimension + 1). |
 | `min_level_shrink` | number (≥ 0.0, < 1.0) | `0.2` | deviation: RAPTOR never stops for it (0) | Stop when the next level would hold more than (1 - this) of the current one's nodes: no structure is left to summarize. 0 never stops for it (RAPTOR's behaviour). |
 | `max_cluster_tokens` | integer (≥ 256) | `8000` | deviation: RAPTOR's max_length_in_cluster, 3500 cl100k tokens | A cluster whose children hold more tokens than this (the summary prompt's input) is clustered again until it fits (RAPTOR's max_length_in_cluster, 3500 cl100k tokens). |
-| `max_summary_tokens` | integer (≥ 32, ≤ 4000) | `300` | unmeasured | Length a summary aims at; a longer answer is cut to it. |
+| `max_summary_tokens` | integer (≥ 32, ≤ 4000) | `300` | deviation: RAPTOR's summarization_length, 100 | Length a summary aims at; a longer answer is cut to it. RAPTOR's summarization_length is 100 for clusters of 100-token chunks of at most 3500 tokens; the clusters here hold longer chunks and up to max_cluster_tokens. |
 | `max_lineage_text_units` | integer (≥ 100) | `10000` | operational | Text-unit ids a node stores at most (its provenance and removal key); above it the node keeps its child ids and the lineage is resolved through them at query time. |
 | `min_leaves_per_tree` | integer (≥ 2) | `3` | unmeasured | scope: document only: a document with fewer text units gets no tree. |
 | `refresh` | `"every_run"` \| `"on_reset"` | `"every_run"` |  | every_run: rebuild the tree on every run whose stored text units changed. on_reset: delta runs only delete the nodes of removed text (always done) and report the text units no summary covers (tree_uncovered_leaves); indexing.reset rebuilds. |
@@ -654,7 +654,7 @@ Global search configuration
 
 | Key | Type | Default | Evidence | Description |
 |---|---|---|---|---|
-| `community_depth` | integer (≥ 0) | `2` | upstream: MS GraphRAG's community_level, 2 | The cut of the community hierarchy whose reports global search maps over, counted from the root as MS GraphRAG's community_level (default 2 there too): the communities at this depth plus the leaves above it, so every entity is covered once. 0 = the root communities (fewest, broadest reports); a large value = the leaves. With use_dynamic_selection it bounds only the depths a selection that found nothing relevant rates whole (MS GraphRAG's max_level); relevant reports are followed to the leaves. |
+| `community_depth` | integer (≥ 0) | `2` | deviation: MS GraphRAG's community_level, 2, counted from the first Leiden pass, not from the coarser levels above it | The cut of the community hierarchy whose reports global search maps over, counted from the root: the communities at this depth plus the leaves above it, so every entity is covered once. 0 = the root communities (fewest, broadest reports); a large value = the leaves. MS GraphRAG's community_level (default 2 there too) counts from the first Leiden pass over the whole graph, while the root here sits above the coarser levels built over that pass (graph.community_detection.max_levels), so depth D here is upstream's level D - k, where k is the number of coarser levels the corpus produced. With use_dynamic_selection it bounds only the depths a selection that found nothing relevant rates whole (MS GraphRAG's max_level); relevant reports are followed to the leaves. |
 | `max_reports_per_level` | integer (≥ 1) | `100` | unmeasured | Upper bound on the reports one cut (or one step of the dynamic selection) contributes. A cut with more reports gives way to the deepest shallower cut that fits (global_cut_depth in the search metadata); when even the root cut does not fit, or under a filter on a report key (community_id, level, rating), to the reports of the cut most similar to the query (a hybrid search restricted to the cut, global_level_capped). At most indexing.opensearch.max_query_size - 1 (and the reports index's live max_result_window - 1): one store request returns at most that many hits and the cut asks for one more than the cap (the default of 100 maps at most 99). MS GraphRAG has no cap: it maps the whole cut. Each report costs map-step input tokens. |
 | `use_dynamic_selection` | boolean | `false` |  | MS GraphRAG dynamic community selection instead of a fixed cut: rate the root reports for the query with models.roles.community_relevance, descend into the children of the relevant ones down to the leaves (dropping a parent once a child is relevant), and rate the whole next depth when a depth yields none, down to community_depth (MS GraphRAG's selection stops at its community_level; this one follows relevant reports to the leaves). One fast-model call per rated report, search.max_concurrency at a time; the relevant reports are then mapped. Off by default, as in MS GraphRAG. |
 | `relevance_threshold` | number (≥ 0.0, ≤ 1.0) | `0.2` | upstream: MS GraphRAG's dynamic selection threshold, a rating of 1 | Dynamic selection keeps a report whose relevance (MS GraphRAG's 0-5 rating divided by 5) is at least this. 0.2 = a rating of 1 or more, MS GraphRAG's threshold: a pruned report prunes its whole subtree. |
@@ -689,9 +689,9 @@ Fusion slots reserved per section type, max(multiplier * top_k, floor), in local
 | `text_multiplier` | number (≥ 0.0) | `2.0` | unmeasured | Text-unit (chunk) slots as a multiple of top_k. Unmeasured choice. |
 | `text_floor` | integer (≥ 1) | `20` | unmeasured | Minimum text-unit slots whatever top_k. Unmeasured choice. |
 | `entity_multiplier` | number (≥ 0.0) | `1.0` | unmeasured | Entity slots as a multiple of top_k. Unmeasured choice. |
-| `entity_floor` | integer (≥ 1) | `10` | upstream: MS GraphRAG local's top_k_entities, 10 | Minimum entity slots (MS GraphRAG local's top_k_entities). |
+| `entity_floor` | integer (≥ 1) | `10` | deviation: MS GraphRAG local's top_k_entities 10, mapping 20 entities | Minimum entity slots. MS GraphRAG local's top_k_entities is 10 too, but it maps the query to twice that many entities (oversample_scaler 2) and keeps all 20. |
 | `relationship_multiplier` | number (≥ 0.0) | `1.0` | unmeasured | Relationship slots as a multiple of top_k (also caps local search's bridge relationships). Unmeasured choice. |
-| `relationship_floor` | integer (≥ 1) | `10` | upstream: MS GraphRAG local's top_k_relationships, 10 | Minimum relationship slots (MS GraphRAG local's top_k_relationships). |
+| `relationship_floor` | integer (≥ 1) | `10` | deviation: MS GraphRAG local's top_k_relationships 10 per selected entity, after every in-network relationship | Minimum relationship slots. MS GraphRAG local's top_k_relationships is 10 too, but per selected entity: it keeps every relationship between the selected entities plus up to 10 times their count of the others, then cuts by tokens. |
 | `community_multiplier` | number (≥ 0.0) | `0.5` | unmeasured | Community report slots as a multiple of top_k. Unmeasured choice. |
 | `community_floor` | integer (≥ 1) | `2` | unmeasured | Minimum community report slots. Unmeasured choice. |
 | `claim_multiplier` | number (≥ 0.0) | `0.5` | unmeasured | Claim slots as a multiple of top_k. Unmeasured choice. |
@@ -1263,6 +1263,10 @@ The numeric defaults that change what is retrieved or answered and that no run c
 | `indexing.summary_tree.target_children` | `6` | deviation: RAPTOR picks k by BIC (max_clusters 50); its trees average 6.7 children |
 | `indexing.summary_tree.min_level_shrink` | `0.2` | deviation: RAPTOR never stops for it (0) |
 | `indexing.summary_tree.max_cluster_tokens` | `8000` | deviation: RAPTOR's max_length_in_cluster, 3500 cl100k tokens |
+| `indexing.summary_tree.max_summary_tokens` | `300` | deviation: RAPTOR's summarization_length, 100 |
+| `search.global_search.community_depth` | `2` | deviation: MS GraphRAG's community_level, 2, counted from the first Leiden pass, not from the coarser levels above it |
+| `search.local_search.type_quota.entity_floor` | `10` | deviation: MS GraphRAG local's top_k_entities 10, mapping 20 entities |
+| `search.local_search.type_quota.relationship_floor` | `10` | deviation: MS GraphRAG local's top_k_relationships 10 per selected entity, after every in-network relationship |
 | `search.drift_search.k_followups` | `10` | deviation: MS GraphRAG's drift_k_followups: 20 |
 | `search.drift_search.n_depth` | `2` | deviation: MS GraphRAG's n_depth: 3 |
 | `processing.deduplicate_similarity_threshold` | `0.9` | unmeasured |
@@ -1282,7 +1286,6 @@ The numeric defaults that change what is retrieved or answered and that no run c
 | `graph.community_detection.max_levels` | `5` | unmeasured |
 | `graph.community_detection.min_community_size` | `3` | unmeasured |
 | `graph.community_detection.report_generation.max_entities_per_report` | `50` | unmeasured |
-| `indexing.summary_tree.max_summary_tokens` | `300` | unmeasured |
 | `indexing.summary_tree.min_leaves_per_tree` | `3` | unmeasured |
 | `search.hybrid.lexical_weight` | `0.5` | unmeasured: an equal split |
 | `search.hybrid.vector_weight` | `0.5` | unmeasured: an equal split |

@@ -229,6 +229,14 @@ class TestMergeSmallCommunities:
         merged = merge_small_communities(communities, g, min_size=2, max_size=5)
         assert merged == {0: {"a", "b", "c", "d", "e"}, 1: {"z"}}
 
+    def test_a_merge_may_reach_max_size_exactly(self) -> None:
+        # max_cluster_size bounds a community at its value, inclusive: {a, b}
+        # and {c, d} (both under min_size 3) merge into 4 == max_size 4.
+        g = nx.Graph([("a", "b"), ("c", "d"), ("b", "c")])
+        communities = {0: {"a", "b"}, 1: {"c", "d"}}
+        merged = merge_small_communities(communities, g, min_size=3, max_size=4)
+        assert list(merged.values()) == [{"a", "b", "c", "d"}]
+
 
 def _ring_of_cliques(shuffle_seed: int | None = None) -> nx.Graph:
     """40 four-cliques in a ring: one modularity pass merges neighbouring

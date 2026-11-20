@@ -159,7 +159,15 @@ and [parthsarthi03/raptor](https://github.com/parthsarthi03/raptor) (its
 main branch, read 2026-11-08), as read in their source. A file named in a
 cell is where to check it, relative to the library's Python package
 (`graphrag/`, `lightrag/`, `src/hipporag/`, `raptor/`) unless it starts at
-the repository root (`docs/`, `reproduce/`).
+the repository root (`docs/`, `reproduce/`). GraphRAG and LightRAG were
+read at the commits the weekly `fidelity` workflow pins
+(`.github/workflows/fidelity.yml`: `6d02c23` and `4e1f952`), where its
+parity tests run them, HippoRAG at `d5c8329` and RAPTOR at `7da1d48`; the
+deviations of each methodology are tabled with their reasons in Design
+[§6.1.2](../design/retrieval-graphrag-lightrag.md#612-fidelity-to-ms-graphrag),
+[§6.2.1](../design/retrieval-graphrag-lightrag.md#621-fidelity-to-lightrag),
+[§6.4](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)
+and [§6.5](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in).
 
 | Area | GraphRAG | LightRAG | HippoRAG 2 | RAPTOR | This framework | Where documented |
 |---|---|---|---|---|---|---|
@@ -189,8 +197,28 @@ purpose:
   partition the graph of communities. Only components smaller than
   `min_community_size` get no community. MS GraphRAG stops at the first
   partition, with `max_cluster_size` 10 and, by default (`use_lcc`), only
-  the largest connected component (`config/defaults.py`)
+  the largest connected component (`config/defaults.py`). So depths count
+  from another root: `community_depth` D here is MS GraphRAG's
+  `community_level` D - k, where k is the number of coarser levels the
+  corpus produced (on synthetic graphs of 500 to 2,000 entities, depth 1
+  here was upstream's level 0 exactly). The relationships between a pair
+  add their weights on its edge, where MS GraphRAG keeps one row of a
+  reversed pair, the last (`index/operations/cluster_graph.py`)
   ([Design §4.3](../design/ingestion.md#43-communities-stages-10-11)).
+- **Report inputs.** A report packs every relationship among the
+  community's entities, in MS GraphRAG's `sort_context` order, and then the
+  entities no relationship links; MS GraphRAG hands `sort_context` one
+  relationship per entity (`graph_context/context_builder.py`), so on the
+  30 recorded communities its reports saw 217 of the 380 relationships, and
+  leaves the unlinked entities out (`tests/fixtures/graphrag_lightrag/`)
+  ([Design §4.3](../design/ingestion.md#43-communities-stages-10-11)).
+- **Chunking (unmeasured).** The default `intelligent` chunker lets a
+  model place boundaries between 250 and 2,000 tokens; MS GraphRAG and
+  LightRAG cut fixed 1,200-token chunks with 100 tokens of overlap
+  (`config/defaults.py`, `lightrag.py`), as `chunker_type: simple` does
+  here (with 125). Chunk size changes what extraction finds (the GraphRAG
+  paper counts about twice the entity references at 600 tokens as at
+  2,400), and no run compared the two chunkers.
 - **Gleaning.** Three rounds by default against MS GraphRAG's one
   (`max_gleanings`), and a text unit is re-asked only while its last answer
   added something: measured for graph recall
@@ -203,6 +231,19 @@ purpose:
 - **LightRAG chunk picking.** `kg_chunk_pick_method` defaults to `weight`;
   upstream LightRAG defaults to `VECTOR` (`constants.py`). The two measured
   no different ([evidence](./defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity)).
+- **Local search entities and sections (unmeasured).** MS GraphRAG local
+  maps the question to entities by embedding similarity, with no model call
+  (`query/context_builder/entity_extraction.py`: 10 oversampled to 20),
+  walks no further than their own relationships, and keeps every
+  relationship among them plus 10 per entity of the others
+  (`query/context_builder/local_context.py`). Here a fast-model call first
+  extracts the entity names the question mentions, each looked up on its
+  own (the question itself seeds only when it names none, as
+  `--disable-query-processing` does), the graph walk goes
+  `search.graph_expansion.max_hops` (3) deep, and the type quota keeps 10
+  entities and 10 relationships at `top_k` 10. None of the three was
+  compared with upstream's
+  ([Design §6.1.2](../design/retrieval-graphrag-lightrag.md#612-fidelity-to-ms-graphrag)).
 - **Local search reports.** `local` reads the reports most similar to the
   query entities; MS GraphRAG local reads those of the entities' communities
   (`mixed_context.py`), which `report_selection: membership` follows here
@@ -213,6 +254,12 @@ purpose:
   the key points (`global_search/search.py`), which is
   `evidence_tokens: 0` here
   ([evidence](./defaults-and-evidence.md#global-evidence-cap)).
+- **DRIFT order.** The primer's hypothetical answer is shaped like the most
+  important report, and open follow-ups run best-scored first; MS
+  GraphRAG's primer takes a random report as its template
+  (`query/structured_search/drift_search/primer.py`) and, with no scorer,
+  shuffles the open follow-ups (`drift_search/state.py`
+  `rank_incomplete_actions`). Repeatable runs; neither was measured.
 - **Strategy names.** `local` and `global` are GraphRAG's strategies.
   LightRAG's own `local` and `global` modes (`base.py`) are not offered
   separately; `hybrid` combines both keyword levels, as it does upstream.

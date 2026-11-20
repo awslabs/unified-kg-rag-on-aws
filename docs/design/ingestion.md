@@ -17,7 +17,7 @@ can re-derive what it touches (§5).
 |---|---|---|---|
 | 1 | Document parsing | `parser.py` (`ParserFactory`) | PDF/TXT/CSV/JSON/MD/HTML (the `unstructured` extra, when installed, reads MD/HTML in place of the core readers; DOCX with the `docx` extra) |
 | 2 | Document loading | `loader.py` | optional MinHash deduplication; the incremental diff |
-| 3 | Chunking | `chunker.py` | intelligent (LLM boundaries, default) or simple |
+| 3 | Chunking | `chunker.py` | intelligent (LLM boundaries between `min_chunk_size` and `max_chunk_size`, default) or simple (by size); MS GraphRAG and LightRAG cut fixed 1,200-token chunks with 100 tokens of overlap, and no run compared the two (an unmeasured deviation) |
 | 4 | Translation | `translator.py` | optional; skipped when source = target language |
 | 5 | Graph extraction | `graph_extractor.py` | entities and relationships per text unit |
 | 6 | Gleaning | `gleaner.py` | optional; re-asks a unit while its last answer added something |
@@ -323,7 +323,9 @@ gets its models and stores from the run's `Providers` bundle.
 
 - **Community graph.** `GraphBuilder` builds an undirected graph with one edge
   per entity pair; relationships of other types or directions between the pair
-  share it, with the summed weight, so Leiden sees the pair's total strength.
+  share it, with the summed weight, so Leiden sees the pair's total strength
+  (MS GraphRAG's `cluster_graph` keeps one row of a reversed pair, the last,
+  with its weight: a deviation, unmeasured).
 - **Hierarchy (MS GraphRAG parity below, deliberate divergence above).**
   One Leiden pass partitions the whole entity graph. Because modularity's
   resolution limit grows its communities with the corpus beyond what one
@@ -341,7 +343,10 @@ gets its models and stores from the run's `Providers` bundle.
   these communities partition the graph of the current top communities the
   same way (a group over `max_cluster_size` communities split and kept as
   the parent of its pieces), up to `max_levels`; a partition that puts
-  every linked community under one root is no level. Leaf communities
+  every linked community under one root is no level. Depth therefore
+  counts from a root above MS GraphRAG's: a community at depth `D` here is
+  at upstream's `community_level` `D - k`, k being the coarser levels the
+  corpus produced (§6.1.1). Leaf communities
   under `min_community_size` merge into their strongest neighbour, and a
   split community is the union of the pieces it keeps.
   A connected component smaller than `min_community_size` (an isolated
@@ -357,11 +362,6 @@ gets its models and stores from the run's `Providers` bundle.
   parent identical to its only child is never created, so each distinct
   community is reported once. A Leiden failure fails the stage instead of
   truncating the hierarchy.
-- **Leiden runs (deviation).** `trials` 3 and `extra_forced_iterations` 2
-  (the best of three seeded runs, two more refinement passes) where MS
-  GraphRAG runs one trial of one iteration (`graphs/hierarchical_leiden.py`).
-  Not measured against upstream's; it costs Leiden time only (no model
-  call).
 - **Determinism.** Leiden's partition depends on insertion order and
   `graspologic_native` returns labels in a per-process order, so the clustering
   (`domain/ingestion/community_clustering.py`) sorts nodes and edges and
@@ -374,7 +374,7 @@ gets its models and stores from the run's `Providers` bundle.
   (`graphs/hierarchical_leiden.py`). The extra runs and passes cost Leiden
   time, not model calls, and keep the partition of highest modularity;
   whether that changes the reports or the answers was not measured.
-- **Reports (MS GraphRAG parity, two deliberate deviations below).** A report's input takes the community's
+- **Reports (MS GraphRAG's packing order, three deliberate deviations).** A report's input takes the community's
   entities by degree (document-backed, §4.5), capped at
   `max_entities_per_report`, and packs them into `max_report_context_tokens`
   edge by edge, as MS GraphRAG's `sort_context`: the relationships among them
@@ -383,7 +383,13 @@ gets its models and stores from the run's `Providers` bundle.
   is left out and the next tried; the entities with no relationship among
   them come last; the top entity always fits. Packing the entities first left
   the relationships whatever budget remained (with 200-token descriptions, 2
-  of 40 edges). MS GraphRAG's 8000-token budget with `max_cluster_size` 10 is
+  of 40 edges). Recorded answers of MS GraphRAG's own code
+  (`tests/fixtures/graphrag_lightrag/`) pin that order; they also show its
+  report context taking one relationship per entity (each entity's first,
+  `graph_context/context_builder.py`), 217 of 380 on 30 synthetic
+  communities, and leaving out the entities no relationship links: here
+  every relationship among the candidates is packed, and those entities
+  follow (deviation, unmeasured). MS GraphRAG's 8000-token budget with `max_cluster_size` 10 is
   the tuning point for larger reports: the defaults (4000, 20) are kept for
   cost. Reports are generated bottom-up. The prompt returns a structured
   report (summary, 0-10 rating with explanation, findings); `full_content`

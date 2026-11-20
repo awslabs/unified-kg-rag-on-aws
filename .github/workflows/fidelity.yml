@@ -13,6 +13,11 @@ name: fidelity
 #   tests/fixtures/raptor/.
 # - BenchmarkQED (microsoft/benchmark-qed, MIT): the package, never its
 #   datasets.
+# - MS GraphRAG (microsoft/graphrag, MIT) and LightRAG (HKUDS/LightRAG,
+#   MIT): the fidelity targets every "upstream" claim of the docs and the
+#   configuration reference refers to. Their report-context packing and
+#   weighted chunk polling, executed from a checkout's source, against the
+#   recorded answers in tests/fixtures/graphrag_lightrag/.
 
 on:
   schedule:
@@ -39,6 +44,12 @@ env:
   HIPPORAG_COMMIT: d5c8329422e0a0b834a15874545cb6a74b4f9b26  # pragma: allowlist secret
   RAPTOR_REPO: https://github.com/parthsarthi03/raptor
   RAPTOR_COMMIT: 7da1d48a7e1d7dec61a63c9d9aae84e2dfaa5767  # pragma: allowlist secret
+  # Package 3.1.0: its source is the v3.1.0 tag's.
+  GRAPHRAG_REPO: https://github.com/microsoft/graphrag
+  GRAPHRAG_COMMIT: 6d02c2355c3fed4c49007572fbe951d73258a37f  # pragma: allowlist secret
+  # Version string 1.5.4, before the v1.5.4 tag.
+  LIGHTRAG_REPO: https://github.com/HKUDS/LightRAG
+  LIGHTRAG_COMMIT: 4e1f95269b32cd803cb96e0acc24d922aa6b6932  # pragma: allowlist secret
   # HippoRAG's own pin; scikit-learn as uv.lock has it; benchmark-qed from PyPI.
   # The overlay is resolved outside the lock, so --exclude-newer freezes the
   # transitive dependencies (igraph's and benchmark-qed's) at the day after the
@@ -80,8 +91,12 @@ jobs:
           }
           fetch "$RUNNER_TEMP/HippoRAG" "$HIPPORAG_REPO" "$HIPPORAG_COMMIT"
           fetch "$RUNNER_TEMP/raptor" "$RAPTOR_REPO" "$RAPTOR_COMMIT"
+          fetch "$RUNNER_TEMP/graphrag" "$GRAPHRAG_REPO" "$GRAPHRAG_COMMIT"
+          fetch "$RUNNER_TEMP/LightRAG" "$LIGHTRAG_REPO" "$LIGHTRAG_COMMIT"
           test -f "$RUNNER_TEMP/HippoRAG/src/hipporag/HippoRAG.py"
           test -f "$RUNNER_TEMP/raptor/raptor/cluster_utils.py"
+          test -f "$RUNNER_TEMP/graphrag/packages/graphrag/graphrag/data_model/schemas.py"
+          test -f "$RUNNER_TEMP/LightRAG/lightrag/utils.py"
 
       - name: Check the originals are importable
         # Each parity test skips without its original, which would let this
@@ -96,13 +111,16 @@ jobs:
         env:
           HIPPORAG_SRC: ${{ runner.temp }}/HippoRAG
           RAPTOR_UPSTREAM: ${{ runner.temp }}/raptor
+          GRAPHRAG_SRC: ${{ runner.temp }}/graphrag
+          LIGHTRAG_SRC: ${{ runner.temp }}/LightRAG
         run: |
           # shellcheck disable=SC2086
           uv run --frozen $WITH_ORIGINALS pytest -m "not aws and not perf" -rs -n logical \
             --junitxml="$RUNNER_TEMP/fidelity.xml" \
             tests/unit/test_ppr_hipporag_parity.py \
             tests/unit/test_raptor_fidelity.py \
-            tests/unit/test_benchmarkqed_parity.py
+            tests/unit/test_benchmarkqed_parity.py \
+            tests/unit/test_graphrag_lightrag_fidelity.py
 
       - name: Fail on a skipped parity test
         run: >-

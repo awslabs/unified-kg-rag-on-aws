@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess  # nosec B404 - a stand-in for the script's docker calls
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -320,3 +321,80 @@ def test_only_the_pinned_sources_are_fetched() -> None:
         check_pins.CDK_CLI_LATEST,
         check_pins.TRIVY_RELEASES,
     }
+
+
+class _Docker:
+    """A ``subprocess.run`` stand-in: each docker command fails on the
+    registries named in ``failing`` (rate limited) and answers elsewhere."""
+
+    def __init__(self, failing: tuple[str, ...], answer: str = "{}") -> None:
+        self.failing = failing
+        self.answer = answer
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str], **kwargs: Any) -> Any:
+        self.calls.append(argv)
+        if any(arg.startswith(self.failing) for arg in argv):
+            raise subprocess.CalledProcessError(
+                1, argv, stderr="ERROR: toomanyrequests: Rate exceeded\n"
+            )
+        return subprocess.CompletedProcess(argv, 0, stdout=self.answer)
+
+
+_ECR_BASE = "public.ecr.aws/docker/library/python:3.12-slim"
+
+
+def test_a_failed_docker_lookup_is_retried_then_asked_of_docker_hub(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker = _Docker(failing=("public.ecr.aws/",), answer='{"digest": "x"}')
+    waits: list[float] = []
+    monkeypatch.setattr(check_pins.subprocess, "run", docker)
+    monkeypatch.setattr(check_pins, "_sleep", waits.append)
+    assert check_pins._manifest(_ECR_BASE) == {"digest": "x"}
+    refs = [argv[4] for argv in docker.calls]
+    # Three attempts on ECR Public, then the same image on Docker Hub.
+    assert refs == [_ECR_BASE] * 3 + ["docker.io/library/python:3.12-slim"]
+    assert waits == list(check_pins.RETRY_DELAYS)
+
+
+def test_the_apt_lookup_falls_back_to_the_same_digest_on_docker_hub(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pinned = f"{_ECR_BASE}@sha256:{'a' * 64}"
+    docker = _Docker(
+        failing=("public.ecr.aws/",),
+        answer="zlib1g:\n  Installed: 1:1.2\n  Candidate: 1:1.3\n",
+    )
+    monkeypatch.setattr(check_pins.subprocess, "run", docker)
+    monkeypatch.setattr(check_pins, "_sleep", lambda _: None)
+    assert check_pins._apt_policy(pinned, ("zlib1g",)) == {"zlib1g": ("1:1.2", "1:1.3")}
+    assert (
+        docker.calls[-1][5] == f"docker.io/library/python:3.12-slim@sha256:{'a' * 64}"
+    )
+
+
+def test_a_lookup_that_keeps_failing_exits_2_with_its_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pins = check_pins.read_pins()
+    lookups = _lookups(pins)
+    monkeypatch.setattr(check_pins.subprocess, "run", _Docker(failing=("",)))
+    monkeypatch.setattr(check_pins, "_sleep", lambda _: None)
+    monkeypatch.setattr(
+        check_pins,
+        "NETWORK",
+        check_pins.Lookups(
+            digest=check_pins._image_digest,
+            platform_digests=lookups.platform_digests,
+            latest_release=lookups.latest_release,
+            releases=lookups.releases,
+            latest_npm=lookups.latest_npm,
+            apt_policy=lookups.apt_policy,
+        ),
+    )
+    assert check_pins.main([]) == 2
+    err = capsys.readouterr().err
+    assert "LookupFailed" in err
+    # The registry's own answer, on both registries, not a bare exit status.
+    assert err.count("toomanyrequests: Rate exceeded") == 2

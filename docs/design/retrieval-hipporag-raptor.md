@@ -269,8 +269,9 @@ at HippoRAG commit `d5c8329`. The deliberate differences:
 | PPR over the whole graph | over a bounded neighbourhood of the seeds (`max_hops`, the expansion budget, `max_edges_per_vertex`) | a query reads a few store requests, not the corpus; the mass past `h` hops is at most `d^(h+1)` |
 | Recognition memory: an LLM filters the top facts | no filter | no query-time LLM call; the facts are fused hybrid hits |
 | Facts by dense similarity to triple embeddings, min-max over all facts | the top relationships-index hits by kNN (`fact_search_type`, lexical or hybrid on request), scores relative to the best | the relationship descriptions are the facts this index holds; the top `fact_top_k` alone are searched |
-| Passage weights from a dense score of every passage | the top `passage_seed_top_k` hybrid hits, min-max over them (the last hit resets with 0) | a bounded search; hybrid like every strategy here. Kept unfloored: the parity tests compare these weights with the original's on the same scores, and no run measured a floor |
-| PPR order alone ranks the passages | the PPR order and the passage hits are two fusion buckets, then the optional rerank | the hybrid fusion every strategy shares; `fusion_weights: {ppr_seed_text_units: 0}` and `rerank: false` come closest to the original |
+| Passage weights from a dense score of every passage | the top `passage_seed_top_k` hybrid hits, min-max over them (the last hit resets with 0) | a bounded search; hybrid like every strategy here. The parity tests give both sides every passage, so they check the weighting, not the cut to `passage_seed_top_k`; on synthetic graphs (300 passages) the cut, not the reset with 0, moved the top 5 (overlap 0.55 against the original's every-passage reset). Its effect on answers is unmeasured, as is a floor |
+| PPR order alone ranks the passages | the PPR order and the passage hits are two fusion buckets, then the optional rerank | the hybrid fusion every strategy shares; `fusion_weights: {ppr_seed_text_units: 0}` and `rerank: false` come closest to the original's passage ranking, though the context still holds the facts (next row) |
+| The answer reads passages only (`qa_top_k` 5) | the `ppr_facts` bucket's relationship descriptions reach the context beside the passages; `fact_top_k` is at least 1 and a `ppr_facts` weight of 0 keeps them, so no setting removes them | the facts are fused hits like every section here; unmeasured against passages only |
 | Synonymy edges between similar phrases | none | not a merge substitute: entity resolution (§4.2) joins only names with the same compact key, and similar names only with `processing.fuzzy_entity_resolution` (off by default), so near-synonyms stay separate entities linked only through shared passages; synonymy edges (kNN over entity name embeddings) are unmeasured |
 | Fact edge weight: the triples between two phrases | 1 per stored relationship (merged over its text units) | one relationship per pair and type after merging |
 | Every phrase links to its passages | not past `entity_frequency_threshold` units, seeds included | bounds the graph a hub entity would fill |
@@ -396,7 +397,8 @@ incremental run does, rather than every index of a full build.
 flip a tie):
 
 - *Reduce.* L2-normalize, center, project onto the top
-  `min(reduction_dims (10), n - 1)` principal axes (numpy SVD, each axis's
+  `min(reduction_dims (10), n - 1)` principal axes (an eigendecomposition of
+  the covariance with numpy, equivalent to an SVD of the centered points; each axis's
   largest loading made positive). This replaces UMAP.
 - *Partition one level.* `algorithm: kmeans` (default): Lloyd's iterations
   (at most 100), `k = ceil(n / target_children)` (6), hard assignments, an
@@ -665,7 +667,7 @@ Deviations from upstream, each deliberate:
 
 | # | Upstream | Here | Why |
 |---|---|---|---|
-| 1 | UMAP (unseeded) | PCA by numpy SVD, sign-fixed, rounded | determinism, no numba/llvmlite, scale (Zhou et al.: GMM with UMAP did not finish in two days on the largest sets) |
+| 1 | UMAP (unseeded) | PCA (numpy eigendecomposition of the covariance), sign-fixed, rounded | determinism, no numba/llvmlite, scale (Zhou et al.: GMM with UMAP did not finish in two days on the largest sets) |
 | 2 | GMM, BIC over 1..49 | `kmeans` by default; `gmm` with a bounded grid, `upstream` grid optional | scale, stability on deltas |
 | 3 | a one-node cluster is summarized | promoted without a call | no summary that only paraphrases one child |
 | 4 | the recursion resets the reduction, threshold and tokenizer to defaults | the recursion keeps the configured ones | an upstream quirk |
@@ -678,6 +680,8 @@ Deviations from upstream, each deliberate:
 | 10a | GMM and k-means start from scikit-learn's k-means++ | farthest-first from a hash-ranked sample of the node ids | a delta keeps most clusters, so their summaries are reused |
 | 11 | collapsed tree: cosine, `top_k` 10, 3,500 tokens | BM25 + kNN + graph signal, RRF, rerank, level quotas, passage expansion | hybrid-retrieval requirement; provenance |
 | 12 | an in-memory pickle, no updates | a stored index, rebuilt with reuse, fail-closed removal, filters, tenancy | production indexing |
+| 13 | 100-token summaries (`summarization_length`, `tree_builder.py`) | `max_summary_tokens` 300 | a cluster here holds the repository's longer chunks, up to 8,000 tokens (rows 5 and 6); unmeasured |
+| 14 | tree traversal, top-down level by level (`retrieve_information`, `collapse_tree=False`), beside the default collapsed tree | the collapsed tree only (`tree`) | the RAPTOR paper found the collapsed tree ahead on QASPER; one mode to fuse with the hybrid stack |
 
 Where the tree keeps its state: the leaf-set digest is read from the
 stored text units, not the registry, so the tree works without the
