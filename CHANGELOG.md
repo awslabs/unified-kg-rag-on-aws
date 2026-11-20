@@ -256,7 +256,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   most): an entity or community write batch closes at it or at `batch_size` items, whichever comes first.
 - Held-out evaluation: `prepare-benchmark` labels every row `metadata.split` (`tune`/`test`, the SHA-256 of its
   question id mod 2), `musique --split` draws one half, and `run-eval --split` answers one; `prepared.json` records
-  the draw (seed, sizes, split, sources' SHA-256) and the run manifest copies it (`dataset.prepared`).
+  the draw (seed, sizes, split, sources' SHA-256) and the dataset it describes, and the run manifest of that dataset
+  copies it (`dataset.prepared`).
 - The run manifest stores `answer_settings`, the map `retrieval_config_sha256` hashes; a refused pooling names the
   settings that differ.
 - Retrieval `ndcg_at_k` (binary relevance, log2 discount), and several cutoffs: `evaluation.retrieval_k` takes a

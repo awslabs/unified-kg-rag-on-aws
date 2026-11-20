@@ -562,6 +562,7 @@ def prepare(
             ],
             "counts": counts,
         },
+        dataset,
     )
     return counts
 

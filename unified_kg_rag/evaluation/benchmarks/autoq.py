@@ -1212,4 +1212,5 @@ def write_outputs(output_dir: Path, generated: dict[str, Any]) -> None:
             "package_version": __version__,
             **{k: v for k, v in report.items() if k not in ("dropped", "usage")},
         },
+        generated["rows"],
     )
