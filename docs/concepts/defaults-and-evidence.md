@@ -1178,15 +1178,15 @@ prepare-benchmark musique --output-directory bench/musique --limit 200 --seed 0
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
 # Two settings on the same index: run each config, then compare the saved runs.
-run-eval --data-path bench/musique/eval_data.json --suffix musique \
+run-eval --data-path bench/musique/eval_data.json --namespace musique \
   --search-strategy mix --repeats 2 --output-directory runs/base --config-path musique.yaml
-run-eval --data-path bench/musique/eval_data.json --suffix musique \
+run-eval --data-path bench/musique/eval_data.json --namespace musique \
   --search-strategy mix --repeats 2 --output-directory runs/vector --config-path vector.yaml \
   --baseline-results runs/base
 
 # Pairwise LLM judge across strategies, on your own question set, as the
 # sensemaking comparisons ran it (both split slots, every repeat).
-run-eval --data-path my_questions.json --suffix musique --search-strategy global,drift \
+run-eval --data-path my_questions.json --namespace musique --search-strategy global,drift \
   --repeats 2 --pairwise-judge --pairwise-mode differential --pairwise-repeats all \
   --config-path musique.yaml
 ```

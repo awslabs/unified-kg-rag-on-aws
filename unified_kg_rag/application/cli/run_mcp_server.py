@@ -60,6 +60,7 @@ from unified_kg_rag.application.cli.preflight import (
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
 )
+from unified_kg_rag.application.cli.query_args import add_namespace_argument
 from unified_kg_rag.application.cli.trusted_identity import header_name_argument
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval import graph_lookup
@@ -67,7 +68,6 @@ from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
     RetrieverRole,
-    validate_safe_name,
 )
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -85,13 +85,6 @@ logger = get_logger(__name__)
 TRANSPORTS = ("stdio", "streamable-http")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
-
-
-def _suffix(value: str) -> str:
-    try:
-        return validate_safe_name(value, "--suffix")
-    except ValueError as e:
-        raise argparse.ArgumentTypeError(str(e)) from e
 
 
 def _port(value: str) -> int:
@@ -113,15 +106,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
             "guides/mcp.md",
-            "run-mcp-server --config-path config.yaml --suffix default",
+            "run-mcp-server --config-path config.yaml --namespace default",
         ),
     )
-    parser.add_argument(
-        "--suffix",
-        type=_suffix,
-        help="Index namespace (suffix) to serve (default: the config's "
-        "processing.document_parsing.index_value, else 'default'); a tool "
-        "call may name another only if mcp.allowed_namespaces lists it",
+    add_namespace_argument(
+        parser,
+        "Namespace to serve (default: the config's "
+        "processing.document_parsing.namespace, else 'default'); a tool "
+        "call may name another only if mcp.allowed_namespaces lists it. "
+        "--suffix is its deprecated alias",
     )
     parser.add_argument(
         "--transport",
@@ -236,7 +229,7 @@ async def warn_of_missing_namespaces(
     chain: GraphRAGChain, namespaces: list[str]
 ) -> None:
     """WARN of each served namespace nothing was ingested under (a mistyped
-    ``--suffix``): the server starts, as one may be ingested while it runs,
+    ``--namespace``): the server starts, as one may be ingested while it runs,
     but every tool call on it fails until then."""
     for namespace in namespaces:
         try:
@@ -274,7 +267,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
         allowed_strategies=config.mcp.strategies,
     )
     try:
-        tools = KnowledgeGraphTools(chain, namespace=args.suffix)
+        tools = KnowledgeGraphTools(chain, namespace=args.namespace)
         await warn_of_missing_namespaces(chain, tools.namespaces)
         logger.info(
             "Serving namespace '%s' read-only over %s (tools: %s)",

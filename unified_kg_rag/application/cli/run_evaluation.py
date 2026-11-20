@@ -78,7 +78,7 @@ from unified_kg_rag.application.cli.provider_args import (
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
     positive_int,
-    query_suffix,
+    query_namespace,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.domain.models import (
@@ -759,7 +759,7 @@ class CommandLineInterface:
             "--arm",
             type=arm_spec,
             action="append",
-            metavar="NAME=OVERLAY[,suffix=SUFFIX][,aa=true]",
+            metavar="NAME=OVERLAY[,namespace=NAME][,aa=true]",
             help=(
                 "A configuration arm, repeatable: answer the dataset again with "
                 "the config under OVERLAY (a YAML mapping merged over it, as "
@@ -770,8 +770,8 @@ class CommandLineInterface:
                 "the arms' deltas are Holm-adjusted in families of their own "
                 "(arm_primary, arm_secondary, arm_cost, arm_pairwise), apart "
                 "from the strategies'. The run manifest records the overlay's "
-                "path and sha256. suffix= queries another index namespace with "
-                "the arm. An arm whose resolved config equals the run's (cache "
+                "path and sha256. namespace= (deprecated alias suffix=) queries "
+                "another namespace with the arm. An arm whose resolved config equals the run's (cache "
                 "sizes aside) on its own index, or one given aa=true, is an A/A "
                 "arm: its deltas are the noise floor, left out of Holm and of "
                 "--fail-if"
@@ -1574,7 +1574,7 @@ class EvaluationRunner:
         if not inspect.iscoroutinefunction(check):
             return
         pairs = dict.fromkeys(
-            (strategy, q.metadata.get("suffix"))
+            (strategy, q.metadata.get("namespace"))
             for q in queries
             for strategy in (
                 strategies
@@ -1903,7 +1903,7 @@ class EvaluationRunner:
             queries, ground_truths = self.evaluation_manager.load_data(
                 eval_data_path=eval_data_path,
                 base_metadata={
-                    "suffix": query_suffix(self.args, self.config),
+                    "namespace": query_namespace(self.args, self.config),
                     # A comparison sets each run's strategy itself (below).
                     "search_strategy": None if comparing else strategies[0],
                     "search_type": self.args.search_type,
@@ -1985,8 +1985,8 @@ class EvaluationRunner:
                 if strategy == CLOSED_BOOK_ARM
                 else {"search_strategy": strategy}
             )
-            if config_arm is not None and config_arm.get("suffix"):
-                arm["suffix"] = config_arm["suffix"]
+            if config_arm is not None and config_arm.get("namespace"):
+                arm["namespace"] = config_arm["namespace"]
             return [
                 q.model_copy(update={"metadata": {**q.metadata, **arm}})
                 for q in queries
@@ -2012,7 +2012,7 @@ class EvaluationRunner:
                     "name": arm["name"],
                     "overlay": arm["overlay"],
                     "overlay_sha256": overlay_sha256(arm),
-                    "suffix": arm.get("suffix"),
+                    "suffix": arm.get("namespace"),
                     # The base configuration unchanged: its deltas are the
                     # noise floor, not a finding (left out of Holm and gates).
                     "aa": self._aa_by_arm.get(arm["name"], False),
@@ -2125,10 +2125,10 @@ class EvaluationRunner:
             and extraction_settings(config) == extraction_settings(self.config)
         ):
             chain._extractions = shared
-        suffix = {"suffix": arm["suffix"]} if arm.get("suffix") else {}
+        namespace = {"namespace": arm["namespace"]} if arm.get("namespace") else {}
         await self._check_methodologies(
             [
-                q.model_copy(update={"metadata": {**q.metadata, **suffix}})
+                q.model_copy(update={"metadata": {**q.metadata, **namespace}})
                 for q in queries
             ],
             strategies,
@@ -2561,6 +2561,8 @@ _SAVED_EXPECTATIONS = (
 _RUN_METADATA = frozenset(
     {
         "search_strategy",
+        "namespace",
+        # A result saved before the namespace's rename.
         "suffix",
         "search_type",
         "top_k",

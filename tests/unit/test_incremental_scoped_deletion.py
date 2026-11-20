@@ -62,7 +62,7 @@ pytestmark = pytest.mark.unit
 def _config(index_value: str | None = None) -> Config:
     config = Config()
     config.providers.doc_status.enabled = True
-    config.processing.document_parsing.index_value = index_value
+    config.processing.document_parsing.namespace = index_value
     return config
 
 

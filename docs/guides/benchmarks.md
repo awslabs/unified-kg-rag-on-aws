@@ -49,7 +49,7 @@ prepare-benchmark musique --output-directory bench/musique --limit 100
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
 # 3. Paired comparison of GraphRAG and LightRAG strategies, EM / F1 on the short answer span.
-run-eval --data-path bench/musique/eval_data.json --suffix musique \
+run-eval --data-path bench/musique/eval_data.json --namespace musique \
   --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
 ```
 
@@ -58,7 +58,7 @@ with `musique.yaml` holding your usual config plus:
 ```yaml
 processing:
   document_parsing:
-    index_value: musique          # keep the benchmark out of your own index
+    namespace: musique            # keep the benchmark out of your own index
 evaluation:
   answer_span: extracted                 # EM / F1 on the short span the answer gives
   answer_normalization: official_squad   # MuSiQue's evaluation script normalization
@@ -81,11 +81,11 @@ their query ids.
 prepare-benchmark musique --output-directory bench/musique --limit 400
 
 # Choose a setting on the tune half...
-run-eval --data-path bench/musique/eval_data.json --suffix musique --split tune \
+run-eval --data-path bench/musique/eval_data.json --namespace musique --split tune \
   --search-strategy local --arm norerank=norerank.yaml --repeats 2 --config-path musique.yaml
 
 # ...and report the chosen one, once, on the test half.
-run-eval --data-path bench/musique/eval_data.json --suffix musique --split test \
+run-eval --data-path bench/musique/eval_data.json --namespace musique --split test \
   --search-strategy local --arm norerank=norerank.yaml --repeats 2 --config-path musique.yaml
 ```
 
@@ -153,7 +153,7 @@ prepare-benchmark musique --output-directory bench/unans \
   --hops 2=50,3=50,4=50 --unanswerable 150
 
 run-ingestion --source-directory bench/unans/corpus --config-path musique.yaml
-run-eval --data-path bench/unans/eval_data.json --suffix musique \
+run-eval --data-path bench/unans/eval_data.json --namespace musique \
   --search-strategy local,mix --config-path musique-mark.yaml
 ```
 
@@ -174,9 +174,9 @@ measure what misrouting costs. Nothing is downloaded or committed.
 ```bash
 prepare-benchmark structural --output-directory bench/structural --size medium --seed 0
 run-ingestion --config-path bench/structural/structural-config.yaml \
-  --source-directory bench/structural/corpus --suffix structural
+  --source-directory bench/structural/corpus --namespace structural
 run-eval --config-path bench/structural/structural-config.yaml \
-  --data-path bench/structural/eval_data.json --suffix structural \
+  --data-path bench/structural/eval_data.json --namespace structural \
   --search-strategy structured,local,mix --repeats 3
 ```
 

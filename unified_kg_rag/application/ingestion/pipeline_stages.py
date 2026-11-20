@@ -867,7 +867,7 @@ class DocumentLoadingStage(_RegistryStage):
     def _seed_documents(self) -> list[Document]:
         """The seed graphs' shard documents, identified like the corpus's:
         the run's index value, namespace and store tag."""
-        index_value = self.config.processing.document_parsing.index_value
+        index_value = self.config.processing.document_parsing.namespace
         documents = []
         for conversion in self.seed_conversions:
             for document in conversion.documents():
@@ -907,7 +907,7 @@ class DocumentLoadingStage(_RegistryStage):
         Raises:
             ConfirmationDeclinedError: The build is not confirmed.
         """
-        index_value = self.config.processing.document_parsing.index_value
+        index_value = self.config.processing.document_parsing.namespace
         suffix = resolve_namespace(self.config, None)
         if self._stores_hold_items(suffix) is False:
             logger.info(

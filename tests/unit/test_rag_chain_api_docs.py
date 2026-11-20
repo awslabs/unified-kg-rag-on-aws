@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
     ("obj", "phrases"),
     [
         (GraphRAGChain, ["close", "aclose", "search", "SearchOutput", "event loop"]),
-        (RAGInput, ["suffix", "index_value"]),
+        (RAGInput, ["namespace", "suffix", "processing.document_parsing.namespace"]),
         (RAGOutput, ["sources"]),
         (SearchOutput, ["search", "metadata"]),
         (GraphRAGChain.invoke, ["RAGOutput", "ainvoke"]),

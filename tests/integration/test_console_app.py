@@ -900,7 +900,7 @@ def test_a_rebuild_runs_in_one_job_without_the_integrity_question(
 ) -> None:
     # Its own namespace: a reset empties the one it runs in, and the
     # module's other tests read the demo corpus from the default one.
-    corpus = {"corpus": "uploads:rebuilt", "index_value": "rebuilt"}
+    corpus = {"corpus": "uploads:rebuilt", "namespace": "rebuilt"}
     files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
     assert _upload(client, "rebuilt", files).status_code == 200
     first = _wait(
@@ -933,7 +933,7 @@ def test_a_rebuild_then_an_added_file_ingests_in_one_run(
 ) -> None:
     # Rebuild (--reset), then Start over a changed corpus: the run after a
     # reset asks no integrity question. Its own namespace, as above.
-    own = {"index_value": "rebuilt-then"}
+    own = {"namespace": "rebuilt-then"}
     files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
     assert _upload(client, "rebuilt-then", files).status_code == 200
     first = _ingest(client, "uploads:rebuilt-then", **own)

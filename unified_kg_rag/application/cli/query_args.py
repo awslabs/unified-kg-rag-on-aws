@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import argparse
-from typing import get_args
+import sys
+from typing import Any, get_args
 
 from unified_kg_rag.application.cli.conventions import add_removed_flag
 from unified_kg_rag.domain.models import (
@@ -15,6 +16,10 @@ from unified_kg_rag.domain.models import (
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.config import EffortLevel
+from unified_kg_rag.domain.models.namespace import (
+    DEPRECATED_NAMESPACE_NAMES,
+    deprecated_namespace_warning,
+)
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 
@@ -29,26 +34,70 @@ def positive_int(value: str) -> int:
     return number
 
 
-def suffix_arg(value: str) -> str:
-    """An argparse ``type``: an index suffix, validated like ``index_value``."""
+def namespace_arg(value: str) -> str:
+    """An argparse ``type``: a namespace, validated as the config's is."""
     try:
-        return validate_safe_name(value, "--suffix")
+        return validate_safe_name(value, "--namespace")
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
 
 
-def query_suffix(args: argparse.Namespace, config: Config) -> str:
-    """The index suffix to query: ``--suffix``, else the config's
+class _NamespaceFlag(argparse.Action):
+    """``--namespace``, or its deprecated alias ``--suffix`` (a warning on
+    stderr): given twice, both must name the same namespace."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        given = str(values)
+        previous: str | None = getattr(namespace, self.dest)
+        if option_string in DEPRECATED_NAMESPACE_NAMES:
+            print(
+                f"{parser.prog}: warning: {deprecated_namespace_warning(option_string)}",
+                file=sys.stderr,
+            )
+        if previous is not None and previous != given:
+            parser.error(
+                f"'{previous}' and '{given}' name different namespaces; give "
+                "--namespace once"
+            )
+        setattr(namespace, self.dest, given)
+
+
+def add_namespace_argument(parser: Any, help: str) -> None:
+    """Add ``--namespace`` (``help``) and its deprecated alias ``--suffix``
+    (left out of ``--help``) to ``parser`` (or an argument group), both
+    into ``args.namespace``."""
+    parser.add_argument(
+        "--namespace", type=namespace_arg, action=_NamespaceFlag, help=help
+    )
+    for old, new in DEPRECATED_NAMESPACE_NAMES.items():
+        if new == "--namespace":
+            parser.add_argument(
+                old,
+                type=namespace_arg,
+                action=_NamespaceFlag,
+                dest="namespace",
+                help=argparse.SUPPRESS,
+            )
+
+
+def query_namespace(args: argparse.Namespace, config: Config) -> str:
+    """The namespace to query: ``--namespace``, else the config's
     (``resolve_namespace``)."""
-    given: str | None = getattr(args, "suffix", None)
+    given: str | None = getattr(args, "namespace", None)
     return resolve_namespace(config, given)
 
 
-def namespace_name(suffix: str | None, config: Config) -> str:
+def namespace_name(namespace: str | None, config: Config) -> str:
     """The index namespace a run writes or queries, as the CLIs print it:
-    the suffix (``default`` when unset) and ``indexing.additional_suffix``,
+    the namespace (``default`` when unset) and ``indexing.additional_suffix``,
     what every index name and graph label ends in."""
-    name = resolve_namespace(config, suffix)
+    name = resolve_namespace(config, namespace)
     if additional := config.indexing.additional_suffix:
         name = f"{name}-{additional}"
     return name
@@ -92,17 +141,17 @@ class _StrategyListOnce(argparse.Action):
 def add_query_arguments(
     parser: argparse.ArgumentParser, *, multiple_strategies: bool = False
 ) -> None:
-    """Add the index suffix, strategy, search type and width flags.
+    """Add the namespace, strategy, search type and width flags.
 
     With ``multiple_strategies`` (run-eval), ``--search-strategy`` takes a
     comma-separated list and parses to a list of names.
     """
-    parser.add_argument(
-        "--suffix",
-        type=suffix_arg,
-        help="Index suffix to query (default: the config's "
-        "processing.document_parsing.index_value, as ingestion writes, else "
-        "'default'); must match the index_value the corpus was ingested with",
+    add_namespace_argument(
+        parser,
+        "Namespace to query (default: the config's "
+        "processing.document_parsing.namespace, as ingestion writes, else "
+        "'default'); must match the namespace the corpus was ingested into. "
+        "--suffix is its deprecated alias",
     )
     efforts = get_args(EffortLevel)
     parser.add_argument(

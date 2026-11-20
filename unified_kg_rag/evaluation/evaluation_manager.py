@@ -181,7 +181,7 @@ def _rag_input_fields(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 _WARM_UP_KEYS = (
-    "suffix",
+    "namespace",
     "search_strategy",
     "search_type",
     "top_k",
@@ -1054,7 +1054,7 @@ class EvaluationManager:
             for query, sources in zip(queries, provenance, strict=True):
                 for files, unit_ids in sources:
                     if not files:
-                        pending[query.metadata.get("suffix")].update(unit_ids)
+                        pending[query.metadata.get("namespace")].update(unit_ids)
             for suffix, wanted in pending.items():
                 if not wanted:
                     continue
@@ -1073,7 +1073,7 @@ class EvaluationManager:
                         error=e,
                     )
         for query, result, sources in zip(queries, results, provenance, strict=True):
-            mapping = resolved.get(query.metadata.get("suffix"), {})
+            mapping = resolved.get(query.metadata.get("namespace"), {})
             result.retrieved_source_ids = [
                 files or self._files_by_support(unit_ids, mapping)
                 for files, unit_ids in sources
@@ -1812,7 +1812,10 @@ class EvaluationManager:
         if not isinstance(self.rag_chain, GraphRAGChain):
             return {}
         suffixes = sorted(
-            {resolve_namespace(self.config, q.metadata.get("suffix")) for q in queries}
+            {
+                resolve_namespace(self.config, q.metadata.get("namespace"))
+                for q in queries
+            }
         )
         builds: dict[str, dict[str, Any] | None] = {}
         for suffix in suffixes:

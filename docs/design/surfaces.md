@@ -103,7 +103,7 @@ whose every client may read the namespace) and keeps the port unreachable
 otherwise.
 
 **Scope.** The tenant scope is fixed when the server starts: the namespace
-is `--suffix`, else `processing.document_parsing.index_value` (as for
+is `--namespace`, else `processing.document_parsing.namespace` (as for
 `run-rag`), and `indexing.additional_suffix` comes from the config. A tool
 call can name another namespace only if `mcp.allowed_namespaces` lists it
 (the tools then take a `namespace` argument; without the list they have

@@ -275,7 +275,7 @@ async def test_a_query_a_host_gave_up_on_writes_one_record(audit: _Captured) -> 
     chain = _simple_chain()
     try:
         chain.record_unrun_query(
-            {"search_strategy": "simple", "suffix": None},
+            {"search_strategy": "simple", "namespace": None},
             QueryTimeoutError("past the deadline", timeout_seconds=1),
             started=0.0,
         )

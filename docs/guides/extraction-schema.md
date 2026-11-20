@@ -30,7 +30,7 @@ and with an entity go the unit's relationships naming it. Start with
 `align`, look at what falls outside the schema (`filters={"in_schema":
 False}`, [below](#filters)), widen the schema, and switch to `strict` only when little
 falls outside. To measure the cost on your questions, ingest the corpus
-under two index suffixes (one per mode, [Index suffix](../concepts/scopes-and-namespaces.md#index-suffix)) and
+under two namespaces (one per mode, [Namespace](../concepts/scopes-and-namespaces.md#namespace)) and
 run the same `run-eval` dataset against each.
 
 ## Declaring the schema
@@ -203,7 +203,7 @@ whether the model sees the change
   (`"GENE: A gene"` or `{label: GENE, description: A gene}`; a pattern as a
   string or a mapping). Nothing is extracted or embedded again. The run
   rewrites `in_schema`, `type_iri` and `predicate_iri` of every stored
-  entity and relationship of the index suffix, of every scope, from their
+  entity and relationship of the namespace, of every scope, from their
   stored types, and logs one INFO line with the counts; the stores then
   hold what a full build writes. The registry records which annotations
   the stores of each index namespace hold, once for all its scopes: the

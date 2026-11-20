@@ -243,7 +243,7 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   게이트웨이를 두세요([MCP: HTTP와 원격 배포](../guides/mcp.ko.md#http와-원격-배포)).
 - **필터는 접근 제어가 아닙니다**
   ([범위와 네임스페이스](./scopes-and-namespaces.ko.md#접근-제어-경계가-아님)).
-  테넌트는 인덱스 접미사로 분리하세요.
+  테넌트는 네임스페이스로 분리하세요.
 - **기본 제공 백엔드.** 모델: Bedrock(기본값), Ollama, OpenAI 호환 서버. 재순위화:
   Bedrock이나 sentence-transformers 크로스 인코더([Local mode](../guides/local-mode.md), 영문).
   저장소: Neptune(또는 Gremlin Server)과 OpenSearch, 또는 내장 SQLite 저장소(호스트 한
@@ -268,7 +268,7 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   문서 하나의 청크 ID가 400KB 항목 하나에 들어가야 합니다([*문서 크기 한도*](../guides/incremental.ko.md#문서-크기-한도)).
 - **동시 실행에는 레지스트리가 필요합니다.** 레지스트리의 쓰기 임대(lease)가 한
   네임스페이스의 두 번째 실행을 멈춥니다. 레지스트리가 없거나 `IncrementalIndexer`
-  API를 직접 쓰면 잠그는 장치가 없어, 같은 접미사의 수집 두 개가 서로의 인덱스를 지울
+  API를 직접 쓰면 잠그는 장치가 없어, 같은 네임스페이스의 수집 두 개가 서로의 인덱스를 지울
   수 있습니다([동시 실행](../operations.md#concurrent-runs), 영문).
 - **태스크를 죽이는 문서를 가려내려면 여러 번 실행해야 합니다**([*격리된 문서*](../guides/incremental.ko.md#격리된-문서)). 함께
   죽은 문서 `n`개 가운데 원인 문서 하나에 대략 `log2(n) + 1`번이 걸리고, 그동안 미룬

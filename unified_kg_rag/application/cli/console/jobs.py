@@ -377,7 +377,7 @@ class JobManager:
         corpus: Path,
         corpus_ref: str,
         methodologies: list[str] | None = None,
-        index_value: str | None = None,
+        namespace: str | None = None,
         force_rebuild: bool = False,
         reset: bool = False,
         confirm_reset: bool = False,
@@ -400,19 +400,20 @@ class JobManager:
         Raises:
             JobConflict: A job runs in the namespace.
             NarrowingNotConfirmed: It narrows the namespace, unconfirmed.
-            InvalidArgumentError: An unknown methodology or a bad index value.
+            InvalidArgumentError: An unknown methodology or a bad namespace.
         """
         config, chosen = ingest_config(self.load_config(), methodologies)
         env: dict[str, str] = {}
         if chosen:
             env["UKR__INDEXING__METHODOLOGIES"] = json.dumps(chosen)
-        if index_value:
+        chosen_namespace = namespace
+        if chosen_namespace:
             try:
-                index_value = validate_safe_name(index_value, "index value")
+                chosen_namespace = validate_safe_name(chosen_namespace, "namespace")
             except ValueError as e:
                 raise InvalidArgumentError(str(e)) from e
-            env["UKR__PROCESSING__DOCUMENT_PARSING__INDEX_VALUE"] = index_value
-        namespace = resolve_namespace(config, index_value)
+            env["UKR__PROCESSING__DOCUMENT_PARSING__NAMESPACE"] = chosen_namespace
+        namespace = resolve_namespace(config, chosen_namespace)
         if not confirm_narrowing:
             await self._check_narrowing(namespace, config)
         job_id = self._new_id()
@@ -426,7 +427,7 @@ class JobManager:
                 corpus,
                 corpus_ref,
                 methodologies,
-                index_value,
+                chosen_namespace,
                 force_rebuild,
                 reset,
                 confirm_reset,
@@ -466,7 +467,7 @@ class JobManager:
         corpus: Path,
         corpus_ref: str,
         methodologies: list[str] | None,
-        index_value: str | None,
+        chosen_namespace: str | None,
         force_rebuild: bool,
         reset: bool,
         confirm_reset: bool,
@@ -507,7 +508,7 @@ class JobManager:
                 "corpus": corpus_ref,
                 "methodologies": methodologies
                 or [m.value for m in config.effective_methodologies],
-                "index_value": index_value,
+                "namespace": chosen_namespace,
                 "force_rebuild": force_rebuild,
                 "reset": reset,
                 "confirm_reset": confirm_reset,

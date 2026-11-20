@@ -25,7 +25,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Explanation | [Overview](./concepts/overview.md) | Architecture, pipeline, the methodologies and their profiles, what the framework adds beyond the papers, limitations |
 | Explanation | [Defaults and evidence](./concepts/defaults-and-evidence.md) | The measured defaults, how they were measured, dated prices, how to reproduce |
 | Explanation | [Design Doc](./design.md) | The index of the design sections, each with a summary; the sections themselves (hexagonal architecture, algorithms, data model) are in `docs/design/` |
-| Explanation | [Retrieval](./concepts/retrieval.md), [Scopes and namespaces](./concepts/scopes-and-namespaces.md) | The search strategies and when to use which, hybrid scoring and rerank, answer style, context budget; index suffix, source scope, namespace, and why neither the suffix nor filters are access control |
+| Explanation | [Retrieval](./concepts/retrieval.md), [Scopes and namespaces](./concepts/scopes-and-namespaces.md) | The search strategies and when to use which, hybrid scoring and rerank, answer style, context budget; namespace, source scope, namespace, and why neither the suffix nor filters are access control |
 | How-to | [`iac/README.md`](../iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
 | How-to | [Local mode](./guides/local-mode.md), [Configuration](./guides/configure.md) | Local providers, differences from AWS mode, stores in containers; how configuration loads, the settings most runs change, environment variables, what the logs contain |
 | How-to | [Ingestion](./guides/ingest.md), [Multilingual corpora](./guides/multilingual.md), [Querying](./guides/query.md), [Structured graph queries](./guides/structured-queries.md) | The 13 stages, resume and force-rebuild, S3 sync, the response cache, large corpora and cost levers; translation, analyzers and chunk sizes for CJK text; running queries, filters, rerank status, the query deadline, interactive mode and memory; counts, rankings and paths computed by the graph store |
@@ -92,9 +92,9 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Gleaning | Extra extraction rounds that ask the model what the first pass missed |
 | Community, community report | A Leiden cluster of entities, and the LLM-written summary that `global` and `drift` read |
 | Methodology, strategy | GraphRAG, LightRAG, HippoRAG 2 or RAPTOR (what an index holds, `indexing.methodologies`), and the concrete retrieval algorithm (`local`, `mix`, `ppr`, ...) chosen per query |
-| Index suffix | The `<suffix>` in every index and graph label name `<prefix>-<suffix>`, from `processing.document_parsing.index_value` (`indexing.additional_suffix`, when set, is appended after it and is part of the namespace); one per tenant or corpus version |
+| Namespace | The `<namespace>` in every index and graph label name `<prefix>-<namespace>`, from `processing.document_parsing.namespace` or `--namespace` (`indexing.additional_suffix`, when set, is appended after it); one per tenant or corpus version. Formerly the index suffix (`--suffix`) or index value |
 | Doc-status registry | The DynamoDB (or SQLite) table of each document's hash and text units that makes ingestion incremental |
-| Namespace | The index suffix plus `indexing.additional_suffix` and a tag of non-default index or label prefixes, and so the indexes it names; one writing run per namespace at a time (a write lease). Messages call it the index namespace |
+| Index namespace | The namespace plus `indexing.additional_suffix` and a tag of non-default index or label prefixes, and so the indexes it names; one writing run per index namespace at a time (a write lease) |
 | Source scope | The corpus source a run diffs and deletes within (by default the source directory); document and text-unit ids derive from it |
 | Quarantine | A document set aside after runs repeatedly died processing it; skipped until its file changes or the limit is raised |
 | Seed graph | A knowledge graph you already have, merged into the extracted one as virtual documents |

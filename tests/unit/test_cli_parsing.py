@@ -422,7 +422,7 @@ async def test_rag_runner_leaves_the_target_language_to_the_chain(
     ("flags", "index_value", "expected"),
     [
         ([], "corpus-a", "corpus-a"),
-        (["--suffix", "other"], "corpus-a", "other"),
+        (["--namespace", "other"], "corpus-a", "other"),
         ([], None, "default"),
     ],
     ids=["config-index-value", "flag-wins", "neither"],
@@ -430,10 +430,10 @@ async def test_rag_runner_leaves_the_target_language_to_the_chain(
 async def test_rag_runner_queries_the_configs_index_value(
     store_config, mocker, flags: list[str], index_value: str | None, expected
 ) -> None:
-    # Regression: run-rag ignored processing.document_parsing.index_value and
+    # Regression: run-rag ignored processing.document_parsing.namespace and
     # queried 'default' (no indices found) unless --suffix repeated it.
     config = store_config.model_copy(deep=True)
-    config.processing.document_parsing.index_value = index_value
+    config.processing.document_parsing.namespace = index_value
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     patch_chain(mocker, return_value=mocker.AsyncMock())
@@ -448,7 +448,7 @@ async def test_rag_runner_queries_the_configs_index_value(
     await runner.run()
 
     (rag_input,) = run_query.call_args.args
-    assert rag_input.suffix == expected
+    assert rag_input.namespace == expected
 
 
 @pytest.mark.parametrize(
@@ -466,7 +466,7 @@ def test_rag_runner_suffix_line_names_the_additional_suffix(
     # The line shows what the store names end in: the additional suffix was
     # left out whenever a suffix was given or configured.
     config = store_config.model_copy(deep=True)
-    config.processing.document_parsing.index_value = index_value
+    config.processing.document_parsing.namespace = index_value
     config.indexing.additional_suffix = "v2"
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     runner = run_rag_chain.RAGChainRunner(
@@ -1142,16 +1142,20 @@ def test_eval_runner_existing_file_ok(config, mocker, tmp_path) -> None:
 
 @pytest.mark.parametrize(
     ("flags", "expected"),
-    [([], "corpus-a"), (["--suffix", "other"], "other")],
-    ids=["config-index-value", "flag-wins"],
+    [
+        ([], "corpus-a"),
+        (["--namespace", "other"], "other"),
+        (["--suffix", "other"], "other"),
+    ],
+    ids=["config-namespace", "flag-wins", "deprecated-flag-wins"],
 )
-async def test_eval_runner_queries_the_configs_index_value(
+async def test_eval_runner_queries_the_configs_namespace(
     config, mocker, tmp_path, flags: list[str], expected: str
 ) -> None:
-    # Regression: run-eval ignored processing.document_parsing.index_value
+    # Regression: run-eval ignored processing.document_parsing.namespace
     # and every query failed with "No indices found for suffix default".
     config = config.model_copy(deep=True)
-    config.processing.document_parsing.index_value = "corpus-a"
+    config.processing.document_parsing.namespace = "corpus-a"
     # An LLM-free evaluator: the default judges need the eval extra.
     config.evaluation.enabled_evaluators = [EvaluatorType.RETRIEVAL]
     data = tmp_path / "eval.json"
@@ -1167,7 +1171,7 @@ async def test_eval_runner_queries_the_configs_index_value(
     with pytest.raises(run_evaluation.InvalidDatasetError):
         await runner._answer_and_score(None, tmp_path, tmp_path, None)
 
-    assert load.call_args.kwargs["base_metadata"]["suffix"] == expected
+    assert load.call_args.kwargs["base_metadata"]["namespace"] == expected
 
 
 def test_eval_parser_max_failure_rate_default_and_range() -> None:
@@ -2077,14 +2081,14 @@ def test_prompt_tuning_main_no_texts_returns_1(config, mocker, tmp_path) -> None
 
 def test_visualization_parser_finds_the_newest_export_without_a_data_path() -> None:
     args = run_visualization._build_parser().parse_args([])
-    assert args.data_path is None and args.suffix is None
+    assert args.data_path is None and args.namespace is None
     assert args.cache_directory == Path("cache")
     assert (
-        run_visualization._build_parser().parse_args(["--suffix", "t-1"]).suffix
+        run_visualization._build_parser().parse_args(["--namespace", "t-1"]).namespace
         == "t-1"
     )
     with pytest.raises(SystemExit):
-        run_visualization._build_parser().parse_args(["--suffix", "../x"])
+        run_visualization._build_parser().parse_args(["--namespace", "../x"])
 
 
 def test_visualization_without_a_data_path_reads_the_namespace_s_stores(
@@ -2450,23 +2454,23 @@ def test_help_epilog_shows_an_example_and_a_live_doc_section(parser, command) ->
     assert unquote(fragment) in check_docs().fragments(page), f"{command}: {url}"
 
 
-@pytest.mark.parametrize("suffix", ["Bad", "a/b", "a,b", "x*", ""])
-def test_an_invalid_suffix_is_a_usage_error(suffix: str) -> None:
+@pytest.mark.parametrize("namespace", ["Bad", "a/b", "a,b", "x*", ""])
+def test_an_invalid_namespace_is_a_usage_error(namespace: str) -> None:
     # Before, it was accepted and every query failed (exit 1).
     eval_parser = run_evaluation.CommandLineInterface._setup_arguments()
     for parser, args in (
         (_rag_parser(), ["--query", "q"]),
         (eval_parser, ["--data-path", "eval.json"]),
     ):
-        assert parser.parse_args([*args, "--suffix", "ok"]).suffix == "ok"
+        assert parser.parse_args([*args, "--namespace", "ok"]).namespace == "ok"
         with pytest.raises(SystemExit) as exc:
-            parser.parse_args([*args, "--suffix", suffix])
+            parser.parse_args([*args, "--namespace", namespace])
         assert exc.value.code == 2
 
 
-def test_a_valid_suffix_is_kept() -> None:
+def test_a_valid_namespace_is_kept() -> None:
     assert (
-        _rag_parser().parse_args(["--query", "q", "--suffix", "tenant-a"]).suffix
+        _rag_parser().parse_args(["--query", "q", "--namespace", "tenant-a"]).namespace
         == "tenant-a"
     )
 

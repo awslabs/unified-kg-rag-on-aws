@@ -26,17 +26,17 @@ from unified_kg_rag.domain.retrieval.store_names import (
 pytestmark = pytest.mark.unit
 
 
-# An ad-hoc fallback to the default suffix or to the config's index_value.
+# An ad-hoc fallback to the default namespace or to the config's namespace.
 _COPIES = re.compile(
     r"\bor\s*\(?\s*(Constants\.DEFAULT_SUFFIX|DEFAULT_NAMESPACE|[\"']default[\"'])"
-    r"|document_parsing\.index_value\s*\)?\s*or\b"
-    r"|\bor\s+[\w.]*document_parsing\.index_value"
+    r"|document_parsing\.namespace\s*\)?\s*or\b"
+    r"|\bor\s+[\w.]*document_parsing\.namespace"
 )
 
 
 def _config(index_value: str | None) -> Config:
     config = Config()
-    config.processing.document_parsing.index_value = index_value
+    config.processing.document_parsing.namespace = index_value
     return config
 
 
@@ -82,8 +82,8 @@ def test_the_copy_pattern_catches_the_old_forms() -> None:
     # The pin of the grep: each form the copies took is matched.
     for form in (
         "suffix or Constants.DEFAULT_SUFFIX.value",
-        "x = (\n    suffix\n    or config.processing.document_parsing.index_value\n)",
-        "config.processing.document_parsing.index_value\n    or default",
+        "x = (\n    suffix\n    or config.processing.document_parsing.namespace\n)",
+        "config.processing.document_parsing.namespace\n    or default",
         'item.get("suffix") or "default"',
         "suffix or DEFAULT_NAMESPACE",
     ):

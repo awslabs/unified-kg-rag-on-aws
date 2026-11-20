@@ -327,7 +327,7 @@ async def text_unit_file_names(
 class NamespaceDescription(methodology_check.NamespaceSummary):
     """What one index namespace holds and how it can be searched."""
 
-    namespace: str = Field(description="The namespace (index suffix)")
+    namespace: str = Field(description="The namespace")
     build: dict[str, Any] | None = Field(
         default=None,
         description="The last ingestion run's record (pipeline_id, mode, "

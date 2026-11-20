@@ -403,7 +403,7 @@ def test_a_variable_naming_no_key_is_unknown(name: str) -> None:
     "section",
     [
         {"indexing": {"additional_suffix": "{}"}},
-        {"processing": {"document_parsing": {"index_value": "{}"}}},
+        {"processing": {"document_parsing": {"namespace": "{}"}}},
     ],
 )
 @pytest.mark.parametrize("value", ["V2", "a.b", "x*", "a,b"])
@@ -425,7 +425,7 @@ def test_an_index_name_part_that_opensearch_rejects_fails_at_load(
 
 @pytest.mark.parametrize(
     ("section", "field"),
-    [("indexing", "additional_suffix"), ("document_parsing", "index_value")],
+    [("indexing", "additional_suffix"), ("document_parsing", "namespace")],
 )
 def test_an_index_name_part_set_in_code_is_checked_too(
     section: str, field: str

@@ -27,7 +27,7 @@
 | 설명 | [개요](./concepts/overview.ko.md) | 아키텍처, 파이프라인, 방법론과 프로필, 원 논문 대비 확장한 부분, 제한 사항 |
 | 설명 | [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) | 측정으로 정한 기본값, 측정 방법, 날짜를 밝힌 가격, 재현 방법 |
 | 설명 | [설계 문서](./design.md)(영문) | 설계 문서의 절마다 요약을 단 목차. 절 본문(헥사고날 아키텍처, 알고리즘, 데이터 모델)은 `docs/design/`에 있음 |
-| 설명 | [검색](./concepts/retrieval.ko.md), [범위와 네임스페이스](./concepts/scopes-and-namespaces.ko.md) | 검색 전략과 언제 어떤 전략을 쓸지, 하이브리드 점수와 재순위화, 답변 형식, 컨텍스트 예산. 인덱스 접미사, 소스 범위, 네임스페이스, 접미사와 필터가 접근 제어가 아닌 이유 |
+| 설명 | [검색](./concepts/retrieval.ko.md), [범위와 네임스페이스](./concepts/scopes-and-namespaces.ko.md) | 검색 전략과 언제 어떤 전략을 쓸지, 하이브리드 점수와 재순위화, 답변 형식, 컨텍스트 예산. 네임스페이스, 소스 범위, 네임스페이스, 네임스페이스와 필터가 접근 제어가 아닌 이유 |
 | 사용 방법 | [`iac/README.md`](../iac/README.md)(영문) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
 | 사용 방법 | [Local mode](./guides/local-mode.md)(영문), [설정](./guides/configure.ko.md) | 로컬 공급자, AWS 모드와 다른 점, 컨테이너로 띄운 저장소. 설정을 읽는 순서, 대부분의 실행에서 바꾸는 설정, 환경 변수, 로그에 남는 내용 |
 | 사용 방법 | [수집](./guides/ingest.ko.md), [다국어 코퍼스](./guides/multilingual.ko.md), [질의](./guides/query.ko.md), [구조화 그래프 질의](./guides/structured-queries.ko.md) | 13개 단계, 재개와 강제 재구축, S3 동기화, 응답 캐시, 대규모 코퍼스와 비용 조절 수단. 번역, 분석기, CJK 텍스트의 청크 크기. 질의 실행, 필터, 재순위화 상태, 질의 제한 시간, 대화형 모드와 메모리. 그래프 저장소가 계산하는 개수, 순위, 경로 |
@@ -96,9 +96,9 @@
 | 글리닝(gleaning) | 첫 추출에서 빠진 것을 모델에 다시 묻는 추가 추출 라운드 |
 | 커뮤니티(community), 커뮤니티 리포트(community report) | 엔티티를 Leiden으로 묶은 군집과, `global`과 `drift`가 읽는 LLM 작성 요약 |
 | 방법론(methodology), 전략(strategy) | GraphRAG, LightRAG, HippoRAG 2, RAPTOR 중 하나(인덱스가 가진 것, `indexing.methodologies`), 그리고 질의마다 고르는 실제 검색 알고리즘(`local`, `mix`, `ppr` 등) |
-| 인덱스 접미사(index suffix) | 모든 인덱스와 그래프 레이블 이름 `<prefix>-<suffix>`의 `<suffix>` 부분. `processing.document_parsing.index_value`에서 옴(`indexing.additional_suffix`를 지정하면 그 뒤에 붙으며 네임스페이스에 포함됨). 테넌트나 코퍼스 버전마다 하나 |
+| 네임스페이스(namespace) | 모든 인덱스와 그래프 레이블 이름 `<prefix>-<namespace>`의 `<namespace>` 부분. `processing.document_parsing.namespace`나 `--namespace`에서 옴(`indexing.additional_suffix`를 지정하면 그 뒤에 붙음). 테넌트나 코퍼스 버전마다 하나. 예전 이름은 인덱스 접미사(`--suffix`)와 인덱스 값 |
 | 문서 상태 레지스트리(doc-status registry) | 문서마다 해시와 텍스트 단위를 기록해 증분 수집을 가능하게 하는 DynamoDB(또는 SQLite) 테이블 |
-| 네임스페이스(namespace) | 인덱스 접미사에 `indexing.additional_suffix`와 기본값이 아닌 인덱스·레이블 접두사의 태그를 더한 것, 그리고 그 이름이 가리키는 인덱스 묶음. 한 번에 한 실행만 쓸 수 있음(쓰기 임대(lease)). 메시지에서는 index namespace라고 부름 |
+| 인덱스 네임스페이스(index namespace) | 네임스페이스에 `indexing.additional_suffix`와 기본값이 아닌 인덱스·레이블 접두사의 태그를 더한 것, 그리고 그 이름이 가리키는 인덱스 묶음. 한 번에 한 실행만 쓸 수 있음(쓰기 임대(lease)) |
 | 소스 범위(source scope) | 실행이 비교하고 삭제하는 코퍼스 출처(기본값은 소스 디렉터리). 문서 ID와 텍스트 단위 ID가 여기서 나옴 |
 | 격리(quarantine) | 처리하다 실행이 거듭 죽은 문서를 따로 둔 상태. 파일이 바뀌거나 한도를 올릴 때까지 건너뜀 |
 | 시드 그래프(seed graph) | 이미 가진 지식 그래프. 가상 문서로 추출 그래프에 병합 |

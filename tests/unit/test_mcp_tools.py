@@ -266,7 +266,7 @@ async def test_an_allowlisted_namespace_is_served() -> None:
 
 def test_the_served_namespace_follows_the_config() -> None:
     config = Config()
-    config.processing.document_parsing.index_value = "corpus_a"
+    config.processing.document_parsing.namespace = "corpus_a"
     tools = KnowledgeGraphTools(FakeChain(config))  # type: ignore[arg-type]
     assert tools.namespace == "corpus_a"
     tools = KnowledgeGraphTools(FakeChain(config), namespace="corpus_b")  # type: ignore[arg-type]

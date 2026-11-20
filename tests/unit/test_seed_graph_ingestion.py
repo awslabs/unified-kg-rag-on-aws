@@ -684,7 +684,7 @@ def test_registry_off_seeds_alone_over_an_index_ask_first(
 
 def test_registry_off_confirmation_names_the_namespace(mocker) -> None:
     stage, _ = _registry_off_stage(mocker, graph=True)
-    stage.config.processing.document_parsing.index_value = "tenant"
+    stage.config.processing.document_parsing.namespace = "tenant"
     stage.config.indexing.additional_suffix = "v2"
     asked: list[str] = []
     stage.confirm = lambda q: asked.append(q) or True
@@ -1032,7 +1032,7 @@ def test_loading_appends_the_seed_documents_after_deduplication(
 ) -> None:
     config = Config()
     config.processing.deduplicate = True
-    config.processing.document_parsing.index_value = "tenant1"
+    config.processing.document_parsing.namespace = "tenant1"
     conversion = _conversion(shards=2)
     stage = ps.DocumentLoadingStage(
         config,

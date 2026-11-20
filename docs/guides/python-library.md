@@ -57,8 +57,8 @@ script would run its ingestion again in every worker. A notebook needs no
 guard.
 
 - `RAGInput` takes the `run-rag` options as fields (`search_strategy`,
-  `search_type` (unset: `search.search_type`), `top_k`, `suffix`
-  ([index suffix](../concepts/scopes-and-namespaces.md#index-suffix)),
+  `search_type` (unset: `search.search_type`), `top_k`, `namespace`
+  ([namespace](../concepts/scopes-and-namespaces.md#namespace)),
   `filters`, `conversation_id`, `use_memory`, `history`, `target_language`);
   a plain dict works too. An unknown key is refused (a dict's with
   `InvalidArgumentError`), not ignored. `RAGInput(...)` raises pydantic's
@@ -147,14 +147,14 @@ if __name__ == "__main__":
   namespace as a file named by its id, with `source_scope` the documents'
   scope (`"api"`): it reuses the stored extractions, but deletes a
   document it does not read (an id without a file extension the parser
-  reads). A namespace of its own (`index_value`) extracts them again.
+  reads). A namespace of its own (`namespace`) extracts them again.
 
 ## Inspect and export a namespace
 
-`describe_namespace(config, suffix)` returns what an index namespace holds
+`describe_namespace(config, namespace)` returns what a namespace holds
 (methodologies, servable strategies, indices with their item counts and
 embedding model, the build record, the registry's records by status), and
-`export_graph(config, path, suffix=..., format="jsonl" | "graphml")`
+`export_graph(config, path, namespace=..., format="jsonl" | "graphml")`
 streams its graph with the provenance of every item to a file (an existing
 file only with `overwrite=True`); both read
 the stores only. `run-describe` prints them

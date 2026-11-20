@@ -8,7 +8,7 @@ off.
 ## Trace shape
 
 Every span of a query or an ingestion run carries `kg_rag.namespace`, the
-index suffix it reads or writes (the tenant boundary), so a trace backend
+namespace it reads or writes (the tenant boundary), so a trace backend
 filters by it.
 
 | Span | Parent | Attributes |

@@ -7,7 +7,7 @@ conversation. Pick a strategy with `--search-strategy` (default `auto`, an LLM
 router); every answer returns the sources the answer model actually saw.
 Which strategy to pick, and how answers are shaped:
 [Retrieval](../concepts/retrieval.md). Which indexes a query reads:
-[Index suffix](../concepts/scopes-and-namespaces.md#index-suffix).
+[Namespace](../concepts/scopes-and-namespaces.md#namespace).
 
 Every flag with its default: [CLI Reference](../reference/cli.md#run-rag).
 
@@ -624,7 +624,7 @@ Conversation memory lives in the process (`MemoryManager`, limits in the
 
 - It carries over between the turns of one session, or between calls of one
   `GraphRAGChain` reusing a `conversation_id` with `use_memory=True` and the
-  same `suffix` and `user_id` (other tenants' or users' turns never reach
+  same `namespace` and `user_id` (other tenants' or users' turns never reach
   it). Chains share it only through one `MemoryManager(config)` passed as
   `memory_manager=`.
 - Separate `run-rag --query` invocations start with no history, so

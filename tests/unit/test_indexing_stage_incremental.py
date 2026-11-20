@@ -327,7 +327,7 @@ def test_deletion_only_run_checks_the_configured_suffix(mocker) -> None:
     store = FakeDocStatusStore()
     _seed_registry(store, suffix="tenant1")
     manager = _RecordingManager()
-    manager.config.processing.document_parsing.index_value = "tenant1"
+    manager.config.processing.document_parsing.namespace = "tenant1"
     checked: list[str | None] = []
     manager.vector_indexer = SimpleNamespace(
         check_index_settings=checked.append,
@@ -623,11 +623,11 @@ def test_records_the_build_on_each_written_suffix(
 
 def test_delete_only_run_records_its_configured_suffix(mocker) -> None:
     manager = _RecordingManager()
-    manager.config.processing.document_parsing.index_value = "tenant1"
+    manager.config.processing.document_parsing.namespace = "tenant1"
     recorded: list[str | None] = []
     manager.vector_indexer.record_build = lambda record, suffix: recorded.append(suffix)
     stage = _stage(mocker, FakeDocStatusStore(), manager)
-    stage.config.processing.document_parsing.index_value = "tenant1"
+    stage.config.processing.document_parsing.namespace = "tenant1"
     stage._record_build(_context(DocumentDelta(deleted=["x"]), []), [])
     assert recorded == ["tenant1"]
 

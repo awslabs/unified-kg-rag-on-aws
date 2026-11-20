@@ -62,7 +62,10 @@ from unified_kg_rag.application.cli.preflight import (
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
 )
-from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
+from unified_kg_rag.application.cli.query_args import (
+    add_namespace_argument,
+    namespace_name,
+)
 from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
 from unified_kg_rag.application.ingestion.pipeline_manager import INTEGRITY_QUESTIONS
 from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
@@ -173,7 +176,7 @@ def _methodology_list(value: str) -> list[str]:
 
 
 def apply_namespace_arguments(config: Config, args: argparse.Namespace) -> Config:
-    """``config`` with ``--suffix``, ``--methodologies`` and ``--reset``
+    """``config`` with ``--namespace``, ``--methodologies`` and ``--reset``
     applied (validated as the config file's keys are); ``config`` itself
     when none is given.
 
@@ -182,8 +185,8 @@ def apply_namespace_arguments(config: Config, args: argparse.Namespace) -> Confi
             methodology, a selection a switch leaves nothing of).
     """
     changes: dict[str, Any] = {}
-    if suffix := getattr(args, "suffix", None):
-        changes["processing.document_parsing.index_value"] = suffix
+    if chosen := getattr(args, "namespace", None):
+        changes["processing.document_parsing.namespace"] = chosen
     if methodologies := getattr(args, "methodologies", None):
         changes["indexing.methodologies"] = methodologies
     if getattr(args, "reset", False):
@@ -432,12 +435,11 @@ class CommandLineInterface:
             "index namespace",
             "Override what the run writes; each flag applies to this run only.",
         )
-        namespace.add_argument(
-            "--suffix",
-            type=suffix_arg,
-            help="Index suffix (namespace) the run writes: "
-            "processing.document_parsing.index_value (default: the config's, "
-            "else 'default'). Query it with run-rag/run-eval --suffix",
+        add_namespace_argument(
+            namespace,
+            "Namespace the run writes: processing.document_parsing.namespace "
+            "(default: the config's, else 'default'). Query it with "
+            "run-rag/run-eval --namespace. --suffix is its deprecated alias",
         )
         namespace.add_argument(
             "--methodologies",
@@ -569,7 +571,7 @@ class IngestionPipelineRunner:
             )
 
         parsing = self.config.processing.document_parsing
-        namespace = namespace_name(parsing.index_value, self.config)
+        namespace = namespace_name(parsing.namespace, self.config)
         info_lines.extend(
             [
                 f"[dim]Index Namespace:[/dim] '{markup_safe(namespace)}'",
@@ -972,7 +974,7 @@ class IngestionPipelineRunner:
                 "The embedding dimension does not match the index: set "
                 "models.embedding.dimension (--embedding-dimension) to what "
                 "the embedding model returns, or ingest into a new namespace "
-                "(--suffix) or with --reset. "
+                "(--namespace) or with --reset. "
             )
         return (
             f"{step}Fix the cause, then rerun with --pipeline-id "

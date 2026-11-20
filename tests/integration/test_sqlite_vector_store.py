@@ -329,7 +329,7 @@ def test_retriever_search_types_through_the_registry(tmp_path: Path) -> None:
     # A suffix never ingested is reported, not answered from nothing, in
     # words that do not name OpenSearch on the embedded store.
     with pytest.raises(
-        IndexNotFoundError, match="No indices found for suffix 'other'"
+        IndexNotFoundError, match="No indices found for namespace 'other'"
     ) as raised:
         _retrieve(
             providers,

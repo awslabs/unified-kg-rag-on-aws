@@ -152,7 +152,7 @@ def test_adding_a_document_merges_its_claim_into_the_stored_one(stores) -> None:
 def test_deleting_a_document_strips_its_text_units_from_a_shared_claim(
     stores, suffix: str
 ) -> None:
-    # Under a non-default suffix (document_parsing.index_value) the claim
+    # Under a non-default suffix (document_parsing.namespace) the claim
     # read back must be written back to that suffix's index, not the
     # default one.
     store, manager, vector = stores

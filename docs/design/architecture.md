@@ -343,11 +343,14 @@ writes over the stored graph's neighbours. Only document-backed edges
 count: an edge every text unit of which is a seed graph's adds to no
 degree (§4.5), so with no seed graph the rank is the plain degree.
 
-**Index suffix.** Every OpenSearch index and Neptune label is named
-`<prefix>-<suffix>[-<additional_suffix>]`: ingestion writes
-`processing.document_parsing.index_value`, queries select `RAGInput.suffix`
-(`run-rag` / `run-eval`: `--suffix`, else the config's `index_value`), all
-`default` when unset; one suffix per tenant or corpus version.
+**Namespace.** Every OpenSearch index and Neptune label is named
+`<prefix>-<namespace>[-<additional_suffix>]`: ingestion writes
+`processing.document_parsing.namespace`, queries select `RAGInput.namespace`
+(`run-rag` / `run-eval`: `--namespace`, else the config's), all `default`
+when unset; one namespace per tenant or corpus version. The old names
+(`--suffix`, `RAGInput.suffix`, `index_value`) are deprecated aliases
+mapped in one place (`domain/models/namespace.py`); the code keeps calling
+the value a store request's `suffix`.
 
 **Display names and identity keys.**
 

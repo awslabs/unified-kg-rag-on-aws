@@ -285,7 +285,7 @@ purpose:
   ([MCP: HTTP and remote deployment](../guides/mcp.md#http-and-remote-deployment)).
 - **Filters are not access control**
   ([Scopes and namespaces](./scopes-and-namespaces.md#not-an-access-control-boundary)):
-  separate tenants by index suffix.
+  separate tenants by namespace.
 - **Shipped backends.** Models: Bedrock (default), Ollama or
   OpenAI-compatible servers; reranking: Bedrock or a sentence-transformers
   cross-encoder ([Local mode](../guides/local-mode.md)). Stores: Neptune (or a
@@ -321,7 +321,7 @@ purpose:
   ids must fit one 400 KB item ([*Document size limit*](../guides/incremental.md#document-size-limit)).
 - **Concurrent runs need the registry**, whose write lease stops a second run
   on a namespace; without it (or through the direct `IncrementalIndexer` API)
-  nothing locks, and two ingestions on one suffix can delete each other's
+  nothing locks, and two ingestions on one namespace can delete each other's
   index ([Concurrent runs](../operations.md#concurrent-runs)).
 - **Isolating a document that kills the task takes runs**
   ([*Quarantined documents*](../guides/incremental.md#quarantined-documents)): about `log2(n) + 1` for one culprit among `n` documents that

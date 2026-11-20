@@ -81,7 +81,7 @@ retry:
 | `processing.graph_extraction.entity_types` | 7 generic types | [Domain adaptation](./domain-adaptation.md#entity-types) |
 | `processing.translation.target_language` | `"en"` | Another corpus or answer language ([Multilingual](./multilingual.md)) |
 | `processing.claim_extraction.enabled` | `false` | Claims in `local` search (one more LLM call per text unit) |
-| `processing.document_parsing.index_value` | `null` (`default`) | Separate corpora or tenants ([Index suffix](../concepts/scopes-and-namespaces.md#index-suffix)) |
+| `processing.document_parsing.namespace` | `null` (`default`) | Separate corpora or tenants ([Namespace](../concepts/scopes-and-namespaces.md#namespace)) |
 | `indexing.methodologies` | `[graphrag, lightrag]` | Build only what one methodology reads: `[lightrag]` makes no community report call ([Methodology profiles](./ingest.md#methodology-profiles)) |
 | `graph.community_detection.enabled` | `true` | `false` builds no communities, as `indexing.methodologies: [lightrag]` does (GraphRAG's strategies need them) |
 | `providers.rerank.kind` | `bedrock` | `none`: no rerank model in the region, or no reranking wanted |

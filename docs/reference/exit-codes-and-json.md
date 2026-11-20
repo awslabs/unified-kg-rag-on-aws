@@ -22,7 +22,7 @@ prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 Exit code `2` covers:
 
 - **Usage.** A bad flag.
-- **What the run reads.** A `run-rag` or `run-eval` `--suffix` nothing was
+- **What the run reads.** A `run-rag` or `run-eval` `--namespace` nothing was
   ingested under (the message lists the ingested ones; the error answer of
   `processing.ignore_errors` does not, since a surface serving some
   namespaces only must not name the others); a filter key no
@@ -237,7 +237,7 @@ document, printed while it serves, has no `exit_code`. The document holds:
   the `failed_renderers` (each failed renderer's error) and the
   `skipped_renderers` (each default renderer left out for a missing extra,
   with why); an empty list (nothing rendered) or a failed renderer exits `1`.
-- **`run-describe`**: the namespace's description (`suffix`, `namespace`,
+- **`run-describe`**: the namespace's description (`suffix`, the namespace, `namespace`, the index namespace,
   `build`, `build_record` (`present` or `missing`: then `artifacts` are
   what the config builds), `artifacts`, `methodologies`, `strategies`, `auto_routes`,
   `indices`, `registry`, `rebuild` (each reason's `kind`, `remedy`, `detail`

@@ -122,11 +122,13 @@ def test_http_flags_are_refused_with_stdio(flags: list[str]) -> None:
     assert exited.value.code == 2
 
 
-def test_the_port_and_suffix_are_validated() -> None:
-    for flags in (["--port", "0"], ["--port", "70000"], ["--suffix", "a,b"]):
+def test_the_port_and_namespace_are_validated() -> None:
+    for flags in (["--port", "0"], ["--port", "70000"], ["--namespace", "a,b"]):
         with pytest.raises(SystemExit):
             run_mcp_server.parse_args(flags)
-    assert run_mcp_server.parse_args(["--suffix", "tenant_a"]).suffix == "tenant_a"
+    assert (
+        run_mcp_server.parse_args(["--namespace", "tenant_a"]).namespace == "tenant_a"
+    )
 
 
 def test_mcp_settings_are_validated() -> None:

@@ -17,6 +17,8 @@ from pydantic import (
 
 from unified_kg_rag.domain.languages import LanguageCode
 from unified_kg_rag.domain.models.evidence import evidence
+from unified_kg_rag.domain.models.namespace import deprecated_namespace_warning
+from unified_kg_rag.shared.utils.deprecation import warn_deprecated
 
 from ..retrieval import (
     validate_safe_name,
@@ -36,7 +38,7 @@ from ._seed import SeedGraphConfig
 
 
 class DocumentParsingConfig(ConfigSection):
-    # index_value set in code is checked too (see IndexingConfig).
+    # namespace set in code is checked too (see IndexingConfig).
 
     source_directory: str | Path = Field(
         default="source",
@@ -55,22 +57,22 @@ class DocumentParsingConfig(ConfigSection):
             "Must not be the source directory."
         ),
     )
-    index_value: str | None = Field(
+    namespace: str | None = Field(
         default=None,
         description=(
-            "Index suffix the run writes: every OpenSearch index and Neptune "
-            "label is named <prefix>-<index_value>. null = 'default'. run-rag, "
-            "run-eval and a RAGInput without a suffix query it too unless "
-            "--suffix (RAGInput.suffix in Python) names another. "
-            "run-ingestion --suffix sets it for one run. Lowercase letters, "
-            "digits, '-' and '_'."
+            "Namespace the run writes: every OpenSearch index and Neptune "
+            "label is named <prefix>-<namespace>. null = 'default'. run-rag, "
+            "run-eval and a RAGInput without a namespace query it too unless "
+            "--namespace (RAGInput.namespace in Python) names another. "
+            "run-ingestion --namespace sets it for one run. Lowercase "
+            "letters, digits, '-' and '_'. Was index_value (deprecated)."
         ),
     )
     source_scope: str | None = Field(
         default=None,
         description=(
             "Identity of the corpus source for incremental indexing: a run only "
-            "treats registry documents of its own index suffix AND source scope "
+            "treats registry documents of its own namespace AND source scope "
             "as deleted. None = the resolved source directory. Set it when the "
             "local directory is a staging copy, e.g. the S3 URI a container "
             "syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE). "
@@ -115,12 +117,23 @@ class DocumentParsingConfig(ConfigSection):
             return cls.model_fields["source_directory"].default
         return value
 
-    @field_validator("index_value")
+    @field_validator("namespace")
     @classmethod
-    def _check_index_value(cls, value: str | None) -> str | None:
+    def _check_namespace(cls, value: str | None) -> str | None:
         # Part of every index name: fail at config load, not at indexing
         # after the extraction was paid for.
-        return value if value is None else validate_safe_name(value, "index_value")
+        return value if value is None else validate_safe_name(value, "namespace")
+
+    @property
+    def index_value(self) -> str | None:
+        """Deprecated (a ``DeprecationWarning``): read ``namespace``."""
+        warn_deprecated(deprecated_namespace_warning("index_value"))
+        return self.namespace
+
+    @index_value.setter
+    def index_value(self, value: str | None) -> None:
+        warn_deprecated(deprecated_namespace_warning("index_value"))
+        self.namespace = value
 
 
 class ChunkingConfig(ConfigSection):

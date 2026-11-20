@@ -728,7 +728,7 @@ class _RecordChain(_Chain):
 
     async def acheck_methodology(self, strategy: Any, suffix: str | None) -> Any:
         if suffix == "empty":
-            raise IndexNotFoundError(f"No indices found for suffix '{suffix}'")
+            raise IndexNotFoundError(f"No indices found for namespace '{suffix}'")
         return ()
 
 
@@ -806,13 +806,13 @@ async def test_an_ingestion_that_drops_held_methodologies_needs_a_confirmation(
     await manager.start_ingest(**start)
     # The namespace the run writes is the one checked.
     await manager.start_ingest(
-        **start, methodologies=["lightrag"], index_value="tenant-b"
+        **start, methodologies=["lightrag"], namespace="tenant-b"
     )
     assert asked[-1] == "tenant-b"
     # An unreadable record does not refuse: the run meets the store error.
     held["tenant-c"] = StoreConnectionError("down")
     await manager.start_ingest(
-        **start, methodologies=["lightrag"], index_value="tenant-c"
+        **start, methodologies=["lightrag"], namespace="tenant-c"
     )
 
 
@@ -891,7 +891,9 @@ async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
     assert events[-1]["kind"] == "error"
     assert events[-1]["error_kind"] == "index_not_found"
     # The console (one operator's) names the namespaces the store holds.
-    assert events[-1]["message"].endswith("Suffixes ingested on this store: tenant-a.")
+    assert events[-1]["message"].endswith(
+        "Namespaces ingested on this store: tenant-a."
+    )
     # Recorded as refused, which the dashboard does not count as an error
     # (rv25: an empty namespace's first question was one).
     (row,) = service.store.queries()
@@ -1052,18 +1054,18 @@ _UNSAFE_NAMESPACES = ["../etc", "a/b", "", "x" * 129, "a..b", "Docs", "docs.v2"]
 _UNSAFE_NAMESPACES += ["acme*", "a,b"]
 
 
-@pytest.mark.parametrize("suffix", _UNSAFE_NAMESPACES)
-def test_a_question_s_suffix_must_be_a_safe_namespace_name(suffix: str) -> None:
+@pytest.mark.parametrize("namespace", _UNSAFE_NAMESPACES)
+def test_a_question_s_namespace_must_be_a_safe_name(namespace: str) -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        AskRequest(query="q", suffix=suffix)
-    assert AskRequest(query="q", suffix="tenant_a-1_v2").suffix == "tenant_a-1_v2"
+        AskRequest(query="q", namespace=namespace)
+    assert AskRequest(query="q", namespace="tenant_a-1_v2").namespace == "tenant_a-1_v2"
 
 
-@pytest.mark.parametrize("index_value", ["Docs", "docs.v2", "acme*"])
-async def test_an_ingest_s_index_value_must_be_a_safe_namespace_name(
-    tmp_path: Path, index_value: str
+@pytest.mark.parametrize("namespace", ["Docs", "docs.v2", "acme*"])
+async def test_an_ingest_s_namespace_must_be_a_safe_name(
+    tmp_path: Path, namespace: str
 ) -> None:
     from unified_kg_rag.shared import InvalidArgumentError
 
@@ -1071,7 +1073,7 @@ async def test_an_ingest_s_index_value_must_be_a_safe_namespace_name(
     corpus.mkdir()
     with pytest.raises(InvalidArgumentError, match="lowercase"):
         await _manager(tmp_path).start_ingest(
-            corpus=corpus, corpus_ref="workspace:corpus", index_value=index_value
+            corpus=corpus, corpus_ref="workspace:corpus", namespace=namespace
         )
 
 

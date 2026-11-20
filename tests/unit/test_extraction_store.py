@@ -966,7 +966,7 @@ class TestRunIndexCreationCheck:
         self, mocker, incremental: bool
     ) -> None:
         config = Config()
-        config.processing.document_parsing.index_value = "tenant-a"
+        config.processing.document_parsing.namespace = "tenant-a"
         indexer = mocker.MagicMock()
         _pipeline(config, indexer)._check_index_creation(_run_context(incremental))
 

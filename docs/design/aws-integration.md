@@ -70,8 +70,8 @@ the metadata keys itself.
 `run-eval` counts the answers with any entry (`degraded_queries`).
 
 A query is checked before its first model call: its namespace is resolved
-once (`domain/retrieval/store_names.py` `resolve_namespace`: the suffix, else
-the config's `index_value`, else `default`, the rule of every entry point)
+once (`domain/retrieval/store_names.py` `resolve_namespace`: the namespace asked, else
+the config's, else `default`, the rule of every entry point)
 and must hold a text-units index (`BaseGraphRAGRetriever.arequire_namespace`,
 once per namespace and chain), else `IndexNotFoundError`.
 

@@ -163,7 +163,7 @@ The console prints the same summary.
   with `--repeats` `repeat_extractions` (`resample` or `reuse`), and
   `repeat` (1-based; the interleaved runs share a start time, so a
   rebuilt comparison pairs repeat r with repeat r by it); with `--arm`,
-  the run's `arm` (`name`, `overlay` path, `overlay_sha256`, `suffix`) and
+  the run's `arm` (`name`, `overlay` path, `overlay_sha256`, `suffix`: the arm's namespace) and
   `compared_runs`, the run labels in comparison order; after
   `--rescore`, `rescored` (when, from which file, by which code and with
   which dataset; the rest of the manifest is the answering run's, with the
@@ -195,7 +195,7 @@ The console prints the same summary.
   operational knobs left out), so the same evaluation hashes the same in
   every environment, and `answer_settings`, the `{setting: value}` map it
   hashes, so a refused pooling names the settings that differ. The
-  `run-eval` query flags (`--suffix`, `--top-k`, `--search-type`,
+  `run-eval` query flags (`--namespace`, `--top-k`, `--search-type`,
   `--retrieval-multiplier`) are not configuration: they are in the CLI
   arguments, not in the hash (`search.search_type`, the search type of a
   run without `--search-type`, is);
@@ -477,7 +477,7 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   runs of one strategy are pooled as its repeats only when they are one
   invocation's: runs of several `run_id`s (or one with and one without; or,
   saved before `run_id` was recorded, more runs than their
-  `cli_args.repeats`), or runs that differ in a query flag (`suffix`,
+  `cli_args.repeats`), or runs that differ in a query flag (`namespace`,
   `top_k`, `retrieval_multiplier`, and the search type each searched with:
   `--search-type`, else `search.search_type`),
   `retrieval_config_sha256` (the message names the `answer_settings` that

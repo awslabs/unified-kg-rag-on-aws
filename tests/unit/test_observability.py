@@ -643,7 +643,7 @@ def test_an_incremental_run_span_counts_its_delta(tracing: Tracing) -> None:
     )
     pipeline = object.__new__(DataIngestionPipeline)
     pipeline.config = Config()
-    pipeline.config.processing.document_parsing.index_value = "tenant-a"
+    pipeline.config.processing.document_parsing.namespace = "tenant-a"
     pipeline._run = lambda *_: context  # type: ignore[method-assign]
     pipeline.run(".")
     run = _attrs(_one(exporter, "kg_rag.ingestion.run"))

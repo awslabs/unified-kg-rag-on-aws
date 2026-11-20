@@ -493,7 +493,7 @@ class KnowledgeGraphTools:
     """The MCP tools over one chain and one namespace.
 
     ``namespace`` is the suffix served (``None``: the config's
-    ``processing.document_parsing.index_value``, else ``default``);
+    ``processing.document_parsing.namespace``, else ``default``);
     ``settings`` the ``mcp`` section (the chain config's by default). The
     chain is the caller's (never changed here): :meth:`aclose` closes it.
     With ``mcp.strategies`` set, the chain must have been built with
@@ -851,7 +851,7 @@ class KnowledgeGraphTools:
             ) from None
         return RAGInput.checked(
             query=self._text("query", query),
-            suffix=self._suffix(namespace),
+            namespace=self._suffix(namespace),
             search_strategy=self._strategy(strategy),
             search_type=kind,
             top_k=self._bounded("top_k", top_k, 1, self.settings.max_top_k, 10),
@@ -943,12 +943,12 @@ class KnowledgeGraphTools:
             outcome = self._checked(output)
             results = output.search_results.results
             records, omitted = await self._shaped(
-                str(rag_input.suffix),
+                str(rag_input.namespace),
                 [self._from_result(i, r) for i, r in enumerate(results, 1)],
                 rag_input.filters,
             )
             return SearchToolResult(
-                namespace=str(rag_input.suffix),
+                namespace=str(rag_input.namespace),
                 records=records,
                 truncated=omitted > 0,
                 omitted=omitted,
@@ -995,7 +995,7 @@ class KnowledgeGraphTools:
             # while the chain ran, has no query metric of the chain's own.
             if not answered:
                 self.chain.record_unrun_query(
-                    {"search_strategy": strategy, "suffix": namespace},
+                    {"search_strategy": strategy, "namespace": namespace},
                     error,
                     started=started,
                 )
@@ -1042,7 +1042,7 @@ class KnowledgeGraphTools:
                 ]
             )
             kept, omitted = await self._shaped(
-                str(rag_input.suffix),
+                str(rag_input.namespace),
                 [
                     _record(
                         item.model_copy(update={"rank": rank}),
@@ -1058,7 +1058,7 @@ class KnowledgeGraphTools:
                 answer_truncated=cut,
                 abstained=view.abstained,
                 abstention_reason=view.abstention_reason,
-                namespace=str(rag_input.suffix),
+                namespace=str(rag_input.namespace),
                 records=kept,
                 records_kept=applied,
                 truncated=omitted > 0,

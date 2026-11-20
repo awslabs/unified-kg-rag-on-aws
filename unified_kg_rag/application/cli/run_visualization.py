@@ -6,7 +6,7 @@ Renders visualizations from a visualization-data JSON
 (``visualization_data.json``, the index namespace's graph and its
 communities, which ingestion writes from the stores at the end of a full
 build, ``graph.visualization.export_data``) WITHOUT re-running ingestion:
-``--data-path``, else the namespace's (``--suffix``, else the config's)
+``--data-path``, else the namespace's (``--namespace``, else the config's)
 newest export where ingestion writes them when it shows the build the
 stores hold, else one built from the stores into ``--output-directory``
 (after an incremental run, which exports nothing). The file
@@ -58,6 +58,7 @@ from unified_kg_rag.application.cli.conventions import (
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.cli.provider_args import add_provider_arguments
+from unified_kg_rag.application.cli.query_args import add_namespace_argument
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.storage.visualization_export import (
     current_visualization_data,
@@ -75,7 +76,6 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
 from unified_kg_rag.domain.models import (
     Community,
     HierarchicalCommunity,
-    validate_safe_name,
 )
 from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -268,15 +268,8 @@ def run_visualization(
     return written
 
 
-def _suffix(value: str) -> str:
-    try:
-        return validate_safe_name(value, "--suffix")
-    except ValueError as e:
-        raise argparse.ArgumentTypeError(str(e)) from e
-
-
 def _namespace_data(config: Any, args: argparse.Namespace) -> Path:
-    """The visualization data of ``--suffix``'s namespace (else the
+    """The visualization data of ``--namespace``'s namespace (else the
     config's): its newest export under the directories ingestion writes to
     when it shows the build the stores hold, else one built from the stores
     into ``--output-directory`` (``current_visualization_data``). With the
@@ -286,7 +279,7 @@ def _namespace_data(config: Any, args: argparse.Namespace) -> Path:
 
     if error := missing_extras_error(config, seeds=False):
         usage_error(error)
-    suffix = resolve_namespace(config, args.suffix)
+    suffix = resolve_namespace(config, args.namespace)
     configured = config.graph.visualization.outputs_directory
     directories = [
         *([Path(configured)] if configured else []),
@@ -318,7 +311,7 @@ def _namespace_data(config: Any, args: argparse.Namespace) -> Path:
     elif not counts["nodes"]:
         usage_error(
             f"the index namespace '{suffix}' holds no graph: run run-ingestion "
-            "first, check --suffix, or pass --data-path"
+            "first, check --namespace, or pass --data-path"
         )
     else:
         logger.info(
@@ -363,19 +356,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--data-path",
         type=Path,
         default=None,
-        help="Path to exported visualization-data JSON (default: --suffix's "
-        "namespace's newest visualization_data.json under "
+        help="Path to exported visualization-data JSON (default: --namespace's "
+        "newest visualization_data.json under "
         "graph.visualization.outputs_directory, outputs/visualization and "
         "--cache-directory when it shows the build the stores hold, else "
         "one built from the stores into --output-directory)",
     )
-    parser.add_argument(
-        "--suffix",
-        type=_suffix,
-        default=None,
-        help="Index namespace to render without --data-path (the name "
-        "run-ingestion --suffix wrote it under; default: the config's "
-        "index_value, else 'default')",
+    add_namespace_argument(
+        parser,
+        "Namespace to render without --data-path (the name run-ingestion "
+        "--namespace wrote it under; default: the config's "
+        "processing.document_parsing.namespace, else 'default'). --suffix is "
+        "its deprecated alias",
     )
     parser.add_argument(
         "--cache-directory",

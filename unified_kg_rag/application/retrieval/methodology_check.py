@@ -184,7 +184,7 @@ def rebuild_advice(what: str, source_scopes: Sequence[str] | None) -> str:
             f"{', '.join(source_scopes)}, and adding a methodology rebuilds "
             "it from one corpus, which ingestion refuses while it holds "
             "others: ingest each corpus into an index namespace of its own "
-            "(processing.document_parsing.index_value), which extracts it "
+            "(processing.document_parsing.namespace), which extracts it "
             "again, or rebuild the namespace from one corpus with "
             "indexing.reset: true, deleting the others."
         )

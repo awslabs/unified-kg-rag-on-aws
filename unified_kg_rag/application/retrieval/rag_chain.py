@@ -156,6 +156,10 @@ from unified_kg_rag.domain.models import (
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.config import EffortLevel
+from unified_kg_rag.domain.models.namespace import (
+    deprecated_namespace_warning,
+    migrate_namespace_field,
+)
 from unified_kg_rag.domain.pricing import snapshot_cost_usd
 from unified_kg_rag.domain.prompts import (
     BasePrompt,
@@ -509,10 +513,11 @@ class ConversationTurn(BaseModel):
 class RAGInput(BaseModel):
     """One query to :class:`GraphRAGChain` (a dict with these keys also works).
 
-    ``suffix`` selects the index namespace to search: it must match the
-    ``processing.document_parsing.index_value`` the corpus was ingested with.
-    ``None`` reads the chain config's ``index_value``, else ``default``
+    ``namespace`` selects the namespace to search: it must match the
+    ``processing.document_parsing.namespace`` the corpus was ingested with.
+    ``None`` reads the chain config's, else ``default``
     (``resolve_namespace``), the namespace ingestion with that config wrote.
+    ``suffix``, its old name, is a deprecated alias.
     Set ``conversation_id`` and ``use_memory`` to continue a conversation;
     with ``use_memory`` and no id, a new id is generated and returned on
     :class:`RAGOutput`. A stateless caller passes
@@ -527,10 +532,11 @@ class RAGInput(BaseModel):
         description="The user's search query (leading and trailing whitespace "
         "removed; an empty one is refused)"
     )
-    suffix: str | None = Field(
+    namespace: str | None = Field(
         default=None,
-        description="Suffix for multi-tenant or versioned indices; None reads "
-        "the config's processing.document_parsing.index_value, else 'default'",
+        description="Namespace to search (one per tenant or corpus version); "
+        "None reads the config's processing.document_parsing.namespace, else "
+        "'default'. suffix, its old name, is a deprecated alias",
     )
     effort: EffortLevel | None = Field(
         default=None,
@@ -625,11 +631,27 @@ class RAGInput(BaseModel):
         "value above the config's has no effect. None: the config's",
     )
 
-    @field_validator("suffix")
+    @model_validator(mode="before")
     @classmethod
-    def _safe_suffix(cls, suffix: str | None) -> str | None:
+    def _deprecated_suffix(cls, data: Any) -> Any:
+        return migrate_namespace_field(data, "suffix")
+
+    @field_validator("namespace")
+    @classmethod
+    def _safe_namespace(cls, namespace: str | None) -> str | None:
         # It names store indexes: a wildcard or comma would widen the target.
-        return None if suffix is None else validate_safe_name(suffix, "suffix")
+        return None if namespace is None else validate_safe_name(namespace, "namespace")
+
+    @property
+    def suffix(self) -> str | None:
+        """Deprecated (a ``DeprecationWarning``): read ``namespace``."""
+        warn_deprecated(deprecated_namespace_warning("suffix"))
+        return self.namespace
+
+    @suffix.setter
+    def suffix(self, value: str | None) -> None:
+        warn_deprecated(deprecated_namespace_warning("suffix"))
+        self.namespace = value
 
     @field_validator("query")
     @classmethod
@@ -1157,7 +1179,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 # checked against these indexes.
                 state.get("held_artifacts"),
             ),
-            state.get("suffix"),
+            state.get("namespace"),
         )
         routable, dropped = self._routes_within_limits(routable, state)
         candidates = [s.value for s in routable]
@@ -1629,7 +1651,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return state
 
         state["history"] = await self.memory_manager.load_history(
-            _conversation_key(state.get("suffix"), state.get("user_id"), cid)
+            _conversation_key(state.get("namespace"), state.get("user_id"), cid)
         )
         return state
 
@@ -1714,14 +1736,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         held = state.get("held_artifacts")
         if held is None:
             held = await methodology_check.namespace_artifacts(
-                self, state.get("suffix")
+                self, state.get("namespace")
             )
         search_query = SearchQuery(
             query=processed.final_query,
             search_type=state.get("search_type") or self.config.search.search_type,
             top_k=state.get("top_k", 10),
             retrieval_multiplier=state.get("retrieval_multiplier", 1),
-            suffix=state.get("suffix"),
+            suffix=state.get("namespace"),
             max_tokens=state.get("max_tokens"),
             entity_focus=entity_focus or [],
             hl_keywords=processed.hl_keywords,
@@ -2443,7 +2465,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         fetched = await fetch_text_units(
             self._get_retriever(RetrieverRole.DOCUMENT),
             self.config,
-            state.get("suffix"),
+            state.get("namespace"),
             unit_ids,
             filters=state.get("filters"),
         )
@@ -2792,7 +2814,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # tagged with the namespace (the tenant boundary).
             with (
                 self._identity(rag_input),
-                observability.bind_attributes(namespace=rag_input.suffix),
+                observability.bind_attributes(namespace=rag_input.namespace),
                 observability.span(
                     "kg_rag.query",
                     self._query_span_attributes(rag_input, search, query_id),
@@ -2923,7 +2945,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         ``kg_answer`` that timed out waiting for a call slot, or at the
         backstop past the chain's deadline): one failed query, as
         :meth:`ainvoke` records its own. ``query``: the fields known
-        (``search_strategy``, ``suffix``); ``started``: the
+        (``search_strategy``, ``namespace``); ``started``: the
         ``time.monotonic()`` the call began."""
         self._record_query(
             started,
@@ -2936,11 +2958,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     @staticmethod
     def _log_context(rag_input: RAGInput, query_id: str) -> dict[str, Any]:
         """What every log line of a query carries: its id, its conversation
-        and its namespace (``rag_input.suffix``, resolved)."""
+        and its namespace (``rag_input.namespace``, resolved)."""
         return {
             "query_id": query_id,
             "conversation_id": rag_input.conversation_id,
-            "namespace": rag_input.suffix,
+            "namespace": rag_input.namespace,
         }
 
     def _record_query(
@@ -3032,7 +3054,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             error_class = error_class_of(metadata.get(ERROR_CLASS_KEY))
         # Any input, a refused one too: never an error here in its place.
         fields = query if isinstance(query, dict) else getattr(query, "__dict__", {})
-        namespace = fields.get("suffix")
+        namespace = fields.get("namespace")
         with contextlib.suppress(Exception):
             namespace = resolve_namespace(self.config, namespace)
         strategy = None
@@ -3310,7 +3332,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                             query_id=query_id,
                             conversation_id=rag_input.conversation_id,
                             requested_strategy=rag_input.search_strategy,
-                            namespace=rag_input.suffix,
+                            namespace=rag_input.namespace,
                             trace_id=trace[0] if trace else None,
                         )
                     )
@@ -3341,7 +3363,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         {
                             "metadata": {
                                 **self._identity_metadata(rag_input),
-                                "namespace": rag_input.suffix,
+                                "namespace": rag_input.namespace,
                             }
                         },
                     ),
@@ -3941,7 +3963,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> tuple[RAGInput, dict[str, Any]]:
         """``inputs`` checked before any model call (``_prepare_invoke``),
         with its namespace resolved once (``resolve_namespace``: a query
-        without a suffix reads the config's ``index_value``), the methodology
+        without a namespace reads the config's), the methodology
         and the filter keys checked against what the namespace holds, within
         the query's ``deadline``.
 
@@ -3952,8 +3974,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         query gives. A refused strategy or filter still raises: a usage
         error, not a failed query."""
         rag_input, input_dict = self._prepare_invoke(inputs)
-        rag_input.suffix = input_dict["suffix"] = resolve_namespace(
-            self.config, rag_input.suffix
+        rag_input.namespace = input_dict["namespace"] = resolve_namespace(
+            self.config, rag_input.namespace
         )
         try:
             async with deadline.scope():
@@ -3983,7 +4005,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The namespace, methodology and filter-key checks of
         ``_admit_query``; the namespace's holdings go to ``input_dict``."""
         try:
-            await self._arequire_namespace(rag_input.suffix)
+            await self._arequire_namespace(rag_input.namespace)
         except Exception as e:  # noqa: BLE001 - raised by the query below
             # Nothing ingested under it (IndexNotFoundError: it holds
             # nothing, not what the config builds, which a methodology
@@ -3996,7 +4018,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # What auto routes among and the strategy reads: one read of the
         # build record a query (a failed one is not kept, nor paid twice).
         holdings = await methodology_check.check_strategy_holdings(
-            self, rag_input.search_strategy, rag_input.suffix
+            self, rag_input.search_strategy, rag_input.namespace
         )
         input_dict["held_artifacts"] = holdings.artifacts
         input_dict[_BUILD_RECORD] = holdings.record
@@ -4064,7 +4086,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 output.processed_query.original_query if output.processed_query else ""
             )
             key = _conversation_key(
-                rag_input.suffix, rag_input.user_id, output.conversation_id
+                rag_input.namespace, rag_input.user_id, output.conversation_id
             )
             await self.memory_manager.add_turn(key, query, output.answer)
         except Exception as e:  # noqa: BLE001 - memory never fails an answer

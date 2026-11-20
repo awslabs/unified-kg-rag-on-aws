@@ -30,17 +30,24 @@ from unified_kg_rag.shared import ConfigurationError
 pytestmark = pytest.mark.unit
 
 
-def test_an_arm_is_name_overlay_and_an_optional_suffix(tmp_path: Path) -> None:
+def test_an_arm_is_name_overlay_and_an_optional_namespace(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     overlay = tmp_path / "o.yaml"
     overlay.write_text("{}")
     assert arm_spec(f"aa={overlay}") == {
         "name": "aa",
         "overlay": str(overlay),
-        "suffix": None,
+        "namespace": None,
     }
-    assert arm_spec(f"b={overlay},suffix=v2")["suffix"] == "v2"
+    assert arm_spec(f"b={overlay},namespace=v2")["namespace"] == "v2"
+    assert "deprecated" not in capsys.readouterr().err
+    # suffix=, the old name, still works, with a warning.
+    assert arm_spec(f"b={overlay},suffix=v2")["namespace"] == "v2"
+    assert "suffix is deprecated" in capsys.readouterr().err
+    assert arm_spec(f"b={overlay},suffix=v2,namespace=v2")["namespace"] == "v2"
     assert arm_spec(f"b={overlay},aa=true")["aa"] is True
-    assert arm_spec(f"b={overlay},suffix=v2,aa=False")["aa"] is False
+    assert arm_spec(f"b={overlay},namespace=v2,aa=False")["aa"] is False
     for bad in (
         "aa",
         f"a b={overlay}",
@@ -48,6 +55,8 @@ def test_an_arm_is_name_overlay_and_an_optional_suffix(tmp_path: Path) -> None:
         f"x@y={overlay}",
         f"aa={overlay},top_k=3",
         f"aa={overlay},aa=maybe",
+        # Two names of the namespace that disagree.
+        f"aa={overlay},suffix=v2,namespace=v3",
         f"aa={tmp_path / 'missing.yaml'}",
     ):
         with pytest.raises(argparse.ArgumentTypeError):
