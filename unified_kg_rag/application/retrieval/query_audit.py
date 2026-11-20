@@ -38,7 +38,7 @@ from unified_kg_rag.domain.models.audit import (
     QueryAuditRecord,
 )
 from unified_kg_rag.domain.models.usage import LLMUsage
-from unified_kg_rag.domain.pricing import usage_cost_usd
+from unified_kg_rag.domain.pricing import snapshot_cost_usd
 from unified_kg_rag.shared.exceptions import ErrorClass
 from unified_kg_rag.shared.logging import get_channel_logger
 from unified_kg_rag.shared.observability import MAX_RECORDED_IDS
@@ -51,6 +51,7 @@ __all__ = [
     "AUDIT_LOGGER_NAME",
     "audit_enabled",
     "emit",
+    "evidence_of",
     "outcome_of",
     "query_record",
 ]
@@ -124,9 +125,7 @@ def query_record(
     read, ``output`` its ``RAGOutput`` or ``SearchOutput`` (``None``: it
     raised or stopped) and ``usage`` its usage snapshot."""
     spent = _usage(usage)
-    cost, unpriced = (
-        usage_cost_usd(spent, config.models.prices) if spent else (None, set())
-    )
+    cost, unpriced = snapshot_cost_usd(usage, config.models.prices)
     requested = fields.get("search_strategy")
     return QueryAuditRecord(
         query_id=query_id,
@@ -150,11 +149,11 @@ def query_record(
         build=_build(build),
         question=_digest(fields.get("query")),
         answer=_digest(getattr(output, "answer", None)),
-        evidence=_evidence(output),
+        evidence=evidence_of(output),
         models=sorted(spent.by_model) if spent else [],
         usage=spent,
         cost_usd=cost,
-        unpriced_models=sorted(unpriced),
+        unpriced_models=unpriced,
     )
 
 
@@ -208,7 +207,7 @@ def _bounded(ids: Iterable[Any]) -> tuple[list[str], bool]:
     return kept[:MAX_RECORDED_IDS], len(kept) > MAX_RECORDED_IDS
 
 
-def _evidence(output: Any) -> AuditEvidence | None:
+def evidence_of(output: Any) -> AuditEvidence | None:
     """The ids of what ``output`` rests on: an answer's sources and the
     sections it cites, a search's results."""
     if output is None:

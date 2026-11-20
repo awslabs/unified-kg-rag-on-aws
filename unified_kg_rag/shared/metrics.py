@@ -48,6 +48,13 @@ QUERY_LIMITED_METRIC = "query_limited"
 # Of the query's requests, those Bedrock throttled (its usage's
 # throttled_requests): a query slowed by throttling, told apart.
 QUERY_THROTTLED_METRIC = "query_throttled_requests"
+# The query's input and output tokens (its usage's input_tokens and
+# output_tokens: its language-model calls'), and its USD by models.prices
+# when every model it called has a price there (none otherwise): what a
+# query spends, per strategy, beside what it took.
+QUERY_INPUT_TOKENS_METRIC = "query_input_tokens"
+QUERY_OUTPUT_TOKENS_METRIC = "query_output_tokens"
+QUERY_COST_METRIC = "query_cost_usd"
 # The dimension keys of the query metrics' series (each value a billed
 # custom-metric series: never a per-query or per-namespace key).
 QUERY_METRICS_DIMENSION_KEYS: tuple[str, ...] = ("Strategy", "Environment")

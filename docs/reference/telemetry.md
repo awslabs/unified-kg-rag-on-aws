@@ -18,17 +18,24 @@ filters by it.
 | `kg_rag.batch` | stage, or root for `run-eval` answer generation | Item and failure counts; in `run-eval` the run's `kg_rag.eval.strategy` and `kg_rag.eval.repeat` (1-based), as on every span of the run |
 | `kg_rag.mcp.tool` | root | One per MCP tool call (`run-mcp-server`): `mcp.tool.name`, `kg_rag.records`, `kg_rag.cancelled` (its client left or the server stopped: no error status); with `capture_content` the redacted arguments as `input.value`. A `kg_search` or `kg_answer` call's `kg_rag.query` span nests under it |
 | `kg_rag.console.ask` | root | One per console question: `kg_rag.search_strategy`, `kg_rag.query_id` (the id its `kg_rag.query` span's log lines and result carry); the query span nests under it |
-| `kg_rag.query` | root, the `run-eval` batch, an MCP tool call, or a console question | `session.id`, `user.id`, `kg_rag.requested_strategy` and `kg_rag.strategy` (the one that ran; of a stream stopped early too, once routed), `kg_rag.blocked`, `kg_rag.degraded` (answered without a step), `kg_rag.query_limited` (its limits cut it short: the `query_limited` metric), `kg_rag.error_class` (of an error answer under `processing.ignore_errors`), `kg_rag.effort` (`RAGInput.effort`) and `kg_rag.limits.max_model_calls` / `kg_rag.limits.max_input_tokens` (the query's limits in force), when set; with `capture_content` the redacted query as `input.value` and the answer as `output.value` (a streamed one too). Its id and trace id are the result's `metadata.query_id` and `metadata.trace_id`, and its log lines carry `query_id` and `namespace` |
+| `kg_rag.query` | root, the `run-eval` batch, an MCP tool call, or a console question | `kg_rag.query_id`, `session.id` and `gen_ai.conversation.id` (the conversation id), `user.id`, `kg_rag.mode` (`rag`, or `search` for a retrieval-only search), `kg_rag.top_k`, `kg_rag.use_memory`, `kg_rag.requested_strategy` and `kg_rag.strategy` (the one that ran; of a stream stopped early too, once routed), `kg_rag.blocked`, `kg_rag.degraded` (answered without a step), `kg_rag.query_limited` (its limits cut it short: the `query_limited` metric), `kg_rag.error_class` (of an error answer under `processing.ignore_errors`), `kg_rag.effort` (`RAGInput.effort`) and `kg_rag.limits.max_model_calls` / `kg_rag.limits.max_input_tokens` (the query's limits in force), when set; once it ends, `kg_rag.error` (an error answer), `kg_rag.abstained`, an answer's `kg_rag.sources` (how many the answer model was given) and `kg_rag.cited_source_ids` (the ids of the sections it cites, up to 50), and `kg_rag.cost_usd` when `models.prices` prices every model it called; with `capture_content` the redacted query as `input.value` and the answer as `output.value` (a streamed one too). Its `kg_rag.query_id` and trace id are the result's `metadata.query_id` and `metadata.trace_id`, and its log lines carry `query_id` and `namespace` |
 | `kg_rag.strategy` | query | `kg_rag.rerank_status` for the whole query |
-| `kg_rag.retrieve` | strategy | Hits per result type, up to 50 source ids |
-| `kg_rag.fusion` | strategy | In/out counts, the step's `kg_rag.rerank_status` |
+| `kg_rag.retrieve` | strategy | `kg_rag.hits` and the hits per result type, and the first 50 results' ids and scores in rank order (`kg_rag.source_ids`, `kg_rag.scores`: parallel lists) |
+| `kg_rag.fusion` | strategy | `kg_rag.streams`, in/out counts (`kg_rag.results_in`, `kg_rag.results_out`), `kg_rag.rerank_enabled`, `kg_rag.reranked`, the step's `kg_rag.rerank_status`, and the fused (and reranked) order's first 50 ids and scores (`kg_rag.source_ids`, `kg_rag.scores`) |
 | `kg_rag.rerank` | fusion | `kg_rag.rerank.status` (`ok`, `empty`, `error`), document counts |
 | `kg_rag.context_build` | query (`drift`: the round's actions span) | Tokens used vs the token budget |
 | `kg_rag.global.select`, `kg_rag.global.map` | strategy (`global`) | Select, once per query: `kg_rag.depth` (configured), `kg_rag.cut` (the cut mapped after falling back to a shallower one), `kg_rag.reports`, `kg_rag.dynamic`. Map: `kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens` |
+| `kg_rag.iterative.round` | strategy (`iterative`) | One per round: round 0 runs the base strategy (`kg_rag.round`, `kg_rag.base`); a follow-up round has `kg_rag.round`, `kg_rag.queries` (its rewritten searches), `kg_rag.bridge_entities`, `kg_rag.base_rerun` and its streams' hits (`kg_rag.hits.<stream>`) |
+| `kg_rag.graph_query.plan`, `.execute`, `.fallback` | strategy (`structured`) | Plan: `kg_rag.graph_query.status` (`planned` or `fallback`), `.reason` (a fixed code), `.repairs`. Execute: `.status`, `.reason`, `.operation`, `.rows`, `.truncated`, `.backend`. Fallback, when the query falls back: `kg_rag.strategy` (the strategy it runs) |
 | `kg_rag.drift.primer`, `kg_rag.drift.actions` | strategy (`drift`) | Primer: `kg_rag.reports`, `kg_rag.answers`. One actions span per round (`kg_rag.depth`, `kg_rag.actions`), with the round's local searches under it |
 | `kg_rag.guardrail` | query | One per screened query or answer: `aws.bedrock.guardrail.id`, `.source` (`input`, `output`), `.action` (`none`, `masked`, `blocked`), `.intervened`, `.policies`; with the contextual grounding check, `aws.bedrock.guardrail.grounding.checked`, `.grounding.failed`, `.grounding.score`, `aws.bedrock.guardrail.relevance.score` |
 | `kg_rag.evaluate` | root | One per evaluator: `kg_rag.evaluator`, `kg_rag.items`, `kg_rag.eval.strategy`, `kg_rag.eval.repeat`; the judge's model spans under it |
-| `chat <model>`, `embeddings <model>` | the calling span | OpenTelemetry GenAI conventions, kind `CLIENT` (as Bedrock rerank spans): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens` when Bedrock reports prompt-cache use, `gen_ai.usage.reasoning.output_tokens` when the response reports reasoning tokens (LangChain's `output_token_details.reasoning`, a part of the output tokens), finish reasons, `error.type`. No cost |
+| `chat <model>`, `embeddings <model>` | the calling span | OpenTelemetry GenAI conventions, kind `CLIENT` (as Bedrock rerank spans): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens` when Bedrock reports prompt-cache use, `gen_ai.usage.reasoning.output_tokens` when the response reports reasoning tokens (LangChain's `output_token_details.reasoning`, a part of the output tokens), finish reasons, `error.type`, `kg_rag.model.purpose` (what the model was built for: `query`, `ingestion`, `evaluation`). No cost: the query span's `kg_rag.cost_usd` prices the whole query |
+
+Every span's resource carries `service.name` (`observability.service_name`,
+unless `OTEL_SERVICE_NAME` sets it) and `service.version` (the package
+version, unless `OTEL_RESOURCE_ATTRIBUTES` sets `service.version`), so a
+trace backend tells one release's traces from another's.
 
 With `capture_content`, the answer model's `chat <model>` span keeps the
 answer as generated, even when the guardrail then blocks or masks it, and
@@ -186,3 +193,11 @@ stays estimated the same way, rather than reading as free, with its output
 tokens estimated from its text and its resent requests counted.
 `stream` / `astream` yield text only; the `QueryResult` of `aquery_events`
 carries the usage as `ainvoke`'s output does.
+
+A query's USD is `metadata["cost_usd"]` (`RAGOutput` and `SearchOutput`),
+its usage priced by `models.prices` as every USD figure is
+(`domain/pricing.py`): `null` when a model it called has no price there,
+named in `metadata["unpriced_models"]`. The query span carries it as
+`kg_rag.cost_usd`, the audit record as `cost_usd`, and `--metrics-sink
+cloudwatch` as `query_cost_usd`, beside `query_input_tokens` and
+`query_output_tokens` ([runbook](../operations.md#alarms)).

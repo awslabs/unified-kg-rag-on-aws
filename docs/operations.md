@@ -1511,7 +1511,12 @@ stops or is cancelled (a console client that disconnects, a caller's timeout
 around `astream`) is recorded as a stream closed early: its latency and
 usage up to there, no failure. `query_throttled_requests` counts
 the requests Bedrock throttled for the query, which tells a query slowed by
-throttling apart. They go under `unified_kg_rag/query` with the task's
+throttling apart. `query_input_tokens` and `query_output_tokens` are its
+usage's language-model tokens, and `query_cost_usd` its USD
+(`metadata["cost_usd"]`) when `models.prices` prices every model it called
+(the record has no `query_cost_usd` otherwise), a failed or stopped query's
+up to its end: three more series per `Strategy` and `Environment`, read with
+a Sum statistic for the spend. They go under `unified_kg_rag/query` with the task's
 `Environment` and the `Strategy` that ran (the requested one for a query
 that failed before one did; `invalid` for a refused input that names no
 strategy). Their log properties, for Logs Insights (no metric dimension,

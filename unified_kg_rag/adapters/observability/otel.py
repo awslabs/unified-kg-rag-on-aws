@@ -296,7 +296,7 @@ def build_backend(
 def _resource_attributes(
     config: ObservabilityConfig, env: Mapping[str, str]
 ) -> dict[str, str]:
-    from opentelemetry.sdk.resources import SERVICE_NAME
+    from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION
 
     # OTEL_SERVICE_NAME / OTEL_RESOURCE_ATTRIBUTES (read by Resource.create)
     # win over the config values, as the OpenTelemetry environment
@@ -304,13 +304,24 @@ def _resource_attributes(
     attributes: dict[str, str] = {}
     if not env.get("OTEL_SERVICE_NAME"):
         attributes[SERVICE_NAME] = config.service_name
+    set_keys = _resource_keys(env.get("OTEL_RESOURCE_ATTRIBUTES", ""))
+    if SERVICE_VERSION not in set_keys:
+        # The package version that ran, so a trace backend tells releases
+        # apart (a deployment's own version in OTEL_RESOURCE_ATTRIBUTES wins).
+        attributes[SERVICE_VERSION] = __version__
     if config.backend == ObservabilityBackend.PHOENIX and (
-        PHOENIX_PROJECT_ATTRIBUTE not in env.get("OTEL_RESOURCE_ATTRIBUTES", "")
+        PHOENIX_PROJECT_ATTRIBUTE not in set_keys
     ):
         attributes[PHOENIX_PROJECT_ATTRIBUTE] = (
             env.get("PHOENIX_PROJECT_NAME") or config.service_name
         )
     return attributes
+
+
+def _resource_keys(value: str) -> set[str]:
+    """The keys an ``OTEL_RESOURCE_ATTRIBUTES`` value sets
+    (``key1=value1,key2=value2``)."""
+    return {pair.partition("=")[0].strip() for pair in value.split(",") if "=" in pair}
 
 
 def _sdk_tracer_provider(

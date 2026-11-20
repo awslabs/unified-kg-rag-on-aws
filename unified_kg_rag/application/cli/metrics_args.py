@@ -25,11 +25,14 @@ from typing import TextIO
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.metrics import (
     QUERY_ABSTAINED_METRIC,
+    QUERY_COST_METRIC,
     QUERY_DEGRADED_METRIC,
     QUERY_FAILED_METRIC,
+    QUERY_INPUT_TOKENS_METRIC,
     QUERY_LATENCY_METRIC,
     QUERY_LIMITED_METRIC,
     QUERY_METRICS_DIMENSION_KEYS,
+    QUERY_OUTPUT_TOKENS_METRIC,
     QUERY_THROTTLED_METRIC,
     CloudWatchEMFSink,
     MetricsSink,
@@ -45,7 +48,9 @@ METRICS_SINKS = ("none", "cloudwatch")
 QUERY_METRICS_HELP = (
     f"{QUERY_LATENCY_METRIC}, the outcome counts {QUERY_FAILED_METRIC}, "
     f"{QUERY_DEGRADED_METRIC}, {QUERY_ABSTAINED_METRIC} and "
-    f"{QUERY_LIMITED_METRIC}, and {QUERY_THROTTLED_METRIC}"
+    f"{QUERY_LIMITED_METRIC}, {QUERY_THROTTLED_METRIC}, "
+    f"{QUERY_INPUT_TOKENS_METRIC} and {QUERY_OUTPUT_TOKENS_METRIC}, and "
+    f"{QUERY_COST_METRIC} when models.prices prices every model called"
 )
 
 
