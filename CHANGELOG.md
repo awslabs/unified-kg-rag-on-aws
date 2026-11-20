@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config.retry.ingestion_item`, ...). Configs that set the flat keys still load (*Deprecated*).
 - `RAGInput.search_type` defaults to `None` (the config's `search.search_type`, hybrid unless set), and
   `EvaluationConfig.retrieval_k` is a list of cutoffs (a number still loads, as a list of one).
+- A community report's stored `depth` (and `max_cut_depth`), which `search.global_search.community_depth` cuts at, now
+  counts as MS GraphRAG's `community_level` does: 0 is the first Leiden pass over the whole graph, the coarser levels
+  built above it are negative (`Community.depth`, `HierarchicalCommunity.depth`; `build_hierarchy` returns a
+  `Hierarchy` with its `first_pass_levels`). It counted from the coarser root, so depth D was upstream's level D - k,
+  k the coarser levels a corpus produced. A cut at depth D now holds upstream's level-D communities (on LFR graphs of
+  500 to 2,000 entities: 13/17/39 at depth 0, as upstream's level 0; 72/116/230 at depth 1, upstream's level 1 holding
+  75/126/235 at its `max_cluster_size` 10), so the default depth 2 maps the reports it mapped before on those graphs
+  (the 99-report cap steps it to the same cut, which `global_cut_depth` may name one lower); with
+  `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
+  coarser roots. Stored reports keep their depth until a reset (*Upgrading*).
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
@@ -48,6 +58,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `-c opensearch_korean_analyzer=cjk` to keep them until then. A namespace indexed incrementally keeps the name
    matches 0.3.0's MinHash index made among the names it holds: a run
    matches its delta's names with the new index. Run with `indexing.reset: true` to match the whole corpus again. With
+2. A namespace indexed incrementally keeps the name matches 0.3.0's MinHash index made among the names it holds: a run
+   matches its delta's names with the new index; its community reports keep 0.3.0's depths, which global search reads
+   one or more levels too coarse beside the depths a later run writes (*Breaking changes*). Run with
+   `indexing.reset: true` to match the whole corpus again and write every report at its depth. With
    `processing.deduplicate` on, deduplication decides otherwise both ways (*Fixed*): the numbers rule keeps template
    documents 0.3.0 dropped as copies, which the next run indexes as new documents, and the exact index finds
    near-copies 0.3.0 missed, so a run drops more of them and an incremental run deletes the copies 0.3.0 indexed

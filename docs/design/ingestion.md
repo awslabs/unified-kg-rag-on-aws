@@ -343,10 +343,13 @@ gets its models and stores from the run's `Providers` bundle.
   these communities partition the graph of the current top communities the
   same way (a group over `max_cluster_size` communities split and kept as
   the parent of its pieces), up to `max_levels`; a partition that puts
-  every linked community under one root is no level. Depth therefore
-  counts from a root above MS GraphRAG's: a community at depth `D` here is
-  at upstream's `community_level` `D - k`, k being the coarser levels the
-  corpus produced (§6.1.1). Leaf communities
+  every linked community under one root is no level. Depth counts as MS
+  GraphRAG's `community_level` does (§6.1.1): 0 for the communities of the
+  first pass (graspologic's level 0,
+  `graphrag/graphs/hierarchical_leiden.py:29-40`), one more per split below
+  them, and negative above them (-1 for the first coarser level, so no cut
+  at a depth of 0 or more holds a coarser community;
+  `community_clustering._set_depths`, `Hierarchy.first_pass_levels`). Leaf communities
   under `min_community_size` merge into their strongest neighbour, and a
   split community is the union of the pieces it keeps.
   A connected component smaller than `min_community_size` (an isolated

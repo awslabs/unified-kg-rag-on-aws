@@ -478,7 +478,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
         A cut with more reports than the cap gives way to the deepest
         shallower cut that fits, which still covers every entity, in fewer,
-        broader reports. Only when even the root cut does not fit are the
+        broader reports. Only when even the depth-0 cut does not fit are the
         reports of the configured cut most similar to the query mapped, and
         at once under a filter on a report key (``community_id``, ``level``,
         ``rating``; a key the reports index declares, not a document filter
@@ -547,7 +547,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     ) -> list[RetrievalResult]:
         """MS GraphRAG dynamic community selection, root down.
 
-        Rates the root reports; the children of each relevant report are
+        Rates the reports at depth 0 (the first Leiden pass, MS GraphRAG's
+        level-0 starting communities); the children of each relevant report are
         rated next, down to the leaves, and a relevant child drops its
         parent. A depth with no relevant report and nothing queued rates the
         whole next depth, down to ``community_depth`` (MS GraphRAG's
@@ -580,7 +581,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             "kg_rag.global.select", depth=max_depth, dynamic=True
         ) as span:
             queue = await self._fetch_reports(
-                query, {"depth": 0}, "Root community reports", stats
+                query, {"depth": 0}, "First-pass community reports", stats
             )
             while queue:
                 # Under the query's limits: the ratings that fit beside the

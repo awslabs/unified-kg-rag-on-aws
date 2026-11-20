@@ -10,7 +10,7 @@ Report generation, which asks a model about these communities, is
 import math
 from collections import defaultdict
 from collections.abc import Callable, Collection
-from typing import Any
+from typing import Any, NamedTuple
 
 import networkx as nx
 
@@ -731,18 +731,33 @@ def _coarsen(
     )
 
 
-def build_hierarchy(
-    graph: nx.Graph, config: CommunityDetectionConfig
-) -> tuple[list[list[set[Any]]], float]:
+class Hierarchy(NamedTuple):
+    """The community hierarchy of a graph (:func:`build_hierarchy`)."""
+
+    # The partition at each level, the finest first (a level partitions the
+    # communities of the one below).
+    partitions: list[list[set[Any]]]
+    # The modularity of the finest.
+    modularity: float
+    # The levels of the first Leiden pass over the whole graph and its
+    # splits (the partition tree of the entity graph); the levels above are
+    # the coarser ones built over it.
+    first_pass_levels: int
+
+
+def build_hierarchy(graph: nx.Graph, config: CommunityDetectionConfig) -> Hierarchy:
     """The partitions of the entity ``graph`` at each level of the
     community hierarchy, the finest first (a level partitions the
-    communities of the one below), and the modularity of the finest.
+    communities of the one below), the modularity of the finest, and how
+    many levels the first pass holds.
 
     The lowest levels are the partition tree of the entity graph (a split
     community over its pieces, :func:`partition_tree`), at its leaves'
     heights; above the highest of its roots, each round partitions the
     graph of the current top communities the same way, up to
-    ``max_levels`` levels.
+    ``max_levels`` levels. Those coarser levels start at
+    ``first_pass_levels``: MS GraphRAG's hierarchy is the first pass alone
+    (graspologic's ``hierarchical_leiden``, whose level 0 is that pass).
     """
     max_levels = config.max_levels
     roots = partition_tree(graph, config)
@@ -756,6 +771,7 @@ def build_hierarchy(
         base_modularity,
     )
 
+    first_pass_levels = max((root.level for root in roots), default=0) + 1
     while roots and max(root.level for root in roots) + 1 < max_levels:
         coarser = _coarsen(roots, graph, config)
         if coarser is None:
@@ -764,17 +780,21 @@ def build_hierarchy(
 
     partitions = _tree_partitions(roots)
     logger.info("Hierarchy construction completed with %s levels", len(partitions))
-    return partitions, base_modularity
+    return Hierarchy(partitions, base_modularity, first_pass_levels)
 
 
 def hierarchical_communities(
-    partitions: list[list[set[str]]], unclustered: Collection[Any] = ()
+    partitions: list[list[set[str]]],
+    unclustered: Collection[Any] = (),
+    first_pass_levels: int | None = None,
 ) -> tuple[dict[str, HierarchicalCommunity], dict[str, str]]:
     """The communities of each level of ``partitions`` (see
     :func:`build_hierarchy`) by id, each named after its content
-    (:func:`community_content_id`, :func:`community_label`), and the
-    level-0 community of each entity; the ``unclustered`` entities get
-    none."""
+    (:func:`community_content_id`, :func:`community_label`) and at its
+    depth (:func:`_set_depths`), and the level-0 community of each entity;
+    the ``unclustered`` entities get none. ``first_pass_levels``: the
+    levels of the first Leiden pass (``Hierarchy.first_pass_levels``;
+    ``None``: every level)."""
     all_communities: dict[str, HierarchicalCommunity] = {}
     node_to_community_l0: dict[str, str] = {}
     unclustered = set(unclustered)
@@ -870,4 +890,33 @@ def hierarchical_communities(
         len(all_communities),
         len(partitions),
     )
+    _set_depths(
+        all_communities,
+        len(partitions) if first_pass_levels is None else first_pass_levels,
+    )
     return all_communities, node_to_community_l0
+
+
+def _set_depths(
+    communities: dict[str, HierarchicalCommunity], first_pass_levels: int
+) -> None:
+    """Set each community's ``depth`` as MS GraphRAG counts its
+    ``community_level``: from the first Leiden pass over the whole graph
+    (graspologic's ``hierarchical_leiden`` level 0, the communities
+    ``read_indexer_reports`` keeps at ``community_level`` 0), one more per
+    split below it. A community of the coarser levels above that pass
+    (at ``first_pass_levels`` or higher) is above every first-pass root:
+    its depth is negative, -1 at the first coarser level, so no cut at a
+    depth of 0 or more holds it and every such cut still covers each entity
+    once. A first-pass community's ancestors of the first pass are counted;
+    it has none above its root."""
+    for community in communities.values():
+        if community.level >= first_pass_levels:
+            community.depth = first_pass_levels - 1 - community.level
+            continue
+        depth = 0
+        parent = communities.get(community.parent_id or "")
+        while parent is not None and parent.level < first_pass_levels:
+            depth += 1
+            parent = communities.get(parent.parent_id or "")
+        community.depth = depth

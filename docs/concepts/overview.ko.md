@@ -171,10 +171,10 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   Leiden과 같음). 그 위의 상위 레벨은 커뮤니티 그래프를 다시 분할합니다.
   `min_community_size`보다 작은 연결 요소만 커뮤니티를 받지 않습니다. MS GraphRAG는 첫
   분할에서 멈추고, `max_cluster_size` 10을 쓰며, 기본값(`use_lcc`)으로는 가장 큰 연결
-  요소만 군집화합니다(`config/defaults.py`). 그래서 깊이를 세는 루트가 다릅니다. 여기의
-  `community_depth` D는 MS GraphRAG의 `community_level` D - k이고, k는 코퍼스에서 생긴 상위
-  레벨의 수입니다(엔티티 500~2,000개의 합성 그래프에서 여기의 깊이 1은 upstream의 레벨 0과
-  정확히 같았습니다). 한 쌍 사이의 관계는 그 쌍의 에지에 가중치를 더하며, MS GraphRAG는
+  요소만 군집화합니다(`config/defaults.py`). 깊이는 upstream의 `community_level`처럼 그 첫
+  분할(깊이 0)부터 셉니다. 그 위의 상위 레벨은 음수 깊이를 받고 전역 검색의 어떤 단면에도
+  들지 않습니다(엔티티 500~2,000개의 합성 그래프에서 깊이 0은 upstream의 레벨 0 커뮤니티와
+  정확히 같습니다). 한 쌍 사이의 관계는 그 쌍의 에지에 가중치를 더하며, MS GraphRAG는
   방향만 반대인 쌍 중 마지막 행 하나만 남깁니다(`index/operations/cluster_graph.py`)
   ([설계 문서 §4.3](../design/ingestion.md#43-communities-stages-10-11), 영문).
 - **리포트 입력.** 리포트는 커뮤니티 엔티티 사이의 관계를 모두 MS GraphRAG의 `sort_context`

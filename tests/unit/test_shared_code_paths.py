@@ -167,7 +167,9 @@ def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
         "entities": [Entity(id="e", name="e")],
         "relationships": [Relationship(id="r", source_id="e", target_id="e")],
         "communities": [
-            SimpleNamespace(id="c", text_unit_ids=[], level="0", parent="", children=[])
+            SimpleNamespace(
+                id="c", text_unit_ids=[], level="0", parent="", children=[], depth=None
+            )
         ],
         "community_reports": [SimpleNamespace(community_id="other")],
         "claims": ["cl"],

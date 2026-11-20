@@ -3,11 +3,14 @@
 """Where each community report sits in the community hierarchy.
 
 Global search maps over the reports of one *cut* of the hierarchy, as MS
-GraphRAG does (``read_indexer_reports``): the communities at depth ``D`` from
-the root, plus the leaves that stop above ``D``, so every entity is covered
-once. The hierarchy is built bottom-up (``Community.level`` 0 is the finest),
-while MS GraphRAG counts its ``community_level`` from the root, so the depth is
-derived here from the parent links and stored on each report.
+GraphRAG does (``read_indexer_reports``): the communities at depth ``D``,
+plus the leaves that stop above ``D``, so every entity is covered once. The
+hierarchy is built bottom-up (``Community.level`` 0 is the finest), while MS
+GraphRAG counts its ``community_level`` down from the first Leiden pass over
+the whole graph, so each community's depth is counted that way when the
+hierarchy is built (``Community.depth``, negative for the coarser levels
+above that pass) and stored on its report; a community without one (not
+built by the hierarchy) is at its distance from its root.
 
 A report belongs to cut ``D`` when ``depth <= D <= max_cut_depth``, where
 ``max_cut_depth`` is the report's own depth for a community with children and
@@ -31,10 +34,9 @@ def community_report_id(community_id: str) -> str:
 
 
 def community_depths(communities: list[Community]) -> dict[str, int]:
-    """Each community's distance from its root (a community with no parent).
-
-    A community whose parent is not in ``communities`` counts as a root.
-    """
+    """Each community's depth: its ``depth`` when the hierarchy set one,
+    else its distance from its root (a community with no parent, or whose
+    parent is not in ``communities``)."""
     parents = {c.id: c.parent for c in communities}
     depths: dict[str, int] = {}
 
@@ -56,7 +58,7 @@ def community_depths(communities: list[Community]) -> dict[str, int]:
 
     for community in communities:
         depth(community.id)
-    return depths
+    return {c.id: c.depth if c.depth is not None else depths[c.id] for c in communities}
 
 
 def attach_report_hierarchy(

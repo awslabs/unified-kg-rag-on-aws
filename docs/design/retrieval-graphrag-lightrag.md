@@ -258,14 +258,20 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
 bottom-up, `depth` from the root, parent and children, `max_cut_depth`). The
 cut at depth `D` is every community at depth `D` plus the leaves that stop
 above it (`depth <= D <= max_cut_depth`), MS GraphRAG's roll-up that covers
-every entity once. MS GraphRAG counts `community_level` from its root too,
-but its root is the first Leiden pass over the whole graph, while the
-coarser levels above that pass (§4.3) put the root here higher: depth `D`
-here is upstream's level `D - k`, k being the number of coarser levels the
-corpus produced (a probe on LFR graphs of 500, 1,000 and 2,000 entities:
-depth 1 here held exactly upstream's level-0 communities, and the default
-depth 2 reports of the size of upstream's level 1). Dynamic selection
-likewise starts its ratings at those coarser roots.
+every entity once. The depth counts as MS GraphRAG's `community_level`:
+from the first Leiden pass over the whole graph (upstream's level 0,
+`graphrag/graphs/hierarchical_leiden.py:29-40`; `read_indexer_reports`
+keeps `level <= community_level`, `query/indexer_adapters.py:87-89,219-225`),
+and the coarser levels built above that pass (§4.3) have negative depths, in
+no cut. On LFR graphs of 500, 1,000 and 2,000 entities the depth-0 cut held
+13/17/39 reports (upstream's level 0: 13/17/37) and the depth-1 cut
+72/116/230 (upstream's level 1: 75/126/235, at its `max_cluster_size` 10);
+the default depth 2, capped at 99 reports, maps 72/17/39, as it did when the
+depth counted from the coarser root
+(`tests/unit/test_community_hierarchy_quality.py` pins depth 0 to
+graspologic's level 0). Dynamic selection starts its ratings at depth 0,
+as upstream starts at level 0
+(`query/context_builder/dynamic_community_selection.py:70-71`).
 
 - **Fixed cut (default)** — every report of the cut is mapped, up to a cap:
   the cut is browsed by rank, one report more than the cap
@@ -350,7 +356,6 @@ The deliberate differences (a file is relative to the `graphrag/` package):
 |---|---|---|---|
 | Relationships grouped by source and target (`index/operations/extract_graph`) | typed, directed relationship ids | two relationship types between a pair stay two facts | design |
 | Leiden: one pass, `max_cluster_size` 10, one trial of one iteration, only the largest component (`use_lcc`) | the same first pass, communities over 20 split again, coarser levels above it, 3 trials with 2 extra iterations, small components skipped | report size against corpus size; the best partition of 3 seeded runs | first pass: `test_community_hierarchy_quality.py`; the rest unmeasured (§4.3) |
-| `community_level` counted from the first pass | `community_depth` counted from the coarser root: depth `D` is upstream's level `D - k` | follows from the coarser levels | probe (§6.1.1); answers unmeasured |
 | A reversed pair keeps the last row's weight (`index/operations/cluster_graph.py`) | every relationship between a pair adds its weight | the pair's total strength | unmeasured |
 | Each entity hands the report context one relationship, its first (`graph_context/context_builder.py`); entities without one are left out (`sort_context.py`) | every relationship among the community's entities, in `sort_context`'s order; the unlinked entities last | a report describes the community's relationships | recorded answers: upstream's reports saw 217 of the 380 relationships of 30 communities |
 | Report context 8,000 tokens with communities of at most 10 | 4,000 tokens, communities of at most 20 | cost | unmeasured |

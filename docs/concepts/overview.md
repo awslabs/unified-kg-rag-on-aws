@@ -197,11 +197,11 @@ purpose:
   partition the graph of communities. Only components smaller than
   `min_community_size` get no community. MS GraphRAG stops at the first
   partition, with `max_cluster_size` 10 and, by default (`use_lcc`), only
-  the largest connected component (`config/defaults.py`). So depths count
-  from another root: `community_depth` D here is MS GraphRAG's
-  `community_level` D - k, where k is the number of coarser levels the
-  corpus produced (on synthetic graphs of 500 to 2,000 entities, depth 1
-  here was upstream's level 0 exactly). The relationships between a pair
+  the largest connected component (`config/defaults.py`). Depths count as
+  upstream's `community_level` does, from that first partition (depth 0);
+  the coarser levels above it are negative and in no cut of global search
+  (on synthetic graphs of 500 to 2,000 entities, depth 0 holds exactly
+  upstream's level-0 communities). The relationships between a pair
   add their weights on its edge, where MS GraphRAG keeps one row of a
   reversed pair, the last (`index/operations/cluster_graph.py`)
   ([Design §4.3](../design/ingestion.md#43-communities-stages-10-11)).

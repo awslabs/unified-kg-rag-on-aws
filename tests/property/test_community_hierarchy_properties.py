@@ -84,8 +84,12 @@ def test_levels_and_cuts_cover_every_clustered_entity_once(
     logging.disable(logging.WARNING)
     try:
         unclustered = small_component_nodes(graph, config.min_community_size)
-        partitions, _ = build_hierarchy(graph, config)
-        communities, node_to_leaf = hierarchical_communities(partitions, unclustered)
+        hierarchy = build_hierarchy(graph, config)
+        partitions = hierarchy.partitions
+        communities, node_to_leaf = hierarchical_communities(
+            partitions, unclustered, hierarchy.first_pass_levels
+        )
+        first_pass = partition_tree(graph, config)
     finally:
         logging.disable(logging.NOTSET)
 
@@ -111,6 +115,25 @@ def test_levels_and_cuts_cover_every_clustered_entity_once(
             assert all(c.level < community.level for c in children)
             _assert_covers_once([c.nodes for c in children], community.nodes)
 
+    # Depth 0 is the first Leiden pass over the whole graph, MS GraphRAG's
+    # community_level 0 (graspologic's hierarchical_leiden level 0), when
+    # max_levels kept it; the coarser levels above it are negative.
+    def height(node) -> int:  # noqa: ANN001 - a ClusterNode
+        return 1 + max(map(height, node.children)) if node.children else 0
+
+    if max(map(height, first_pass)) < config.max_levels:
+        assert {frozenset(c.nodes) for c in communities.values() if c.depth == 0} == {
+            frozenset(root.members)
+            for root in first_pass
+            if not root.members <= unclustered
+        }
+    for community in communities.values():
+        coarse = community.level >= hierarchy.first_pass_levels
+        assert (community.depth < 0) == coarse
+        if community.parent_id:
+            parent = communities[community.parent_id]
+            assert parent.depth < community.depth
+
     records = [
         Community(
             id=c.community_id,
@@ -118,6 +141,7 @@ def test_levels_and_cuts_cover_every_clustered_entity_once(
             level=str(c.level),
             parent=c.parent_id or "",
             children=c.children_ids,
+            depth=c.depth,
         )
         for c in communities.values()
     ]
