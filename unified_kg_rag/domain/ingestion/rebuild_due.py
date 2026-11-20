@@ -13,9 +13,11 @@ stale, each with what applies it:
 - ``communities`` (``RebuildRemedy.RESET``): the community counters crossed
   an ``indexing.community_compaction`` threshold, or the run that wrote the
   record measured a drift that recommends one
-  (``community_drift.reset_reasons``); and, whatever the thresholds, the
-  record lists community reports kept after a run removed text they were
-  written from (``IndexBuildRecord.outdated_reports``): they may state it.
+  (``community_drift.reset_reasons``); and (``RebuildRemedy.NEXT_RUN``),
+  whatever the thresholds, the record lists community reports kept after a
+  run removed text they were written from and could not write them again
+  from what remains (``IndexBuildRecord.outdated_reports``): they may state
+  it, and the next incremental run tries again (``report_refresh``).
 - ``answer_settings`` (reset): the community reports or description
   summaries the last full build wrote were made under other settings
   (prompt, model, language; ``cache_keys.corpus_answer_fingerprints``)
@@ -179,12 +181,13 @@ def _outdated_report_reasons(
     return [
         RebuildReason(
             kind=RebuildReasonKind.COMMUNITIES,
-            remedy=RebuildRemedy.RESET,
+            remedy=RebuildRemedy.NEXT_RUN,
             detail=f"{len(outdated)} community reports were kept after "
-            "documents they were written from were deleted or changed, for "
-            "the other text they cite: they may still state the removed text "
-            "and are flagged outdated where they are read; a run with "
-            "indexing.reset: true writes them again, a model call each",
+            "documents they were written from were deleted or changed, and "
+            "the run could not write them again from what remains: they may "
+            "still state the removed text and are flagged outdated where "
+            "they are read; the next incremental run tries again, a model "
+            "call each (a run with indexing.reset: true writes every report)",
             settings=[IndexArtifact.COMMUNITY_REPORTS.value],
         )
     ]

@@ -287,10 +287,14 @@ Bugs present in 0.3.0.
 - A community report written partly from a deleted or edited document was kept for the other documents' text units
   and served as it was: local, global and DRIFT answers could state the removed text, cited to the remaining
   documents, and once the run ended nothing said so (`rebuild_due_reasons` 0: the WARNING and the drift metric were
-  the only trace). The removal now flags such a report `outdated` in the stores (a query reads it in the report's
-  source metadata, and on a global key point drawn from it), the build record lists them (`outdated_reports`, kept
-  until a run writes or deletes them) and every reader of the record names them as a `communities` rebuild reason
-  (`settings: [community_reports]`), whatever `on_drift_recommendation` says.
+  the only trace). The incremental run now writes such a report again from its community's remaining members, by the
+  summary tree's rule (a parent's too; a community without a member left loses its report), as a full build's
+  detector reads them, one model call each in the indexing stage's usage and the run's `processing.max_run_*` budget
+  (none when the input is unchanged: the answer is kept in the extraction store). One it cannot write again stays
+  flagged `outdated` in the stores (a query reads it in the report's source metadata, and on a global key point drawn
+  from it), listed in the build record (`outdated_reports`) and named by every reader of the record as a
+  `communities` rebuild reason (`settings: [community_reports]`, remedy `next_run`) whatever
+  `on_drift_recommendation` says, until a later run writes it.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server

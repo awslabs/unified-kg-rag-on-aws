@@ -1750,6 +1750,19 @@ class OpenSearchIndexer(VectorIndexer):
             with_filters=False,
         )
 
+    def read_community_reports(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[CommunityReport] | None:
+        """The stored reports ``ids`` (see the port), read by id."""
+        return [
+            CommunityReport.model_validate(source)
+            for source in self._read_sources(
+                self.opensearch_config.community_reports_index_prefix,
+                sorted(set(ids)),
+                suffix,
+            )
+        ]
+
     def mark_reports_outdated(
         self, report_ids: list[str], suffix: str | None = None
     ) -> IndexingStats:

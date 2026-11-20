@@ -26,9 +26,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
+    IndexArtifact,
     ModelRole,
     PipelineStageType,
 )
@@ -51,6 +53,7 @@ __all__ = [
     "price_stages",
     "run_model_roles",
     "unpriced_run_models",
+    "writes_reports",
 ]
 
 EstimateBound = Literal["exact", "at most", "about"]
@@ -87,6 +90,14 @@ GRAPH_DEPENDENT_STAGES: dict[str, tuple[str, Callable[[Config], bool]]] = {
 
 _SUMMARY = (ModelRole.DESCRIPTION_SUMMARY, _summarizes)
 
+
+def writes_reports(config: Config) -> bool:
+    """Whether a run of ``config`` writes community reports: community
+    detection's, and an incremental indexing's of the stored communities a
+    removal left outdated (``application.ingestion.report_refresh``)."""
+    return IndexArtifact.COMMUNITY_REPORTS in artifacts_to_build(config)
+
+
 # The model roles each stage calls, each with whether a config's run calls
 # it at all: the models a run's budget (processing.max_run_usd) must price.
 # Every role a stage's code calls is listed (tested against the stage
@@ -120,7 +131,10 @@ STAGE_MODEL_ROLES: dict[
         (ModelRole.COMMUNITY_REPORT, GRAPH_DEPENDENT_STAGES["community_detection"][1]),
         _SUMMARY,
     ),
-    PipelineStageType.INDEXING: (_SUMMARY,),
+    PipelineStageType.INDEXING: (
+        _SUMMARY,
+        (ModelRole.COMMUNITY_REPORT, writes_reports),
+    ),
     PipelineStageType.SUMMARY_TREE: (
         (ModelRole.SUMMARY_TREE, GRAPH_DEPENDENT_STAGES["summary_tree"][1]),
     ),

@@ -66,6 +66,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     unit_source_files,
     warn_about_unapplied_retired_scopes,
 )
+from unified_kg_rag.application.ingestion.report_refresh import ReportRefresh
 from unified_kg_rag.application.ingestion.source_parsing import (
     SourceFileParser,
     reusable_records,
@@ -106,6 +107,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     is_unparsed,
     store_namespace_tag,
 )
+from unified_kg_rag.domain.ingestion.estimate import writes_reports
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
@@ -2829,6 +2831,8 @@ class IndexingStage(_RegistryStage):
             self.indexing_manager.vector_indexer.set_embedding_reuse(False)
         # Injected by the pipeline for the incremental commit/registry write-back.
         self._doc_status = doc_status
+        # Made on the first incremental commit that writes reports.
+        self._refresh: ReportRefresh | None = None
 
     def close(self) -> None:
         """Close the indexers' Neptune/OpenSearch clients (best-effort)."""
@@ -3197,8 +3201,9 @@ class IndexingStage(_RegistryStage):
         self, context: PipelineContext, results: Mapping[str, IndexingStats]
     ) -> str | None:
         """Whether the run writes the build record: ``"run"`` unless it is
-        an incremental run that found nothing to index and wrote no item
-        (the indices keep the record of the run that did); then
+        an incremental run that found nothing to index and wrote no item, nor
+        an outdated report again (the indices keep the record of the run
+        that did); then
         ``"rewrite"`` when the registry holds documents of the configured
         suffix and its indices hold no record (a write the store rejected,
         or a build from before records), else ``None``."""
@@ -3208,6 +3213,8 @@ class IndexingStage(_RegistryStage):
             or self.config.indexing.reset
             or not delta.is_empty
             or any(s.total_items or s.failed_items for s in results.values())
+            # It wrote outdated community reports again (or deleted them).
+            or any(self.indexing_manager.refreshed_reports.values())
         ):
             return "run"
         vector_indexer = self.indexing_manager.vector_indexer
@@ -3364,11 +3371,16 @@ class IndexingStage(_RegistryStage):
             written_reports[BaseIndexer.get_suffix(report)].add(report.id)
         # Written by a delta (an incremental run, or one whose scope the
         # registry knew no document of): counted once per commit.
+        by_delta = (
+            delta is not None and not self.config.indexing.reset and not rewritten
+        )
+        # A run with nothing to index writes a record only when it wrote
+        # outdated reports again (_build_record_write): no commit to count.
         commit = (
             commit_identity(
                 context.pipeline_id, delta, context.incremental_fingerprints
             )
-            if delta is not None and not self.config.indexing.reset and not rewritten
+            if delta is not None and by_delta and not delta.is_empty
             else None
         )
         records: dict[str, IndexBuildRecord] | None = {}
@@ -3390,12 +3402,12 @@ class IndexingStage(_RegistryStage):
                 )
             if not rewritten:
                 update["outdated_reports"] = (
-                    sorted(manager.outdated_reports.get(suffix, ()))
-                    if commit is not None
-                    else []
+                    sorted(manager.outdated_reports.get(suffix, ())) if by_delta else []
                 )
                 update["reports_written"] = sorted(
-                    written_reports[suffix] | manager.deleted_reports.get(suffix, set())
+                    written_reports[suffix]
+                    | manager.deleted_reports.get(suffix, set())
+                    | manager.refreshed_reports.get(suffix, set())
                 )
             if not incremental and (not rewritten or added[suffix]):
                 update["communities"] = CommunityCounters(
@@ -3491,7 +3503,9 @@ class IndexingStage(_RegistryStage):
         claims: list[Claim],
         before_registry: Callable[[Mapping[str, IndexingStats]], None] | None = None,
     ) -> tuple[dict[str, Any], CommunityDrift | None]:
-        """Index the run's delta and its community drift (``index_delta``)."""
+        """Index the run's delta and its community drift (``index_delta``),
+        writing again the community reports its removals left outdated
+        (``ReportRefresh``) where the run builds reports."""
         return index_delta(
             self._build_doc_status_store,
             self.indexing_manager,
@@ -3503,7 +3517,26 @@ class IndexingStage(_RegistryStage):
             community_reports,
             claims,
             before_registry,
+            refresh_reports=self._report_refresh(),
         )
+
+    def _report_refresh(self) -> ReportRefresh | None:
+        """The refresh of outdated community reports (one per stage), or
+        ``None`` when the run writes no report (a methodology without them,
+        report generation off)."""
+        if not writes_reports(self.config):
+            return None
+        if self._refresh is None:
+            manager = self.indexing_manager
+            # The report answers are kept by their input, as a full build's:
+            # the store reads the indexing's own vector store (it is not
+            # closed with it).
+            self._refresh = ReportRefresh(
+                manager,
+                self.providers,
+                records=ExtractionStore(self.config, lambda: manager.vector_indexer),
+            )
+        return self._refresh
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:
         # Fail if any index type failed entirely (0 successes) OR exceeded the

@@ -30,11 +30,13 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 )
 from unified_kg_rag.domain.ingestion.community_clustering import (
     build_hierarchy,
+    community_name,
     entity_subgraph,
     hierarchical_communities,
     small_component_nodes,
     with_usable_weights,
 )
+from unified_kg_rag.domain.ingestion.community_hierarchy import community_report_id
 from unified_kg_rag.domain.ingestion.contributions import (
     REPORT_RECORD_ATTRIBUTE,
     record_key,
@@ -67,7 +69,6 @@ from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
-from unified_kg_rag.shared.utils import generate_stable_id
 
 logger = get_logger(__name__)
 
@@ -198,13 +199,7 @@ class CommunityDetector:
         given small components that reach ``min_community_size`` entities in
         the whole graph: they are clustered (see ``small_component_nodes``).
         """
-        self._report_claims = (
-            self._claims_by_subject(graph)
-            if self.config.processing.claim_extraction.enabled
-            else {}
-        )
-        self.graph = with_usable_weights(entity_subgraph(graph))
-        graph = self.graph
+        graph = self.report_on(graph).graph
         self.unclustered = small_component_nodes(
             graph, self.community_detection_config.min_community_size, whole_graph
         )
@@ -214,6 +209,21 @@ class CommunityDetector:
             graph.number_of_edges(),
         )
         self.detect_communities(empty_expected=empty_expected)
+        return self
+
+    def report_on(self, graph: nx.Graph) -> "CommunityDetector":
+        """Read the reports' members from ``graph`` (its entities, their
+        edges and, when claim extraction is on, the claims about them):
+        :meth:`generate_reports` packs each community's input from it, and
+        ranks its members by their degree in it. Detection does this first;
+        a report written again for a stored community (an incremental run's
+        refresh) does it alone, on the stored members and their edges."""
+        self._report_claims = (
+            self._claims_by_subject(graph)
+            if self.config.processing.claim_extraction.enabled
+            else {}
+        )
+        self.graph = with_usable_weights(entity_subgraph(graph))
         return self
 
     @staticmethod
@@ -376,7 +386,7 @@ class CommunityDetector:
         return Community(
             id=hier_comm.community_id,
             short_id=label,
-            name=f"Level {hier_comm.level} Community {label.rsplit('_C', 1)[-1]}",
+            name=community_name(hier_comm.level, label),
             name_embedding=None,
             level=str(hier_comm.level),
             parent=hier_comm.parent_id or "",
@@ -405,6 +415,7 @@ class CommunityDetector:
         records: ReportRecords | None = None,
         *,
         empty_expected: bool = False,
+        sub_reports: Mapping[str, CommunityReport] | None = None,
     ) -> tuple[list[CommunityReport], list[str]]:
         """Generate one report per community.
 
@@ -427,6 +438,11 @@ class CommunityDetector:
                 (``REPORT_RECORD_ATTRIBUTE``).
             empty_expected: No communities is no fault (a run with nothing
                 to index): logged at debug level, not as a warning.
+            sub_reports: Community id -> the stored report of a child of a
+                community in ``communities`` that is not itself among them
+                (an incremental refresh writes only some of the hierarchy):
+                a parent's roll-up reads it as it reads a report generated
+                beside it.
 
         Returns:
             One report per community that produced a non-empty LLM result, and
@@ -456,7 +472,7 @@ class CommunityDetector:
                 self.community_detection_config.report_generation.enable_sub_community_rollup
             ):
                 reports, failed = self._generate_reports_with_rollup(
-                    communities, graph_attributes
+                    communities, graph_attributes, sub_reports
                 )
             else:
                 reports, failed = self._generate_reports_flat(
@@ -691,7 +707,10 @@ class CommunityDetector:
         return self._run_report_batch(report_inputs, communities, graph_attributes)
 
     def _generate_reports_with_rollup(
-        self, communities: list[Community], graph_attributes: dict[str, Any]
+        self,
+        communities: list[Community],
+        graph_attributes: dict[str, Any],
+        sub_reports: Mapping[str, CommunityReport] | None = None,
     ) -> tuple[list[CommunityReport], list[str]]:
         """Bottom-up per-level generation with sub-community roll-up.
 
@@ -709,7 +728,7 @@ class CommunityDetector:
             except (TypeError, ValueError):
                 return 0
 
-        reports_by_id: dict[str, CommunityReport] = {}
+        reports_by_id: dict[str, CommunityReport] = dict(sub_reports or {})
         all_reports: list[CommunityReport] = []
         total_failed: list[str] = []
 
@@ -1106,7 +1125,7 @@ class CommunityDetector:
             result.get("rating_explanation"), join=True
         )
 
-        report_id = generate_stable_id(f"report:{community.id}")
+        report_id = community_report_id(community.id)
         current_time = generated_at or datetime.now()
 
         attributes = {

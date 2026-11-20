@@ -48,6 +48,13 @@ def community_label(level: int, community_id: str) -> str:
     return f"L{level}_C{community_id[:8]}"
 
 
+def community_name(level: int, label: str) -> str:
+    """A community's name, from its level and :func:`community_label`: its
+    report's title starts with it, and it is part of the report's record
+    key."""
+    return f"Level {level} Community {label.rsplit('_C', 1)[-1]}"
+
+
 def canonical_graph(graph: nx.Graph) -> nx.Graph:
     """Copy ``graph`` with nodes and edges inserted in sorted order.
 

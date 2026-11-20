@@ -14,9 +14,10 @@ entity's level-0 communities is the number of clusterings that placed it.
 A run that removes text units (a deleted or edited document) deletes the
 communities and reports citing only them, but keeps the ones citing other
 text units too: their reports were written from the removed text and may
-still state it. The removal flags them outdated in the stores and the build
-record lists them (``IndexBuildRecord.outdated_reports``, a rebuild reason
-until a run writes them again).
+still state it. The removal flags them outdated in the stores and the
+commit writes them again from what remains (``report_refresh``); those it
+cannot are listed in the build record (``IndexBuildRecord.outdated_reports``,
+a rebuild reason until a run writes them again).
 
 Across runs, the build record's community counters (``CommunityCounters``)
 count the incremental commits and the communities since the last full
@@ -67,8 +68,9 @@ class CommunityDrift(BaseModel):
     outdated_reports: int = Field(
         default=0,
         description="Stored community reports kept although they cite a text "
-        "unit this run removed: they may state a deleted or edited document's "
-        "text",
+        "unit this run removed, which it could not write again from what "
+        "remains (report_refresh): they may state a deleted or edited "
+        "document's text",
     )
     unclustered_entities: int = Field(
         default=0,

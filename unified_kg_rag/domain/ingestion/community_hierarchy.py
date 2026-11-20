@@ -18,9 +18,16 @@ store applies.
 from __future__ import annotations
 
 from unified_kg_rag.domain.models import Community, CommunityReport
+from unified_kg_rag.shared.utils import generate_stable_id
 
 # A leaf stands for every deeper cut.
 LEAF_CUT_DEPTH = 1_000_000
+
+
+def community_report_id(community_id: str) -> str:
+    """The id of the report of the community ``community_id``: one report
+    per community, so a report written again replaces it."""
+    return generate_stable_id(f"report:{community_id}")
 
 
 def community_depths(communities: list[Community]) -> dict[str, int]:

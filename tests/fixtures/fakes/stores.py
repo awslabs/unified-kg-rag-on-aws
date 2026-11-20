@@ -752,6 +752,17 @@ class FakeVectorStore(_Recorder):
         self.outdated_reports -= {(BaseIndexer.get_suffix(r), r.id) for r in reports}
         return self._put("community_reports", reports)
 
+    def read_community_reports(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[Any] | None:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get("community_reports", {})
+        return [
+            bucket[i].model_copy(deep=True)
+            for i in sorted(set(ids))
+            if i in bucket and BaseIndexer.get_suffix(bucket[i]) == wanted
+        ]
+
     def mark_reports_outdated(
         self, report_ids: list[str], suffix: str | None = None
     ) -> IndexingStats:

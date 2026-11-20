@@ -60,6 +60,7 @@ class _RecordingManager:
         self._delete_failures = delete_failures
         self.outdated_reports: dict[str, set[str]] = {}
         self.deleted_reports: dict[str, set[str]] = {}
+        self.refreshed_reports: dict[str, set[str]] = {}
         self.deleted_communities: dict[str, set[str]] = {}
         # The graph still holds what the registry lists.
         self.graph_indexer = SimpleNamespace(

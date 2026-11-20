@@ -297,9 +297,9 @@ unless noted.
    failed graph or claim extraction check is logged at DEBUG. Extraction
    records only removed text units named are then deleted (best effort).
 
-**Limitation:** shared communities and reports keep what a changed or deleted
-document contributed, and a community a re-keyed entity's old id, until a
-full rebuild (§5.5); descriptions, names, ids, types, filters, ranks and
+**Limitation:** shared communities keep their clustering, and a community a
+re-keyed entity's old id, until a full rebuild (§5.5); their reports are
+written again from what remains (§5.5); descriptions, names, ids, types, filters, ranks and
 claims are derived again on every run. A kept report's findings cite the
 ids of records: a re-key points them at the new id before it deletes the
 old one (the stored reports citing it are found by their flat
@@ -563,9 +563,35 @@ derives from that id too: a positional `C{i}` would rename every community
 sorted after an added one, and the name is part of a report's record key and
 of its parent's roll-up text, so a reset would re-ask the model for
 unchanged communities. A corpus community goes once none of
-its text units is stored; shared ones keep their report until a full rebuild,
-the only path that re-partitions the whole graph
-(`indexing.community_drift_threshold` reports when one is due). Each delta's
+its text units is stored; a shared one keeps its members until a full
+rebuild, the only path that re-partitions the whole graph
+(`indexing.community_drift_threshold` reports when one is due), but not its
+report: the summary tree's rule (§6.5) applies, a summary citing a removed
+text unit is made again from what remains. The removal finds the reports
+citing a removed unit and keeping others (a report cites its members' units,
+so a parent's are its children's: the chain up to the root is found), flags
+them outdated in the vector store and lists them in the run state; the
+commit, once its writes succeeded, writes each again (`report_refresh`,
+`IncrementalIndexer._refresh_reports`) from what the stores then hold, as a
+full build's detector reads it: the stored entities whose level-0
+communities (`Entity.community_ids`) lie under the community (read through
+the stored reports' `child_community_ids`; the candidates are the entities
+citing a unit the report cites and those the removal stripped), their
+derived descriptions, the edges among them, the claims about them and their
+degrees over every stored edge, with the stored reports of the children not
+written again rolled up (an outdated one is not). The answer is kept in the
+extraction store by its input, as a full build's, so an unchanged input
+costs no call; otherwise one call per report, in the indexing stage's usage
+(and so the run's `processing.max_run_*` budget, which prices the report
+role for the indexing stage). A community left without a document-backed
+member loses its report. A report the run cannot write again (the model
+failed, a read failed, a report below it is missing) stays flagged and in
+the build record (`IndexBuildRecord.outdated_reports`, a `communities`
+rebuild reason with remedy `next_run`), and the next run, a run with
+nothing to index included, tries again. A property test checks that the
+model is asked with what a full build's detector packs for the same
+community over the surviving graph
+(`tests/property/test_report_refresh_properties.py`). Each delta's
 root communities join every cut of the hierarchy, so global search's cut
 grows until a rebuild; the cap and the shallower-cut fallback (§6.1.1) bound
 it, and the drift metrics report it (`added_roots`). Rejected alternatives:

@@ -118,6 +118,7 @@ class TextUnitRemoval:
         shared_entities, shared_relationships, shared_claims, doomed = (
             self._shared_and_doomed(citing, text_unit_ids)
         )
+        m.stripped_entities.setdefault(suffix, set()).update(shared_entities)
         logger.info(
             "Removing %d artifacts of %d text units in '%s'; stripping %d "
             "shared entities, %d relationships and %d claims",
