@@ -77,6 +77,10 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - `attr_<key>`는 문서 `filters` 메타데이터의 `<key>` 항목과 비교합니다. OpenSearch는 이를
   엄격하게(fail-closed) 적용하므로 속성이 없는 항목은 제외됩니다. 여러 문서에서 나온
   엔티티, 관계, 주장, 커뮤니티 리포트는 그 문서 중 하나가 일치하면 일치합니다.
+- 모든 문서에는 경로 필터가 붙습니다. `file`은 코퍼스 루트 기준 상대 경로(`insert_documents`의
+  id), `folder`는 그 문서를 담은 각 폴더입니다. `--filters attr_folder:contracts`는 질문을
+  `contracts/` 아래 모든 문서로, `attr_file:contracts/2024/acme.txt`는 파일 하나로 좁힙니다
+  ([경로 필터](../reference/filters.md#path-filters)(영문)).
 - 엔티티와 주장의 `type`, 주장의 `status`는 소문자로 저장되고 필터 값은 소문자 형태로도
   비교하므로 `type:PERSON`도 `person`과 일치합니다. 불리언·숫자 필드는 그 유형의 값을 받습니다(`in_schema:false`, `rank:2`).
 

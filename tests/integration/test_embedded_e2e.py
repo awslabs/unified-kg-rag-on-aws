@@ -79,10 +79,12 @@ from unified_kg_rag.domain.models.config import (
     ChunkLengthUnit,
     LanguageCode,
 )
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
     EmbeddingModelError,
+    InvalidFilterError,
     ModelUnreachableError,
     StoreRequestRejectedError,
     query_failure_ids,
@@ -1162,3 +1164,144 @@ def test_concurrent_same_text_queries_each_name_their_own_failure(
         assert isinstance(second, EmbeddingModelError)
         ids = [query_failure_ids(e).get("query_id") for e in (first, second)]
         assert all(ids) and ids[0] != ids[1]
+
+
+# A corpus in folders: each document's path filters (file, folder) scope a
+# question to a file or a folder at any depth.
+_FOLDERED = {
+    "contracts/2024/acme.txt": "Vendor supplies widgets to Buyer.",
+    "contracts/globex.txt": "Buyer pays Vendor for gadgets.",
+    "logistics/depot.txt": "Depot stores widgets for Vendor.",
+    "notes.txt": "Carrier moves gadgets for Depot.",
+}
+
+
+def _cited_paths(out: RAGOutput) -> set[str]:
+    """The documents an answer's text units come from, by relative path."""
+    return {
+        path
+        for result in out.search_results.results
+        if result.metadata.get("section_type") in (None, "text_unit")
+        and (path := source_fields.relative_path(result.metadata))
+    }
+
+
+def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend(
+    tmp_path: Path, no_aws, store_harness: StoreHarness
+) -> None:
+    # A directory corpus carried no document filter, so a question could be
+    # scoped to a file or folder only from Python (InputDocument.filters).
+    # Ingestion stamps each document's path filters; every store applies them.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    _on_harness_stores(config, store_harness)
+    server = FakeOllama(_respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
+    source = tmp_path / "corpus"
+    for relative, text in _FOLDERED.items():
+        (source / relative).parent.mkdir(parents=True, exist_ok=True)
+        (source / relative).write_text(text)
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    vectors = providers.build_vector_indexer()
+    try:
+        rows = vectors.scan_text_units(None, fields=["attributes"])
+    finally:
+        vectors.close()
+    stamped = {
+        row["attributes"]["filters"]["file"]: row["attributes"]["filters"].get("folder")
+        for row in rows
+    }
+    assert stamped == {
+        "contracts/2024/acme.txt": ["contracts", "contracts/2024"],
+        "contracts/globex.txt": ["contracts"],
+        "logistics/depot.txt": ["logistics"],
+        "notes.txt": None,
+    }
+
+    scopes = {
+        "attr_folder:contracts": (
+            {"attr_folder": "contracts"},
+            {"contracts/2024/acme.txt", "contracts/globex.txt"},
+        ),
+        "attr_folder:contracts/2024": (
+            {"attr_folder": "contracts/2024"},
+            {"contracts/2024/acme.txt"},
+        ),
+        "attr_file": (
+            {"attr_file": "logistics/depot.txt"},
+            {"logistics/depot.txt"},
+        ),
+    }
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        for strategy in (
+            SearchStrategy.NAIVE,
+            SearchStrategy.MIX,
+            SearchStrategy.LOCAL,
+        ):
+            for name, (filters, allowed) in scopes.items():
+                out = chain.invoke(
+                    RAGInput(
+                        query="Who stores the widgets for Vendor?",
+                        search_strategy=strategy,
+                        filters=filters,
+                    )
+                )
+                assert isinstance(out, RAGOutput)
+                assert not out.metadata.get("error"), (strategy, name, out.metadata)
+                cited = _cited_paths(out)
+                assert cited and cited <= allowed, (strategy, name, cited)
+    finally:
+        chain.close()
+
+
+def test_a_path_filter_on_a_namespace_built_without_them_is_refused(
+    tmp_path: Path, no_aws, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A namespace an earlier version built holds documents without the path
+    # filters: a file or folder filter would match nothing (or, after an
+    # incremental run, only the documents indexed since), silently.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    server = FakeOllama(_respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
+    source = tmp_path / "corpus"
+    (source / "logistics").mkdir(parents=True)
+    (source / "logistics" / "depot.txt").write_text(ANSWER)
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        record = asyncio.run(chain.aread_build_record(None))
+        assert record is not None
+        assert record["document_filter_keys"] == ["file", "folder"]
+        earlier = {k: v for k, v in record.items() if k != "document_filter_keys"}
+
+        async def read_earlier(suffix: str | None) -> dict[str, Any]:
+            return earlier
+
+        monkeypatch.setattr(chain, "aread_build_record", read_earlier)
+        chain._held_artifacts.clear()
+        calls = len(server.chat_models)
+        for key in ("attr_folder", "attributes.filters.file"):
+            with pytest.raises(InvalidFilterError, match="indexing.reset: true"):
+                chain.invoke(
+                    RAGInput(
+                        query="Who stores the gadgets?",
+                        search_strategy=SearchStrategy.NAIVE,
+                        filters={key: "logistics"},
+                    )
+                )
+        # Refused before any model call; another document key still runs.
+        assert len(server.chat_models) == calls
+        out = chain.invoke(
+            RAGInput(
+                query="Who stores the gadgets?",
+                search_strategy=SearchStrategy.NAIVE,
+                filters={"attr_region": "emea"},
+            )
+        )
+        assert isinstance(out, RAGOutput)
+    finally:
+        chain.close()

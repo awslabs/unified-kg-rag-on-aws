@@ -119,7 +119,9 @@ if __name__ == "__main__":
 - An `id` is the document's key in its source scope, as a relative path
   is in a corpus directory (no `..`, no leading `/`); sources cite the
   document by `file_name`, else the id's last segment. `filters` are its
-  document attributes (queries filter on `attr_<key>`).
+  document attributes (queries filter on `attr_<key>`), beside the path
+  filters ingestion adds from the id (`file`, `folder`; a key `filters`
+  gives keeps its value: [Path filters](../reference/filters.md#path-filters)).
 - The documents belong to the source scope `"api"` unless `source_scope=`
   names another; a directory corpus's documents are deleted by their
   relative paths with `source_scope=` its scope (its `source_scope`, or

@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The CLIs log to stderr in text mode too, so stdout holds only a run's output (`run-rag ... > answer.txt` keeps the
   answer alone); `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
   stderr (`2>&1` keeps both on one stream).
+- A filter on `attr_file` or `attr_folder` (*Added*: path filters) is refused on a namespace built before this
+  release, a document's own `file` or `folder` filter included, until it is rebuilt (*Upgrading*).
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
@@ -61,8 +63,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `-c opensearch_korean_analyzer=cjk` to keep them until then. A namespace indexed incrementally keeps the name
    matches 0.3.0's MinHash index made among the names it holds: a run
    matches its delta's names with the new index; its community reports keep 0.3.0's depths, which global search reads
-   one or more levels too coarse beside the depths a later run writes (*Breaking changes*). Run with
-   `indexing.reset: true` to match the whole corpus again and write every report at its depth. With
+   one or more levels too coarse beside the depths a later run writes (*Breaking changes*); and its documents have no
+   path filters (*Added*), so a query with `attr_file` or `attr_folder` is refused there. Run with
+   `indexing.reset: true` (on every backend) to match the whole corpus again, write every report at its depth and
+   stamp the path filters. With
    `processing.deduplicate` on, deduplication decides otherwise both ways (*Fixed*): the numbers rule keeps template
    documents 0.3.0 dropped as copies, which the next run indexes as new documents, and the exact index finds
    near-copies 0.3.0 missed, so a run drops more of them and an incremental run deletes the copies 0.3.0 indexed
@@ -255,6 +259,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   fake models, and the LLM-free scores of the held-out `test` half must equal `tests/fixtures/golden_metrics.json`,
   which `scripts/gen_golden_metrics.py` regenerates
   ([Golden metrics](docs/guides/evaluate.md#golden-metrics-the-ci-regression-gate)).
+- Path filters: ingestion stamps each document's path relative to the corpus root as the document filter `file`, and
+  each folder holding it as `folder`, so `attr_file` and `attr_folder` scope a question to a file or a folder at any
+  depth on every store, from a directory corpus too (only `InputDocument.filters` gave a document filters before).
+  A key a document's own filters give keeps its value. The build record names them (`document_filter_keys`), and a
+  namespace built without them refuses the keys ([Path filters](docs/reference/filters.md#path-filters)).
 
 ### Changed
 

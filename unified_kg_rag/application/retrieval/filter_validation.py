@@ -24,14 +24,18 @@ from unified_kg_rag.adapters.retrieval.base import (
 from unified_kg_rag.adapters.retrieval.strategy_registry import routable_strategies
 from unified_kg_rag.adapters.storage.filter_schema import SCHEMA_ANNOTATION_FIELDS
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
+from unified_kg_rag.domain.ingestion.methodologies import NamespaceHoldings
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import IndexArtifact, SearchStrategy
 from unified_kg_rag.domain.retrieval.filters import (
+    ATTRIBUTE_KEY_PREFIX,
+    DOCUMENT_FILTERS_PREFIX,
     check_filter_values,
     typed_filter_values,
     union_filter_fields,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import readable_index_prefixes
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import InvalidFilterError, get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 from unified_kg_rag.shared.logging import log_failure
@@ -266,19 +270,56 @@ def validate_filter_keys(
         )
 
 
+def check_path_filter_keys(
+    filters: dict[str, Any] | None, holdings: NamespaceHoldings, namespace: str
+) -> None:
+    """Refuse a filter on a path filter key (``attr_file``, ``attr_folder``
+    or their ``attributes.filters.<key>`` form) on a namespace whose
+    documents may not carry it (``NamespaceHoldings.unstamped_filter_keys``:
+    one an earlier version built, or a delta over it): it would match only
+    the documents indexed since, an answer from part of the corpus, not an
+    error."""
+    unstamped = holdings.unstamped_filter_keys
+    if not filters or not unstamped:
+        return
+    asked = sorted(
+        key
+        for key in filters
+        for prefix in (ATTRIBUTE_KEY_PREFIX, DOCUMENT_FILTERS_PREFIX)
+        if key.startswith(prefix) and key[len(prefix) :] in unstamped
+    )
+    if asked:
+        raise InvalidFilterError(
+            f"Filter key(s) {', '.join(asked)}: the index namespace "
+            f"'{namespace}' was built before ingestion stamped each document's "
+            "path filters (file, folder), so its documents do not carry "
+            "them all and the filter would match only those indexed since. "
+            "Rebuild it with indexing.reset: true (run-ingestion --reset) "
+            "first."
+        )
+
+
 def check_requested_filter_keys(
     chain: GraphRAGChain,
     rag_input: RAGInput,
     artifacts: Collection[IndexArtifact] | None = None,
+    holdings: NamespaceHoldings | None = None,
 ) -> None:
     """Refuse filter keys an explicit strategy refuses, before any model
     call (a follow-up rewrite, query processing), against the indexes of
     the queried namespace's ``artifacts`` when given; ``auto`` checks them
     before routing (``_resolve_strategy``), but for the schema
     annotation keys, which no strategy applies on a schema that writes
-    none (``_check_schema_filter_keys``)."""
+    none (``_check_schema_filter_keys``), and the path filter keys a
+    namespace's ``holdings`` may not carry (``check_path_filter_keys``)."""
     if not rag_input.filters:
         return
+    if holdings is not None:
+        check_path_filter_keys(
+            rag_input.filters,
+            holdings,
+            resolve_namespace(chain.config, rag_input.suffix),
+        )
     if rag_input.search_strategy is SearchStrategy.AUTO:
         _check_schema_filter_keys(chain, rag_input.filters)
     else:

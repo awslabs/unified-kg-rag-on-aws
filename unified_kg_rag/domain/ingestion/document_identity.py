@@ -51,6 +51,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.domain.models.config import Constants
+from unified_kg_rag.domain.retrieval.source_fields import safe_relative_path
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared.utils.common import compute_hash, generate_stable_id
 
@@ -74,6 +75,15 @@ SOURCE_DIGEST_KEY = "source_digest"
 # parse (its source digest is the one its PROCESSED registry record holds):
 # that record's content hash. Its page_content is empty until it is read.
 UNPARSED_CONTENT_HASH_KEY = "unparsed_content_hash"
+
+# The document filters ingestion stamps on every corpus document (a seed
+# graph's shard aside), from its relative path, so a query is scoped to a
+# file (``attr_file``) or a folder at any depth (``attr_folder``) with the
+# filters every store already applies. A key the document's own filters
+# give (``InputDocument.filters``) is kept as given.
+FILE_FILTER_KEY = "file"
+FOLDER_FILTER_KEY = "folder"
+PATH_FILTER_KEYS: tuple[str, ...] = (FILE_FILTER_KEY, FOLDER_FILTER_KEY)
 
 # A document without an index value is registered under the default index
 # suffix.
@@ -152,6 +162,42 @@ def is_unparsed(document: Document) -> bool:
     """Whether ``document`` stands in for a source file this run did not
     parse (:data:`UNPARSED_CONTENT_HASH_KEY`)."""
     return isinstance(document.metadata.get(UNPARSED_CONTENT_HASH_KEY), str)
+
+
+def path_filters(relative_path: str) -> dict[str, str | list[str]]:
+    """The path filters of a document at ``relative_path`` (POSIX): ``file``
+    is the path itself, ``folder`` each folder that holds it, outermost
+    first (``a/b/c.txt``: ``["a", "a/b"]``), so ``attr_folder: a`` matches
+    every document below ``a``. A document at the corpus root has no
+    ``folder``.
+
+    Example:
+        >>> path_filters("contracts/2024/acme.txt")
+        {'file': 'contracts/2024/acme.txt', 'folder': ['contracts', 'contracts/2024']}
+        >>> path_filters("notes.txt")
+        {'file': 'notes.txt'}
+    """
+    parts = PurePosixPath(relative_path).parts[:-1]
+    folders = ["/".join(parts[: i + 1]) for i in range(len(parts))]
+    filters: dict[str, str | list[str]] = {FILE_FILTER_KEY: relative_path}
+    if folders:
+        filters[FOLDER_FILTER_KEY] = folders
+    return filters
+
+
+def stamp_path_filters(document: Document, relative_path: str) -> None:
+    """Add :func:`path_filters` of ``document``'s ``relative_path`` to its
+    ``filters`` metadata, in place (a new dict: the metadata's may be
+    shared), keeping a key its filters already give. Nothing for a path
+    that is not relative to the corpus root (``safe_relative_path``: a
+    document parsed outside the pipeline names where it lived)."""
+    relative = safe_relative_path(relative_path)
+    if relative is None:
+        return
+    key = Constants.FILTERS.value
+    given = document.metadata.get(key)
+    given = given if isinstance(given, dict) else {}
+    document.metadata[key] = {**path_filters(relative), **given}
 
 
 def compute_document_id(source_key: str, content_hash: str) -> str:

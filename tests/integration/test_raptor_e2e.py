@@ -1125,9 +1125,12 @@ def test_a_summary_passes_a_filter_only_when_all_its_documents_do(
                 filters = entry["metadata"]["attributes"]["filters"]
                 assert filters["category"] == "north"
             else:
-                assert entry["metadata"]["attributes"]["filters"] == {
-                    "category": "north"
+                # Its document's filters and path filter (file).
+                assert set(entry["metadata"]["attributes"]["filters"]) == {
+                    "category",
+                    "file",
                 }
+                assert entry["metadata"]["attributes"]["filters"]["category"] == "north"
     finally:
         chain.close()
 

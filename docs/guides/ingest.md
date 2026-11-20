@@ -268,8 +268,9 @@ indexing:
   a methodology does (the stored claim records are reused, so only the
   units without one are asked).
 - **What the namespace holds.** Each run records it in the build record
-  (`artifacts`, `methodologies`, and with the registry the `source_scopes`
-  whose documents it holds). A query whose strategy reads a methodology
+  (`artifacts`, `methodologies`, the `document_filter_keys` its documents
+  carry, and with the registry the `source_scopes` whose documents it
+  holds). A query whose strategy reads a methodology
   the namespace does not hold is refused before any model call
   (`MethodologyNotIndexedError`; `run-rag` and `run-eval` exit 2), naming what it holds
   and how to add it: a re-run over the corpus of its one source scope, or,

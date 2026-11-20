@@ -11,6 +11,7 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from unified_kg_rag.domain.ingestion.document_identity import PATH_FILTER_KEYS
 from unified_kg_rag.domain.models import Config, PipelineStageType
 from unified_kg_rag.domain.models.methodology import (
     ARTIFACT_SWITCHES,
@@ -242,6 +243,18 @@ class NamespaceHoldings:
     def methodologies(self) -> tuple[Methodology, ...]:
         """The methodologies whose required artifacts it holds."""
         return methodologies_holding(self.artifacts)
+
+    @property
+    def unstamped_filter_keys(self) -> frozenset[str]:
+        """The path filter keys (``PATH_FILTER_KEYS``) its build record does
+        not name, so some of its documents lack them (all of them in a
+        namespace an earlier version built). Empty without a record: a run of
+        the config stamps them."""
+        if self.record is None:
+            return frozenset()
+        named = self.record.get("document_filter_keys")
+        named = named if isinstance(named, list) else []
+        return frozenset(PATH_FILTER_KEYS) - set(named)
 
     @property
     def scopes(self) -> list[str] | None:

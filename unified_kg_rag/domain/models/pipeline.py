@@ -172,6 +172,16 @@ class IndexBuildRecord(BaseModel):
             "by an earlier version."
         ),
     )
+    document_filter_keys: list[str] | None = Field(
+        default=None,
+        description=(
+            "The document filter keys ingestion stamped on every document "
+            "of the suffix (document_identity.PATH_FILTER_KEYS: file, "
+            "folder), a seed graph's aside. An incremental record keeps "
+            "those the stored record names too. None in a record written "
+            "by an earlier version, whose documents carry none."
+        ),
+    )
     answer_fingerprints: dict[str, str | None] | None = Field(
         default=None,
         description=(
@@ -231,7 +241,8 @@ class IndexBuildRecord(BaseModel):
         A full record with a ``community_change`` was written by a delta
         (the registry knew none of the scope's documents, so the suffix may
         hold what other scopes wrote): it adds to the stored counters too,
-        and starts its own only where none are stored.
+        and starts its own only where none are stored. A delta record
+        names only the document filter keys the stored record names too.
         """
         if not previous or (
             self.mode != "incremental" and self.community_change is None
@@ -241,15 +252,20 @@ class IndexBuildRecord(BaseModel):
             stored = IndexBuildRecord.model_validate(previous)
         except ValidationError:
             return self
+        # The documents written before this delta carry only the keys the
+        # stored record names.
+        keys = self._kept_filter_keys(stored.document_filter_keys)
         if self.mode != "incremental":
             # Written by a delta: the stored reports it kept stay outdated.
             delta: dict[str, Any] = {
-                "outdated_reports": self._outdated(stored.outdated_reports)
+                "outdated_reports": self._outdated(stored.outdated_reports),
+                **keys,
             }
             if stored.communities is not None:
                 delta["communities"] = self._counted(stored.communities)
             return self.model_copy(update=delta)
         update: dict[str, Any] = {
+            **keys,
             "communities": self._counted(stored.communities),
             "outdated_reports": self._outdated(stored.outdated_reports),
             # The stored answers were written by the full build the stored
@@ -298,6 +314,17 @@ class IndexBuildRecord(BaseModel):
             return None
         kept = set(stored or ()) | set(self.outdated_reports or ())
         return sorted(kept - set(self.reports_written))
+
+    def _kept_filter_keys(self, stored: list[str] | None) -> dict[str, Any]:
+        """A delta record's document filter keys over the ``stored`` ones:
+        those both name (``None`` when either names none)."""
+        if self.document_filter_keys is None or stored is None:
+            return {"document_filter_keys": None}
+        return {
+            "document_filter_keys": [
+                key for key in self.document_filter_keys if key in stored
+            ]
+        }
 
     def _counted(self, counters: CommunityCounters | None) -> CommunityCounters | None:
         """``counters`` with this commit's change added, once per commit."""

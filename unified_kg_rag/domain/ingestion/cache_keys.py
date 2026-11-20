@@ -1490,7 +1490,8 @@ def summary_tree_fingerprint(config: Config) -> str:
 # 3: entity keys keep a leading minus sign, fold apostrophe stand-ins,
 # invisible characters and Korean's "ㆍ"; legal forms are read as written;
 # claims keep the suspected status.
-_STAGE_FORMAT_VERSION = 3
+# 4: every corpus document carries its path filters (file, folder).
+_STAGE_FORMAT_VERSION = 4
 
 
 @functools.cache
