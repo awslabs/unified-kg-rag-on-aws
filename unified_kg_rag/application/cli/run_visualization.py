@@ -450,6 +450,19 @@ def main() -> int:
                     **(failure_fields(EXIT_FAILURE, error) if error else {}),
                 }
             )
+        elif written:
+            # The result on stdout, as the other CLIs print theirs (the log
+            # line above is stderr's, gone at --log-level WARNING).
+            print(
+                "\n".join(
+                    [
+                        f"Visualization complete: {len(written)} files in "
+                        f"'{args.output_directory}'",
+                        *(f"  {path}" for path in written),
+                    ]
+                ),
+                flush=True,
+            )
         if error:
             return failed(EXIT_FAILURE, error)
         return 0

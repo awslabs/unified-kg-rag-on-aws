@@ -65,7 +65,9 @@ Ingestion itself renders nothing. Another renderer plugs in through
   rendered with a WARNING (exit 1, or 2 for a missing setting, when there
   is none); a namespace that holds no graph exits 2.
 - **Where.** `graph.visualization.outputs_directory`, by default
-  `<cache directory>/<pipeline_id>/visualization/`. S3 cache sync uploads the
+  `<cache directory>/<pipeline_id>/visualization/`. The command prints the
+  directory and each file it wrote on stdout (the JSON result's
+  `output_directory` and `files`). S3 cache sync uploads the
   `.json` only; re-render the HTML locally.
 - **What.** Nodes (colored by their level-0 `community_id`), edges and the
   community hierarchy, without vectors. Writing it calls no model;

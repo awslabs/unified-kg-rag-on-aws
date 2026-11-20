@@ -1578,6 +1578,33 @@ def test_visualization_json_output_names_the_written_files(
     }
 
 
+def test_visualization_text_output_names_the_written_files_on_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # RV4-6: text mode printed nothing on stdout; the result was an INFO log
+    # line on stderr alone, gone at --log-level WARNING.
+    data = tmp_path / "graph.json"
+    data.write_text(json.dumps({"nodes": [], "edges": []}), encoding="utf-8")
+    out = tmp_path / "out"
+    written = [out / "graph.html", out / "graph.png"]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run-visualization", "--data-path", str(data), "--output-directory", str(out)]
+        + ["--log-level", "WARNING"],
+    )
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
+    monkeypatch.setattr(
+        run_visualization, "run_visualization", lambda *_args, **_kwargs: written
+    )
+    assert run_visualization.main() == 0
+    assert capsys.readouterr().out.splitlines() == [
+        f"Visualization complete: 2 files in '{out}'",
+        f"  {written[0]}",
+        f"  {written[1]}",
+    ]
+
+
 def test_a_missing_input_file_is_a_usage_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
