@@ -451,7 +451,13 @@ def _community_stage(mocker, communities: list[Community], failed: list[str]):
 
     detector = mocker.MagicMock()
     detector.generate_community_objects.return_value = communities
-    detector.generate_reports.return_value = ([], failed)
+
+    def generate(asked: list[Community], **_: Any) -> tuple[list, list[str]]:
+        # No stored answer: every report is asked of the model.
+        detector.requested_report_count = len(asked)
+        return [], failed
+
+    detector.generate_reports.side_effect = generate
     detector.get_community_metrics.return_value = None
     mocker.patch.object(ps, "CommunityDetector", return_value=detector)
     config = Config()
@@ -514,7 +520,7 @@ def test_the_failure_rate_counts_the_evidenced_communities_only(mocker) -> None:
     # the gate's 5%; 2 of all four would be 18% likely, within it.
     stage, context, _ = _community_stage(mocker, communities, failed=["leaf", "other"])
     stage.config.indexing.max_failure_rate = 0.2
-    with pytest.raises(PipelineStageError, match="for 2 of 2 communities"):
+    with pytest.raises(PipelineStageError, match="for 2 of the 2 reports asked"):
         stage._execute_core(context)
 
 
