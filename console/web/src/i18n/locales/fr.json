@@ -517,6 +517,7 @@
   "graph.other_many": "{{count}} autres",
   "graph.other_other": "{{count}} autres",
   "graph.drawnOnly": "Les {{drawn}} entités les plus connectées sur {{total}} sont affichées ; trouvez les autres par leur nom ou dans le tableau ci-dessous.",
+  "graph.edgesCapped": "Sur les {{total}} relations entre les entités affichées, les {{drawn}} plus fortes sont affichées, les plus fortes de chaque entité d’abord ; sélectionnez une entité pour voir toutes ses relations.",
   "graph.notDrawn": "Non affichée sur le canevas : seules les entités les plus connectées le sont.",
   "graph.panels": "Détails",
   "graph.panel.entity": "Entité",

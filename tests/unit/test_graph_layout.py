@@ -17,7 +17,11 @@ import networkx as nx
 import pytest
 
 from tests.fixtures.graph_exports import write_export
-from unified_kg_rag.domain.ingestion.visualization_data import spring_layout
+from unified_kg_rag.domain.ingestion.visualization_data import (
+    displayed_graph,
+    kept_edges,
+    spring_layout,
+)
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 
@@ -100,6 +104,37 @@ def test_the_cap_has_one_default_for_every_surface() -> None:
     # Measured: laying out 600 nodes takes about 3 s, 2000 about 15 s
     # (networkx spring layout, a scale-free graph; the console waits for it).
     assert InteractiveGraphSettings().max_nodes == 600
+    # 5 links per drawn node (docs/concepts/defaults-and-evidence.md).
+    assert InteractiveGraphSettings().max_edges == 3000
+
+
+def _dense(nodes: int) -> nx.Graph:
+    graph = nx.complete_graph([f"n{i}" for i in range(nodes)])
+    for u, v in graph.edges():
+        graph.edges[u, v]["weight"] = 1.0
+    return graph
+
+
+def test_the_link_cap_keeps_each_node_s_strongest_and_every_node() -> None:
+    # RV4-3: the node cap bounded no link: a dense graph's 600 drawn nodes
+    # sent 27,712 links (10 MB) to the Graph page.
+    graph = _dense(30)
+    graph.edges["n3", "n7"]["weight"] = 5.0
+    drawn = displayed_graph(graph, None, 30)
+    assert drawn.number_of_nodes() == 30 and drawn.number_of_edges() == 30
+    # Each node's first link before any node's second: no node left out.
+    assert min(dict(drawn.degree()).values()) >= 1
+    assert drawn.has_edge("n3", "n7")  # their heaviest
+    # The same graph keeps the same links, and a graph within the cap all.
+    assert kept_edges(graph, 30) == kept_edges(graph.copy(), 30)
+    assert displayed_graph(graph, None, 1000) is graph
+    assert displayed_graph(graph, None, None) is graph
+
+
+def test_the_layout_lays_out_the_links_drawn() -> None:
+    graph = _dense(12)
+    capped = spring_layout(graph, None, 12)
+    assert set(capped) == set(graph) and capped != spring_layout(graph, None)
 
 
 def test_the_console_and_run_visualization_draw_the_same_layout(
@@ -129,3 +164,20 @@ def test_the_console_draws_the_configured_cap(tmp_path: Path) -> None:
     assert len(graph_api.cached_graph(path, max_nodes=None).page["layout"]) == 30
     data = json.loads(path.read_text())
     assert len(data["nodes"]) == 30
+
+
+def test_the_console_draws_at_most_max_edges_and_says_how_many_there_are(
+    tmp_path: Path,
+) -> None:
+    from unified_kg_rag.application.cli.console import graph_api
+
+    path = write_export(tmp_path / "v.json", 30)
+    linked = len(json.loads(path.read_text())["edges"])
+    page = graph_api.cached_graph(path, max_nodes=None, max_edges=20).page
+    assert len(page["edges"]) == 20 and page["linked"] == linked
+    assert len(page["layout"]) == 30
+    # An entity's panel still lists every one of its links.
+    hub = graph_api.entity(path, "n0", None, 20)
+    assert hub is not None and len(hub["edges"]) == 29
+    whole = graph_api.cached_graph(path, max_nodes=None, max_edges=None).page
+    assert len(whole["edges"]) == whole["linked"] == linked

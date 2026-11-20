@@ -517,6 +517,7 @@
   "graph.other_many": "altri {{count}}",
   "graph.other_other": "altri {{count}}",
   "graph.drawnOnly": "Sono disegnate le {{drawn}} entità più connesse su {{total}}; trova le altre per nome o nella tabella qui sotto.",
+  "graph.edgesCapped": "Delle {{total}} relazioni tra le entità disegnate sono disegnate le {{drawn}} più forti, prima le più forti di ciascuna entità; seleziona un'entità per vederne tutte le relazioni.",
   "graph.notDrawn": "Non disegnata nell’area: vi compaiono solo le entità più connesse.",
   "graph.panels": "Dettagli",
   "graph.panel.entity": "Entità",

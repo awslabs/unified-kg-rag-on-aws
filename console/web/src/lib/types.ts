@@ -341,6 +341,9 @@ export interface GraphData {
   nodes: GraphNode[];
   others: GraphEntityRef[];
   edges: GraphEdge[];
+  /** The relationships between the drawn entities, drawn or not: more
+   * than `edges` when graph.visualization.interactive.max_edges cut them. */
+  linked?: number;
   layout: Record<string, [number, number]>;
   communities: Community[];
   stats: GraphStats;

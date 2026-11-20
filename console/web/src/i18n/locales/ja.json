@@ -481,6 +481,7 @@
   "graph.legend": "凡例",
   "graph.other_other": "その他 {{count}} 件",
   "graph.drawnOnly": "{{total}} 個のエンティティのうち、つながりの多い {{drawn}} 個を描画しています。ほかは名前で検索するか、下の表で確認してください。",
+  "graph.edgesCapped": "描画したエンティティ間の {{total}} 件の関係のうち、各エンティティで最も強いものから順に {{drawn}} 件を描画しています。エンティティを選ぶと、その関係をすべて確認できます。",
   "graph.notDrawn": "キャンバスには描画されていません。つながりの多いエンティティだけを描画します。",
   "graph.panels": "詳細",
   "graph.panel.entity": "エンティティ",

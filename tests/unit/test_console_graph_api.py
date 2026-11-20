@@ -85,9 +85,11 @@ def test_a_graph_is_read_again_only_when_its_file_changes(
     reads: list[Path] = []
     read = graph_api._read_graph
 
-    def counted(path: Path, max_nodes: int | None) -> graph_api.LoadedGraph:
+    def counted(
+        path: Path, max_nodes: int | None, max_edges: int | None = None
+    ) -> graph_api.LoadedGraph:
         reads.append(path)
-        return read(path, max_nodes)
+        return read(path, max_nodes, max_edges)
 
     monkeypatch.setattr(graph_api, "_read_graph", counted)
     path = write_export(tmp_path / "v.json", 20)

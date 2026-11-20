@@ -310,31 +310,36 @@ class LoadedGraph:
     edges: list[dict[str, Any]]
 
 
-_cache: OrderedDict[tuple[str, int, int, int | None], LoadedGraph] = OrderedDict()
+_cache: OrderedDict[tuple[str, int, int, int | None, int | None], LoadedGraph] = (
+    OrderedDict()
+)
 _cache_lock = threading.Lock()
 
 
-def cached_graph(path: Path, max_nodes: int | None) -> LoadedGraph:
+def cached_graph(
+    path: Path, max_nodes: int | None, max_edges: int | None = None
+) -> LoadedGraph:
     """The graph of an exported file, read again only when the file changed
-    (its modification time or size) or ``max_nodes`` did. Its ``page`` is
-    what the page draws: the drawn entities (``nodes``, the best-connected
+    (its modification time or size) or a cap did. Its ``page`` is what the
+    page draws: the drawn entities (``nodes``, the best-connected
     ``max_nodes``, ``graph.visualization.interactive.max_nodes``; None or 0
-    draws every node, with their ``layout``) and the edges between them in
-    full, every other
-    entity as ``{id, name, degree}`` (``others``, most connected first), and
-    the communities and analysis of the whole graph.
+    draws every node, with their ``layout``) and the links between them
+    (``edges``: at most ``max_edges``, ``interactive.max_edges``, of the
+    ``linked`` there are, ``displayed_graph``), every other entity as
+    ``{id, name, degree}`` (``others``, most connected first), and the
+    communities and analysis of the whole graph.
 
     Raises:
         GraphDataError: The file is too large, not JSON, or not shaped like
             an export.
     """
     stat = path.stat()
-    key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size, max_nodes)
+    key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size, max_nodes, max_edges)
     with _cache_lock:
         if key in _cache:
             _cache.move_to_end(key)
             return _cache[key]
-    loaded = _read_graph(path, max_nodes)
+    loaded = _read_graph(path, max_nodes, max_edges)
     with _cache_lock:
         _cache[key] = loaded
         while len(_cache) > CACHED_GRAPHS:
@@ -342,12 +347,14 @@ def cached_graph(path: Path, max_nodes: int | None) -> LoadedGraph:
     return loaded
 
 
-def entity(path: Path, entity_id: str, max_nodes: int | None) -> dict[str, Any] | None:
+def entity(
+    path: Path, entity_id: str, max_nodes: int | None, max_edges: int | None = None
+) -> dict[str, Any] | None:
     """An entity of the graph of ``path`` (drawn or not, of the page
-    :func:`cached_graph` draws with ``max_nodes``), every edge that touches
-    it and the names of the entities at their other ends; None for an id
-    the graph lacks."""
-    loaded = cached_graph(path, max_nodes)
+    :func:`cached_graph` draws with ``max_nodes`` and ``max_edges``), every
+    edge that touches it, drawn or not, and the names of the entities at
+    their other ends; None for an id the graph lacks."""
+    loaded = cached_graph(path, max_nodes, max_edges)
     node = loaded.nodes.get(entity_id)
     if node is None:
         return None
@@ -364,7 +371,9 @@ def entity(path: Path, entity_id: str, max_nodes: int | None) -> dict[str, Any] 
     }
 
 
-def _read_graph(path: Path, max_nodes: int | None) -> LoadedGraph:
+def _read_graph(
+    path: Path, max_nodes: int | None, max_edges: int | None = None
+) -> LoadedGraph:
     if path.stat().st_size > MAX_FILE_BYTES:
         raise GraphDataError(f"'{path.name}' is over {MAX_FILE_BYTES // 2**20} MiB")
     try:
@@ -407,7 +416,13 @@ def _read_graph(path: Path, max_nodes: int | None) -> LoadedGraph:
     for raw in raw_edges:
         attrs = raw.get("attributes") or {}
         source, target = str(raw.get("source")), str(raw.get("target"))
-        graph.add_edge(source, target)
+        weight = attrs.get("weight")
+        weight = float(weight) if isinstance(weight, int | float) else 0.0
+        # Two links of one pair: the pair at the heavier one's weight.
+        if not graph.has_edge(source, target) or (
+            graph.edges[source, target]["weight"] < weight
+        ):
+            graph.add_edge(source, target, weight=weight)
         edges.append(
             {
                 "id": str(attrs.get("id") or f"{source}->{target}"),
@@ -425,14 +440,16 @@ def _read_graph(path: Path, max_nodes: int | None) -> LoadedGraph:
     degrees = dict(graph.degree())
     for node in nodes:
         node["degree"] = degrees.get(node["id"], 0)
-    # The page draws the best-connected max_nodes, at an exported layout's
-    # positions when it has them (an export may lay out more), else at the
-    # layout run-visualization draws them at.
-    drawn = displayed_graph(graph, max_nodes)
+    # The page draws the best-connected max_nodes and at most max_edges of
+    # the links between them, at an exported layout's positions when it has
+    # them (an export may lay out more), else at the layout
+    # run-visualization draws them at.
+    drawn = displayed_graph(graph, max_nodes, max_edges)
     exported = data.get("layout") or {}
     layout = {k: v for k, v in exported.items() if k in drawn}
     if not layout:
         layout = spring_layout(drawn, None)
+    linked = graph.subgraph(layout).number_of_edges()
     by_id = {n["id"]: n for n in nodes}
     communities = _communities(data.get("communities"), by_id)
     page = {
@@ -442,7 +459,16 @@ def _read_graph(path: Path, max_nodes: int | None) -> LoadedGraph:
             for n in sorted(nodes, key=lambda n: -n["degree"])
             if n["id"] not in layout
         ],
-        "edges": [e for e in edges if e["source"] in layout and e["target"] in layout],
+        "edges": [
+            e
+            for e in edges
+            if e["source"] in layout
+            and e["target"] in layout
+            and drawn.has_edge(e["source"], e["target"])
+        ],
+        # The links between the drawn entities, drawn or not (more than the
+        # drawn ones' pairs: max_edges cut them).
+        "linked": linked,
         "layout": layout,
         "communities": communities,
         "stats": _stats(graph, nodes, edges, communities),

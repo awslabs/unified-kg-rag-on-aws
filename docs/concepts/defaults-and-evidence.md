@@ -806,6 +806,41 @@ so the default stays `AUTO`. A hybrid search's vector side also finds some
 typos. Set `0` where names are typed exactly (codes, identifiers) and
 near-miss names must not match.
 
+## Graph page size
+
+`graph.visualization.interactive.max_nodes` (600) and `max_edges` (3000)
+bound the graph `run-visualization`'s interactive page and the console's
+Graph page draw. Measured on one core of a shared host (networkx spring
+layout; the console's page as `/api/graphs/data` sends it), on synthetic
+graphs: a scale-free one (Barabási-Albert, 2,000 nodes, 2 links per new
+node, density 0.002), a uniform random one (724 nodes, 27,712 links,
+density 0.106) and the structural benchmark's large seed graph (730
+nodes, 30,237 links, density 0.114; `prepare-benchmark structural --size
+large`):
+
+| Graph, 600 nodes drawn | Links drawn | Layout | Page |
+|---|---|---|---|
+| Scale-free | 1,154 (all) | 1.7 s | 0.59 MB |
+| Uniform random, no link cap | 20,282 | 2.1 s | 5.9 MB |
+| Uniform random, `max_edges` 3000 | 3,000 | 2.1 s | 1.05 MB |
+| Structural, no link cap | 27,863 | 2.9 s | 8.1 MB |
+| Structural, `max_edges` 3000 | 3,000 | 2.4 s | 1.06 MB |
+
+The 1.4 s the `max_nodes` default was chosen on was a scale-free graph;
+600 nodes of a dense one take 2.1-2.9 s here (the scale-free one 1.7 s on
+the same host), so the cap holds on dense graphs at about twice the time,
+and the layout's cost stays in the nodes (300 nodes: 0.4-0.6 s; 1000, all
+of the dense graphs: 2.7-3.8 s). The links are what a dense graph adds:
+in the browser (Chromium, the console's Graph page on the structural graph,
+3 loads each), the uncapped page blocked the main thread 4.3-5.1 s in
+total (longest task 0.8-1.3 s) and the capped one 0.9-1.6 s (longest
+0.6-1.0 s), at 5.7 MB and 0.78 MB sent. 3000 is 5 links per drawn node: a
+sparse graph keeps all of them (the scale-free one above, 1.9 per node),
+and every node keeps its own strongest link before any node a second
+(local-degree sparsification, Lindner et al. 2015, weight first). Ranking
+the links adds 0.45 s on the structural graph, once per file and cap (the
+console caches the page).
+
 ## Ontology and RDF parse cost
 
 An `owl` [schema source](../guides/ontology.md#load-cost) and an `rdf`

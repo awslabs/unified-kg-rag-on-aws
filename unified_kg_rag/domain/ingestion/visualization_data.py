@@ -175,17 +175,72 @@ def stored_visualization_data(
     }
 
 
-def displayed_graph(graph: nx.Graph, max_nodes: int | None) -> nx.Graph:
+def displayed_graph(
+    graph: nx.Graph, max_nodes: int | None, max_edges: int | None = None
+) -> nx.Graph:
     """The part of ``graph`` the interactive page draws: its top ``max_nodes``
     by degree (``graph.visualization.interactive.max_nodes``; None or 0 draws
-    every node)."""
-    if not max_nodes or graph.number_of_nodes() <= max_nodes:
+    every node), and of the links between them at most ``max_edges``
+    (``interactive.max_edges``; None or 0 keeps them all), as
+    :func:`kept_edges` picks them."""
+    if max_nodes and graph.number_of_nodes() > max_nodes:
+        ranked = sorted(graph.degree(), key=lambda nd: nd[1], reverse=True)
+        graph = graph.subgraph(node for node, _ in ranked[:max_nodes])
+    if not max_edges or graph.number_of_edges() <= max_edges:
         return graph
-    ranked = sorted(graph.degree(), key=lambda nd: nd[1], reverse=True)
-    return graph.subgraph(node for node, _ in ranked[:max_nodes])
+    # Every drawn node stays, one left with no link too.
+    pruned = nx.Graph()
+    pruned.add_nodes_from(graph.nodes(data=True))
+    pruned.add_edges_from(
+        (u, v, graph.adj[u][v]) for u, v in kept_edges(graph, max_edges)
+    )
+    return pruned
 
 
-def spring_layout(graph: nx.Graph, max_nodes: int | None) -> dict[str, list[float]]:
+def kept_edges(graph: nx.Graph, max_edges: int) -> list[tuple[Any, Any]]:
+    """``max_edges`` of an undirected ``graph``'s links, chosen so every node
+    keeps its own strongest: a node ranks its links by ``weight`` (heaviest
+    first), then by the other end's degree, and a link counts at the better
+    of its two ends' ranks; the lowest counts are kept, each node's first
+    link before any node's second (local-degree sparsification, Lindner et
+    al. 2015, "Structure-preserving sparsification methods for social
+    networks", with the weight first). In the graph's own order on ties, so
+    the same graph keeps the same links."""
+    nodes = list(graph)
+    order = {node: i for i, node in enumerate(nodes)}
+    adjacency = graph.adj
+    degree = {node: len(adjacency[node]) for node in nodes}
+
+    def weight(attributes: dict[str, Any]) -> float:
+        value = attributes.get("weight")
+        return float(value) if isinstance(value, int | float) else 0.0
+
+    # Each link, by its ends' positions (lower first): its best rank and
+    # its weight.
+    best: dict[tuple[int, int], tuple[int, float]] = {}
+    for node, neighbours in adjacency.items():
+        here = order[node]
+        ranked = sorted(
+            neighbours,
+            key=lambda other: (
+                -weight(neighbours[other]),
+                -degree[other],
+                order[other],
+            ),
+        )
+        for rank, other in enumerate(ranked):
+            there = order[other]
+            key = (here, there) if here < there else (there, here)
+            seen = best.get(key)
+            if seen is None or rank < seen[0]:
+                best[key] = (rank, weight(neighbours[other]))
+    chosen = sorted(best, key=lambda key: (best[key][0], -best[key][1], key))
+    return [(nodes[a], nodes[b]) for a, b in chosen[:max_edges]]
+
+
+def spring_layout(
+    graph: nx.Graph, max_nodes: int | None, max_edges: int | None = None
+) -> dict[str, list[float]]:
     """The one layout of a drawn graph (``run-visualization``'s pages and
     the console's Graph page): a seeded spring layout of each connected
     component of the drawn nodes (:func:`displayed_graph`), the components
@@ -195,12 +250,13 @@ def spring_layout(graph: nx.Graph, max_nodes: int | None) -> dict[str, list[floa
 
     A spring layout is quadratic in the node count, so laying out a large
     graph and then drawing its top ``max_nodes`` spent minutes on nodes
-    the page never shows. A graph within the cap is laid out whole.
+    the page never shows. A graph within the cap is laid out whole. The
+    links laid out are those drawn (``max_edges``).
     """
     # In the graph's own node order, never a set's: a set of strings
     # iterates in an order of the process's hash seed, so the seeded layout
     # moved from one run to the next.
-    drawn = displayed_graph(graph, max_nodes)
+    drawn = displayed_graph(graph, max_nodes, max_edges)
     order = {node: i for i, node in enumerate(graph)}
     components = sorted(
         (

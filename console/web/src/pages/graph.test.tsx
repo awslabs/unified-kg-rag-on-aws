@@ -11,6 +11,13 @@ import { EntityTable, GraphPage, pickGraph, rankMatches, TABLE_PAGE } from "./Gr
 
 const renderIn = (ui: ReactElement) => render(<I18nProvider initial="en">{ui}</I18nProvider>);
 
+// jsdom has no canvas: the page's explorer is rendered around an empty one
+// (the canvas's own helpers stay real).
+vi.mock("../components/GraphCanvas", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/GraphCanvas")>()),
+  GraphCanvas: () => null,
+}));
+
 function node(i: number, degree = i): GraphNode {
   return { id: `n${i}`, name: `Entity ${i}`, type: "thing", description: null, community_id: null, text_unit_ids: [], source_kinds: [], iri: null, type_iri: null, in_schema: null, degree };
 }
@@ -271,6 +278,38 @@ describe("GraphPage under the header's namespace", () => {
     );
     expect(await screen.findByText("Nothing is indexed in “big” yet")).toBeInTheDocument();
     expect(urls.filter((url) => url.includes("/api/graphs"))).toEqual([expect.stringMatching(/\/api\/graphs\?namespace=big$/)]);
+  });
+});
+
+describe("GraphPage over a graph whose relationships were capped", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("says how many are drawn and reads an entity's from the server (RV4-3)", async () => {
+    const file = { ref: "cache:a/visualization/visualization_data.json", label: "default", namespace: "default", run: "a", built_at: null, modified: 1, bytes: 10, outdated: false };
+    // Every entity drawn, 9 of its 40 relationships (max_edges).
+    const data = { ...graph(10, 10), linked: 40 };
+    const fetched: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        fetched.push(String(url));
+        const body = String(url).includes("graphs/entity")
+          ? { node: data.nodes[0], edges: data.edges, names: {} }
+          : String(url).includes("graphs/data")
+            ? data
+            : { graphs: [file], current: { state: "current", namespace: "default", built_at: null, ref: file.ref } };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+    renderIn(
+      <TrailProvider>
+        <GraphPage params={new URLSearchParams("focus=n0")} />
+      </TrailProvider>,
+    );
+    expect(await screen.findByText(/^Of the 40 relationships between the drawn entities, the 9 strongest are drawn/)).toBeInTheDocument();
+    // No entity is left undrawn: that notice is not shown.
+    expect(screen.queryByText(/best-connected of/)).toBeNull();
+    await waitFor(() => expect(fetched.some((u) => u.includes("graphs/entity") && u.includes("id=n0"))).toBe(true));
   });
 });
 

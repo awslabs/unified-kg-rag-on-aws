@@ -499,6 +499,7 @@
   "graph.other_one": "{{count}} weiterer",
   "graph.other_other": "{{count}} weitere",
   "graph.drawnOnly": "Gezeichnet sind die {{drawn}} am stärksten vernetzten von {{total}} Entitäten; die übrigen finden Sie per Name oder in der Tabelle unten.",
+  "graph.edgesCapped": "Von den {{total}} Beziehungen zwischen den gezeichneten Entitäten sind die {{drawn}} stärksten gezeichnet, die stärksten jeder Entität zuerst; wählen Sie eine Entität, um alle ihre Beziehungen zu sehen.",
   "graph.notDrawn": "Nicht auf der Fläche gezeichnet: Dort stehen nur die am stärksten vernetzten Entitäten.",
   "graph.panels": "Details",
   "graph.panel.entity": "Entität",

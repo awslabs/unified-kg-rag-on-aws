@@ -37,8 +37,10 @@ class InteractiveRenderer:
         self.font_family = settings.font_family
         self.tooltip_delay = settings.tooltip_delay
         # The one cap of a drawn graph (the console's Graph page's too): keep
-        # the top-N by degree (None/0 = no cap).
+        # the top-N by degree and at most max_edges links between them
+        # (None/0 = no cap).
         self.max_nodes = settings.max_nodes
+        self.max_edges = settings.max_edges
 
     def create_network_visualization(
         self, graph: nx.Graph, layout: dict[str, tuple[float, float]], outputs_path: str
@@ -47,14 +49,18 @@ class InteractiveRenderer:
             logger.warning("Cannot create visualization for an empty or invalid graph.")
             return
 
-        if self.max_nodes and graph.number_of_nodes() > self.max_nodes:
+        drawn = displayed_graph(graph, self.max_nodes, self.max_edges)
+        if drawn is not graph:
             logger.info(
-                "Interactive graph capped to the top %s of %s nodes by degree "
-                "(graph.visualization.interactive.max_nodes)",
-                self.max_nodes,
+                "Interactive graph capped to %s of %s nodes (the top by degree) "
+                "and %s of %s links (graph.visualization.interactive.max_nodes, "
+                "max_edges)",
+                drawn.number_of_nodes(),
                 graph.number_of_nodes(),
+                drawn.number_of_edges(),
+                graph.number_of_edges(),
             )
-            graph = displayed_graph(graph, self.max_nodes)
+            graph = drawn
 
         logger.info(
             "Creating interactive visualization for %s nodes...",
