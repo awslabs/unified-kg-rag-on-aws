@@ -106,7 +106,7 @@ def test_off_by_default_adds_nothing(default: tuple[Template, Template]) -> None
     storage, compute = default
     assert not storage.find_resources(_NORI)
     assert not storage.find_resources("AWS::StepFunctions::StateMachine")
-    assert _korean_analyzer(compute) == "cjk"
+    assert _korean_analyzer(compute) == "cjk_script_split"
 
 
 def test_explicit_defaults_render_the_same_templates(

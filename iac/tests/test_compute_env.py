@@ -158,14 +158,15 @@ def test_opensearch_replicas_follow_node_count(
 
 @pytest.mark.parametrize(
     ("context", "analyzer"),
-    [({}, "cjk"), ({"opensearch_korean_analyzer": "nori"}, "nori")],
+    [({}, "cjk_script_split"), ({"opensearch_korean_analyzer": "nori"}, "nori")],
     ids=["default-built-in", "nori-plugin-associated"],
 )
 def test_korean_analyzer_is_one_the_domain_has(
     context: dict[str, Any], analyzer: str
 ) -> None:
     # The domain has no nori unless its optional package is associated, so the
-    # default maps Korean to the built-in cjk analyzer. Name must match the
+    # default maps Korean to cjk_script_split, which the indexer defines from
+    # built-in components (opensearch_analysis). Name must match the
     # unified_kg_rag.application.config env override.
     assert (
         _task_environment(context)["UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO"]

@@ -305,14 +305,17 @@ class OpenSearchIndexingConfig(ConfigSection):
             "uses default_analyzer. All are built into OpenSearch "
             "but nori, which needs the analysis-nori plugin: an Amazon "
             "OpenSearch Service domain has it only once its optional package "
-            "is associated (the CDK stack maps ko to cjk). An index keeps the "
+            "is associated (the CDK stack maps ko to cjk_script_split: cjk "
+            "with Hangul split from the Latin letters and digits next to it, "
+            "which the indexer defines in each index without a plugin; cjk "
+            "keeps 'AWS를' as one token). An index keeps the "
             "analyzers it was created with, so a change needs indexing.reset; "
             "a field built with default_analyzer before the default map named "
             "its language keeps it while the map gives that language the "
             "default's analyzer (one WARNING). "
             "In a config file the key replaces the whole map; an environment "
             "variable sets one entry over the defaults "
-            "(UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk)."
+            "(UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk_script_split)."
         ),
     )
     refresh_after_batch: bool = Field(

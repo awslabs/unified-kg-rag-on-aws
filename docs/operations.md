@@ -623,9 +623,12 @@ it with the CLI and CloudFormation sees no change:
 
 ### Korean with Nori
 
-The CDK deployment maps Korean (`ko`) to the built-in `cjk` analyzer
-(overlapping character pairs), because a domain has the morphological `nori`
-analyzer only once the AWS-provided `analysis-nori` plugin package is
+The CDK deployment maps Korean (`ko`) to `cjk_script_split`, the built-in
+`cjk` analyzer (overlapping character pairs) with a Hangul run split from
+the Latin letters or digits written next to it, which the indexer defines
+in each index without a plugin
+([Multilingual: Analyzers](./guides/multilingual.md#analyzers)), because a
+domain has the morphological `nori` analyzer only once the AWS-provided `analysis-nori` plugin package is
 associated with it. `-c opensearch_nori_package=true` associates it: a
 custom resource looks up the package of the domain's engine version
 (`DescribePackages`), associates it (`AssociatePackage`, a blue/green
@@ -645,15 +648,18 @@ definitions, deployed after storage, then map `ko` to `nori`.
 3. Run once with `indexing.reset: true` ([Re-ingest](#re-ingest)): the
    field analyzers of a live index cannot change, so an incremental run
    fails until then with `The OpenSearch index '<index>' was built for
-   other language settings: '<field>' uses 'cjk' (needs 'nori')`. Set it
-   back to `false` afterwards.
+   other language settings: '<field>' uses 'cjk_script_split' (needs
+   'nori')`. Set it back to `false` afterwards.
 
-To keep `cjk` while the package is associated (to rebuild later), deploy
-with `-c opensearch_korean_analyzer=cjk` as well.
+To keep `cjk_script_split` while the package is associated (to rebuild
+later), deploy with `-c opensearch_korean_analyzer=cjk_script_split` as
+well. A deployment whose Korean indices were built with `cjk` (before
+`cjk_script_split` was the default) keeps them with
+`-c opensearch_korean_analyzer=cjk` until one `indexing.reset: true` run.
 
 **Turning it off.** OpenSearch refuses to dissociate a package an index
 still uses, so move the Korean indices off `nori` first: deploy with
-`-c opensearch_korean_analyzer=cjk` (package still on), run one
+`-c opensearch_korean_analyzer=cjk_script_split` (package still on), run one
 `indexing.reset: true`, then deploy without `opensearch_nori_package`. The
 resource dissociates the package (another blue/green deployment) only when
 a stack update removes or replaces it; deleting the stack leaves it

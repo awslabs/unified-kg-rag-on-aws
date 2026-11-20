@@ -91,8 +91,10 @@ by the variable, and `AWS_DEFAULT_REGION` is not read. Set `aws.region_name`
 The library maps Korean to the `nori` analyzer by default
 (`indexing.opensearch.language_analyzers`, `ko: nori`), and an
 Amazon OpenSearch Service domain has `nori` only once the `analysis-nori`
-package is associated with it. The CDK stacks map `ko` to `cjk` for this
-reason. Set `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk` (one
+package is associated with it. The CDK stacks map `ko` to
+`cjk_script_split` (which the indexer defines from built-in components) for
+this reason. Set
+`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk_script_split` (one
 entry; in a config file the key replaces the whole map, so list the other
 languages' analyzers too), or associate the package
 ([Operator Runbook: Korean with Nori](./operations.md#korean-with-nori)).
@@ -229,7 +231,7 @@ model or credential error fails a query rather than answering from no context.
 | `Neptune refused the connection (HTTP 403)` | No `neptune-db:connect` on the cluster, or signed for another region | Grant it (and the needed `neptune-db:*` data actions); set `aws.region_name` to the cluster's region |
 | OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` (for example in `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: a filter value of the wrong type. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count` below 1,024 | Fix the value, or keep the limit at 1,024 or more |
-| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (`mapper_parsing_exception`) | An analyzer in `indexing.opensearch.language_analyzers` is missing, typically `ko: nori` without the Nori package | Use one the cluster has (`ko: cjk`, the CDK default), or associate the package ([Korean with Nori](./operations.md#korean-with-nori)); re-run |
+| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (`mapper_parsing_exception`) | An analyzer in `indexing.opensearch.language_analyzers` is missing, typically `ko: nori` without the Nori package | Use one the cluster has (`ko: cjk_script_split`, the CDK default), or associate the package ([Korean with Nori](./operations.md#korean-with-nori)); re-run |
 | `The search engine refused to create an index: ...` (exit 2, before any model call) | Before its first model call, `run-ingestion` creates and deletes a probe index per index the run will create (all of them on a full build or reset, the missing ones on an incremental run), named `<extraction-records alias>-settings-probe-<12 hex digits>`; the store refused one (the error names the index it stood in for, `(a probe of '<alias>')`): an `indexing.opensearch.index_settings` key, the `vector_search` method, `vector_mode` / `compression_level` (`unknown parameter [mode]`: OpenSearch before 2.17) or an analyzer, or (`maximum shards open`) no room for the new indices' shards | Fix or remove the named setting, or delete unneeded indices or raise `cluster.max_shards_per_node`; re-run. A probe a stopped run left (an unaliased index of that name) is deleted by the namespace's next run |
 
 ### Ingestion runs and the doc-status registry

@@ -99,7 +99,7 @@ def test_korean_analyzer_must_be_an_analyzer_name(value: str) -> None:
 @pytest.mark.parametrize(
     ("context", "analyzer"),
     [
-        ({}, "cjk"),
+        ({}, "cjk_script_split"),
         ({"opensearch_nori_package": "true"}, "nori"),
         (
             {"opensearch_nori_package": "true", "opensearch_korean_analyzer": "cjk"},

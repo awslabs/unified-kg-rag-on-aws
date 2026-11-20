@@ -143,7 +143,9 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   `portuguese`, `russian`), `cjk` (character bigrams) for `ja` and `zh`, and
   `nori` for `ko`. An Amazon OpenSearch
   Service domain has `nori` only once its Nori package is associated, so the
-  CDK deployment maps `ko` to the built-in `cjk` unless
+  CDK deployment maps `ko` to `cjk_script_split` (`cjk` with Hangul split
+  from adjacent Latin letters and digits, which the indexer defines in each
+  index: `unified_kg_rag/adapters/storage/opensearch_analysis.py`) unless
   `opensearch_nori_package` associates the package (a custom resource) and
   maps `ko` to `nori`; an analyzer the cluster lacks fails index creation
   with an error naming it.

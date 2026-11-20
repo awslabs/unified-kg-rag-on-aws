@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+from unified_kg_rag.adapters.storage.opensearch_analysis import with_analysis
 from unified_kg_rag.adapters.storage.search_engine import (
     SearchEngineClient,
     engine_name,
@@ -3597,6 +3598,9 @@ class OpenSearchIndexer(VectorIndexer):
                     },
                 },
             }
+        # A custom analyzer a text field names is defined in the index
+        # (opensearch_analysis).
+        settings = with_analysis(settings, properties)
         return {
             "settings": {
                 **settings,
