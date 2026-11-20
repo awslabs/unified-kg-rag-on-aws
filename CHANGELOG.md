@@ -49,6 +49,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stderr (`2>&1` keeps both on one stream).
 - A filter on `attr_file` or `attr_folder` (*Added*: path filters) is refused on a namespace built before this
   release, a document's own `file` or `folder` filter included, until it is rebuilt (*Upgrading*).
+- `VectorIndexer` is split by concern, for extenders: its other concerns are `Protocol`s of their own, exported from
+  `unified_kg_rag` and `unified_kg_rag.ports`, and each caller takes the one it uses. `VectorIndexer` inherits all
+  five, so a store that subclasses it keeps every method and default, and `VectorIndexer.<method>` still resolves.
+  Old `VectorIndexer` methods by new port: `ExtractionRecordStore` (`read_` / `write_` / `delete_` /
+  `retain_extraction_records`, `stored_extraction_record_keys`, `extraction_record_keys`,
+  `prepare_extraction_records`); `SummaryTreeStore` (`scan_text_unit_pages`, `read_text_unit_fields`,
+  `read_summary_nodes`, `read_summary_tree_record`, `embed_summary_texts`, `write_summary_tree`,
+  `delete_summary_nodes_citing` / `_outside`, `delete_summary_tree`); `BuildRecordStore` (`record_build`,
+  `read_build_record`, `add_` / `drop_build_artifacts`); `StoreInspection` (`describe_indices`, `ingested_suffixes`,
+  `scan_items`, `holds_any_text_unit`); `SchemaAnnotationStore` (`read_` / `write_schema_annotations`,
+  `holds_any_item`), which `GraphIndexer` inherits too, one contract for both stores. The rest stays on
+  `VectorIndexer`. `VectorIndexer.scan_text_units` is gone, and `scan_text_unit_pages` no longer pages it by default:
+  a store that implemented only `scan_text_units` implements `scan_text_unit_pages` or builds no summary tree.
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.

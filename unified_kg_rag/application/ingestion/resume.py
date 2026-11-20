@@ -27,8 +27,7 @@ from unified_kg_rag.domain.models import (
     PipelineContext,
     PipelineStageType,
 )
-from unified_kg_rag.ports import VectorIndexer
-from unified_kg_rag.ports.indexer import BaseIndexer
+from unified_kg_rag.ports.indexer import BaseIndexer, keeps_extraction_records
 from unified_kg_rag.shared import (
     NamespaceLeaseError,
     PipelineExecutionError,
@@ -330,8 +329,7 @@ def rewind_on_missing_records(
     try:
         indexer = pipeline.providers.build_vector_indexer()
         try:
-            read = indexer.read_extraction_records
-            if getattr(read, "__func__", read) is VectorIndexer.read_extraction_records:
+            if not keeps_extraction_records(indexer):
                 return None  # the backend keeps no records
             for suffix, kinds in named.items():
                 stored = indexer.stored_extraction_record_keys(

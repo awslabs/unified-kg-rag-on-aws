@@ -716,7 +716,8 @@ so its text units name the id, not the temporary directory.
 ### 5.8 Inspection and export
 
 `application/storage/inspection.py` reads a namespace through two
-`VectorIndexer` methods with "cannot" defaults: `describe_indices(suffix)`
+`StoreInspection` methods (a port `VectorIndexer` inherits) with "cannot"
+defaults: `describe_indices(suffix)`
 (each index's live index, item count and `_meta`) and
 `scan_items(kind, suffix, page_size=)`, a generator of pages in id order
 without vector fields (search-after on `id`, one page read per page

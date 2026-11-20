@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The summary tree's ``VectorIndexer`` contract on every vector backend
+"""The ``SummaryTreeStore`` contract on every vector backend
 that keeps one (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in): the embedded SQLite engine and the
 OpenSearch container (``LOCAL_STORES=1``); the fake keeps none and says so.
 
@@ -35,7 +35,7 @@ from unified_kg_rag.domain.models import (
     SummaryNode,
     TextUnit,
 )
-from unified_kg_rag.ports.indexer import VectorIndexer
+from unified_kg_rag.ports.indexer import BuildRecordStore, SummaryTreeStore
 from unified_kg_rag.shared.exceptions import NamespaceLeaseError
 
 pytestmark = pytest.mark.integration
@@ -99,17 +99,22 @@ def test_text_units_are_paged_in_id_order_without_seed_units(
     stats = indexer.index_text_units([*_units(25), seed])
     assert stats.failed_items == 0, stats.errors
 
-    rows = indexer.scan_text_units(
+    pages = indexer.scan_text_unit_pages(
         None, fields=["text", "text_embedding", "attributes"], page_size=7
     )
+    assert pages is not None
+    listed = list(pages)
+    rows = [row for page in listed for row in page]
 
+    assert all(len(page) <= 7 for page in listed)
     assert [r["id"] for r in rows] == [f"u{i:03d}" for i in range(25)]
     assert all(
         len(r["text_embedding"]) == harness.embedding_factory.dimensions for r in rows
     )
     assert rows[0]["attributes"]["filters"] == {"category": "logistics"}
     # Another suffix has none.
-    assert indexer.scan_text_units(harness.suffix("empty"), fields=["text"]) == []
+    empty = indexer.scan_text_unit_pages(harness.suffix("empty"), fields=["text"])
+    assert empty is not None and list(empty) == []
 
 
 def test_text_units_are_read_by_id_with_float32_vectors(
@@ -407,13 +412,14 @@ def test_the_build_record_gains_the_summary_tree(harness: StoreHarness) -> None:
 def test_a_backend_without_a_tree_says_so() -> None:
     # The port's defaults, as a custom backend inherits them.
     bare: Any = object()
-    assert VectorIndexer.scan_text_units(bare, None, fields=["text"]) is None
-    assert VectorIndexer.read_text_unit_fields(bare, ["u"], None, fields=[]) is None
-    assert VectorIndexer.read_summary_nodes(bare, None, fields=[]) is None
-    assert VectorIndexer.embed_summary_texts(bare, ["x"], None) is None
-    assert VectorIndexer.write_summary_tree(bare, [], {}, None, {}).failed_items == 1
-    assert VectorIndexer.delete_summary_nodes_citing(bare, ["u"], "s").total_items == 0
-    assert not VectorIndexer.add_build_artifacts(bare, [], None)
+    tree, record = SummaryTreeStore, BuildRecordStore
+    assert tree.scan_text_unit_pages(bare, None, fields=["text"]) is None
+    assert tree.read_text_unit_fields(bare, ["u"], None, fields=[]) is None
+    assert tree.read_summary_nodes(bare, None, fields=[]) is None
+    assert tree.embed_summary_texts(bare, ["x"], None) is None
+    assert tree.write_summary_tree(bare, [], {}, None, {}).failed_items == 1
+    assert tree.delete_summary_nodes_citing(bare, ["u"], "s").total_items == 0
+    assert not record.add_build_artifacts(bare, [], None)
 
 
 def _manager(harness: StoreHarness) -> Any:

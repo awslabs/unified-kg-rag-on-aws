@@ -9,9 +9,8 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.ports.indexer import (
     AnnotatedKind,
-    GraphIndexer,
     SchemaAnnotation,
-    VectorIndexer,
+    SchemaAnnotationStore,
     rewrites_schema_annotations,
 )
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
@@ -62,7 +61,7 @@ class SchemaReannotator:
     def stores_hold_items(self, suffix: str) -> bool:
         """See :meth:`IndexingManager.stores_hold_items`."""
         m = self._m
-        stores: tuple[GraphIndexer | VectorIndexer, ...] = (
+        stores: tuple[SchemaAnnotationStore, ...] = (
             m.graph_indexer,
             m.vector_indexer,
         )
@@ -74,7 +73,7 @@ class SchemaReannotator:
         """See :meth:`IndexingManager.reannotate`."""
         m = self._m
         result = SchemaReannotation()
-        stores: tuple[GraphIndexer | VectorIndexer, ...] = (
+        stores: tuple[SchemaAnnotationStore, ...] = (
             m.graph_indexer,
             m.vector_indexer,
         )
@@ -108,7 +107,7 @@ class SchemaReannotator:
         self,
         kind: AnnotatedKind,
         suffix: str,
-        stores: tuple[GraphIndexer | VectorIndexer, ...],
+        stores: tuple[SchemaAnnotationStore, ...],
         result: SchemaReannotation,
     ) -> None:
         """One kind of one suffix of :meth:`reannotate`, counted in ``result``."""

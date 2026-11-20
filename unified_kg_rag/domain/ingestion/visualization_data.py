@@ -130,7 +130,7 @@ def stored_visualization_data(
     """The visualization data of an index namespace from what its stores
     hold: the graph ``GraphBuilder`` builds of its entities, relationships
     and claims, and the community hierarchy of its stored community reports
-    (``VectorIndexer.scan_items`` records), each community's members the
+    (``StoreInspection.scan_items`` records), each community's members the
     entities that list it in ``community_ids``. Deterministic: items in id
     order, communities by level and id. ``namespace`` names it, so
     ``run-visualization --namespace`` finds the newest export of one, and

@@ -554,15 +554,6 @@ class FakeVectorStore(_Recorder):
         return self.builds[key]
 
     # No summary tree: the summary_tree stage skips on this store.
-    def scan_text_units(
-        self,
-        suffix: str | None,
-        *,
-        fields: list[str],
-        page_size: int | None = None,
-    ) -> list[dict[str, Any]] | None:
-        return None
-
     def scan_text_unit_pages(
         self,
         suffix: str | None,

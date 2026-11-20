@@ -36,6 +36,7 @@ from tests.fixtures.store_backends import (
     backends,
     open_harness,
 )
+from tests.fixtures.text_units import stored_text_units
 from tests.integration import test_ingestion_stages as stages
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.aws import token_counter as token_counter_module
@@ -607,7 +608,7 @@ def test_ingest_update_and_every_strategy_on_each_store_backend(
     def texts() -> set[str]:
         vectors = providers.build_vector_indexer()
         try:
-            rows = vectors.scan_text_units(None, fields=["text"])
+            rows = stored_text_units(vectors, None, fields=["text"])
         finally:
             vectors.close()
         return {row["text"].strip() for row in rows}
@@ -1205,7 +1206,7 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
 
     vectors = providers.build_vector_indexer()
     try:
-        rows = vectors.scan_text_units(None, fields=["attributes"])
+        rows = stored_text_units(vectors, None, fields=["attributes"])
     finally:
         vectors.close()
     stamped = {
