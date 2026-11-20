@@ -20,10 +20,11 @@ with it. Approximations of the OpenSearch analyzers of the same names:
   characters in the run are left out of them.
   (OpenSearch's ``standard`` keeps a Hangul run as one token; the bigrams are
   deliberate.)
-- ``cjk`` and ``cjk_script_split`` (the indexer's custom one,
-  ``adapters/storage/opensearch_analysis``): ``standard`` after OpenSearch's
-  ``cjk_width`` fold (fullwidth ASCII to ASCII, halfwidth Katakana to
-  fullwidth) and without its English stop words (Lucene's CJK set).
+- ``cjk``: ``standard`` after OpenSearch's ``cjk_width`` fold (fullwidth
+  ASCII to ASCII, halfwidth Katakana to fullwidth) and without its English
+  stop words (Lucene's CJK set). ``cjk_script_split`` (the indexer's custom
+  one, ``adapters/storage/opensearch_analysis``): the same fold, with the
+  stop words kept.
   OpenSearch's ``cjk`` keeps Latin letters or digits joined to the Hangul
   written after them ("AWS를" is one token, ``aws를``); ``cjk_script_split``
   and ``nori`` split them, as this analyzer does.
@@ -348,7 +349,7 @@ def cjk_width_fold(text: str) -> str:
     )
 
 
-@register_analyzer("cjk", "cjk_script_split")
+@register_analyzer("cjk")
 def cjk_analyzer(text: str) -> list[str]:
     """``standard`` after OpenSearch's ``cjk`` chain: the width fold
     (:func:`cjk_width_fold`) and its English stop words
@@ -357,6 +358,14 @@ def cjk_analyzer(text: str) -> list[str]:
         cjk_width_fold(text),
         lambda word: None if word in CJK_STOP_WORDS else word,
     )
+
+
+@register_analyzer("cjk_script_split")
+def cjk_script_split_analyzer(text: str) -> list[str]:
+    """``standard`` after the width fold (:func:`cjk_width_fold`): the
+    indexer's ``cjk_script_split`` folds width as ``cjk`` does but keeps the
+    English stop words."""
+    return standard_analyzer(cjk_width_fold(text))
 
 
 @cache

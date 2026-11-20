@@ -404,6 +404,8 @@ _KOREAN_LATIN = [
     "Привет를 Ωμέγα는 café를 naïve의 v2.0을 Amazon_S3에 e-mail로",
     "韓國어 漢字와 カナ는 2024년 3월에 (주)Acme와 Kestrel社 x²를",
     "한국어만 있는 문장입니다",
+    # Full-width letters are folded and English stop words kept, as cjk folds.
+    "ＡＷＳ를 the S3에 an 저장",
     # Punctuation the standard tokenizer joins letters across ("a.b").
     "가.나 가'나 가:나 가_나 「AWS」를 AWS’를 AWS를,S3에;Lambda로.",
 ]

@@ -74,8 +74,9 @@ unit holds any more are deleted by the next full build
   uses `default_analyzer`. The embedded engine of `backend: local` stems the
   stemming languages with Snowball (from the `[local]` extra) and splits a
   Thai run into character pairs; it drops stop words only under `english` and
-  `cjk`, whose chain it follows as OpenSearch's does (`cjk` also folds
-  fullwidth Latin and halfwidth Kana: "ＡＢＣ" matches "abc"). Chunk `text` is analyzed for
+  `cjk`, whose chain it follows as OpenSearch's does (`cjk`, and
+  `cjk_script_split` too, folds fullwidth Latin and halfwidth Kana: "ＡＢＣ"
+  matches "abc"). Chunk `text` is analyzed for
   `source_language`, and the graph indexes for the index language, so set it
   to the corpus language even without translation: with `source_language:
   en` a Korean corpus keeps words with their particles ("홍길동으로부터") as
