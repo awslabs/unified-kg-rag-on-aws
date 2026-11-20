@@ -170,8 +170,8 @@ def _build_parser() -> argparse.ArgumentParser:
     add_metrics_sink_argument(
         parser,
         "Where to send the questions' query metrics: 'none' (default) or "
-        "'cloudwatch' (CloudWatch EMF to stdout, to stderr with --output-format "
-        f"json: {QUERY_METRICS_HELP} under {QUERY_METRICS_NAMESPACE}, with an "
+        "'cloudwatch' (CloudWatch EMF to stderr, with the logs: "
+        f"{QUERY_METRICS_HELP} under {QUERY_METRICS_NAMESPACE}, with an "
         "Environment dimension when "
         "UKR_METRICS_ENVIRONMENT is set and the Strategy that ran)",
     )
@@ -223,18 +223,15 @@ def _bind(host: str, port: int) -> socket.socket:
     return sock
 
 
-def _chain_factory(
-    metrics_sink: str, *, stdout_taken: bool = False
-) -> Callable[[Config], Any] | None:
+def _chain_factory(metrics_sink: str) -> Callable[[Config], Any] | None:
     """The questions' chain builder publishing their query metrics to the
-    ``--metrics-sink`` sink (None, without one: the console's default), on
-    stderr when ``stdout_taken`` (``--output-format json``)."""
+    ``--metrics-sink`` sink (None, without one: the console's default)."""
     if metrics_sink == "none":
         return None
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
-    sink = build_metrics_sink(metrics_sink, query=True, stdout_taken=stdout_taken)
+    sink = build_metrics_sink(metrics_sink, query=True)
     return lambda config: GraphRAGChain(
         config=config, providers=build_providers(config, metrics_sink=sink)
     )
@@ -338,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         uvicorn.Config(
             create_app(
                 options,
-                chain_factory=_chain_factory(args.metrics_sink, stdout_taken=as_json),
+                chain_factory=_chain_factory(args.metrics_sink),
             ),
             # Uvicorn's own records: --log-level when given, through the
             # logging setup's handlers and their filter (no log config of

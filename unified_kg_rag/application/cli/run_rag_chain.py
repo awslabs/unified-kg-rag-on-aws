@@ -506,7 +506,7 @@ class CommandLineInterface:
         add_metrics_sink_argument(
             parser,
             "Where to send query metrics: 'none' (default) or 'cloudwatch' "
-            "(CloudWatch EMF to stdout, to stderr with --output-format json: "
+            "(CloudWatch EMF to stderr, with the logs: "
             f"{QUERY_METRICS_HELP} of each --mode rag query under "
             f"{QUERY_METRICS_NAMESPACE}, with an Environment "
             "dimension when UKR_METRICS_ENVIRONMENT is set and the Strategy "
@@ -581,9 +581,7 @@ class RAGChainRunner:
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
         setup_cli_logging(self.config, args)
-        self.metrics_sink = build_metrics_sink(
-            args.metrics_sink, query=True, stdout_taken=self.json_output
-        )
+        self.metrics_sink = build_metrics_sink(args.metrics_sink, query=True)
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable[..., Any]] = {
             "help": self._handle_help,

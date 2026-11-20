@@ -153,3 +153,31 @@ def test_cli_sink_takes_the_environment_from_the_task(monkeypatch) -> None:  # t
     sink = runner._build_metrics_sink()
     assert isinstance(sink, CloudWatchEMFSink)
     assert sink._environment == "prod"
+
+
+def test_a_cli_s_emf_goes_to_stderr_in_text_mode_too() -> None:
+    # RV5-05: in text mode the EMF went to stdout, so `run-rag --metrics-sink
+    # cloudwatch --query ... > answer.txt` appended a JSON line per query to
+    # the answer. It goes to stderr with the logs, in either output format.
+    import subprocess
+    import sys
+
+    code = (
+        "from unified_kg_rag.application.cli.metrics_args import "
+        "build_metrics_sink\n"
+        "sink = build_metrics_sink('cloudwatch', query=True)\n"
+        "sink.emit('unified_kg_rag/query', {'query_latency_ms': 1.0}, "
+        "{'Strategy': 'local'})\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={"PATH": "", "UKR_METRICS_ENVIRONMENT": "dev"},
+    )
+    assert done.stdout == ""
+    (record,) = [
+        json.loads(line) for line in done.stderr.splitlines() if "_aws" in line
+    ]
+    assert record["Strategy"] == "local" and record["Environment"] == "dev"

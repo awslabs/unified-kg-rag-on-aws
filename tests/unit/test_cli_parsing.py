@@ -632,7 +632,8 @@ def test_rag_cli_sends_its_emf_to_stderr_with_json_output(
     text = run_rag_chain.RAGChainRunner(
         _rag_parser().parse_args(["-q", "hi", "--metrics-sink", "cloudwatch"])
     ).metrics_sink
-    assert text._emf_logger.name != "unified_kg_rag.emf.stderr"
+    # In text mode too (RV5-05): stdout holds the answer alone.
+    assert text._emf_logger.name == "unified_kg_rag.emf.stderr"
 
 
 async def test_rag_runner_exits_non_zero_on_error_fallback(

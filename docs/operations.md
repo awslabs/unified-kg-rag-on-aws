@@ -1492,8 +1492,8 @@ These fire between runs too, so degradation shows before a run breaks on it:
 (`query_failed`, `query_degraded`, `query_abstained`, `query_limited`: 0 or
 1) through the
 metrics sink of its `Providers` (`--metrics-sink cloudwatch` of `run-rag`,
-`run-mcp-server`, whose EMF goes to stderr, and `run-console`; with
-`--output-format json` the EMF goes to stderr too; a serving
+`run-mcp-server` and `run-console`, whose EMF goes to stderr with the
+logs, in either output format; a serving
 layer passes its `MetricsSink`: `Providers(config, metrics_sink=...)`),
 answers only (a `--mode search` query is not counted), streamed ones and
 failed ones included, a failure in the query's admission (a build-record

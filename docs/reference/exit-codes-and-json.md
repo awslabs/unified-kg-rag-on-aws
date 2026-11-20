@@ -118,11 +118,10 @@ are flushed first, and a process pool's workers are ended with it.
 
 ## JSON output
 
-In either output format the logs go to stderr, so stdout holds only the
-run's output: `run-rag --query ... > answer.txt` keeps the answer alone.
+In either output format the logs and the EMF records of `--metrics-sink
+cloudwatch` go to stderr, so stdout holds only the run's output.
 `--output-format json` prints one JSON document to stdout and moves the
-banner, progress and logs to stderr, so the output pipes into `jq`; the EMF
-records of `--metrics-sink cloudwatch` go to stderr too. Every document
+banner, progress and logs to stderr, so the output pipes into `jq`. Every document
 starts with `version`, the package version that wrote it, and has the run's
 `status` and `exit_code`: `"completed"` and `0` for a success (a
 `run-ingestion` result keeps its run's status), the failure keys of

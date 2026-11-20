@@ -261,7 +261,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
     loop = asyncio.get_running_loop()
     executor = event_loop.configure_event_loop(loop, config.processing.io_workers)
     # The query metrics go to stderr: stdout is the stdio protocol's.
-    sink = build_metrics_sink(args.metrics_sink, query=True, stdout_taken=True)
+    sink = build_metrics_sink(args.metrics_sink, query=True)
     chain = GraphRAGChain(
         config=config,
         providers=build_providers(config, metrics_sink=sink),
