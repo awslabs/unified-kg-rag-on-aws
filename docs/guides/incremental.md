@@ -55,7 +55,15 @@ read stops it before anything is indexed
   run cannot write again (the model failed) may still state what the deleted
   document said: it is flagged `outdated` where it is read (a query's source
   metadata), its namespace lists a rebuild reason
-  ([Rebuild due](#rebuild-due)), and the next run tries again.
+  ([Rebuild due](#rebuild-due)), and the next run tries again. A corpus run
+  cannot delete the last document: a source directory with no file left
+  fails at `document_parsing` ("No supported source files found"), so an
+  unmounted volume never empties the index. Delete it with
+  `DataIngestionPipeline.delete_documents([relative path],
+  source_scope=<the directory's scope>)`
+  ([Python library: Documents from memory](./python-library.md#documents-from-memory)),
+  or retire its scope from a run over another directory
+  (`--retire-source-scope`, [Moving a corpus](#moving-a-corpus)).
 - **Change the extraction settings** (a tuned `custom_prompts` set,
   `entity_types`, an extraction, gleaning or chunking model, chunk sizes,
   translation, resolution): the next run re-extracts the unchanged documents
