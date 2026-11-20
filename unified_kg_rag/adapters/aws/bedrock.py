@@ -1429,6 +1429,30 @@ class BedrockRerankModelFactory(
         return model
 
 
+def _is_session_of_role(session_arn: str, role_arn: str) -> bool:
+    """Whether ``session_arn`` (an STS ``assumed-role`` ARN,
+    ``arn:<partition>:sts::<account>:assumed-role/<name>/<session>``) is a
+    session of the IAM role ``role_arn``
+    (``arn:<partition>:iam::<account>:role/<path/><name>``): the same
+    partition, account and role name. A session ARN does not carry the
+    role's path, so the name is the role ARN's last segment. The name alone
+    matched a same-named role of another account, whose session then made
+    the calls the configured role should have."""
+    session = session_arn.split(":", 5)
+    role = role_arn.split(":", 5)
+    if len(session) != 6 or len(role) != 6:
+        return False
+    session_kind, _, session_rest = session[5].partition("/")
+    role_kind, _, role_path = role[5].partition("/")
+    if session_kind != "assumed-role" or role_kind != "role":
+        return False
+    return (
+        session[1] == role[1]
+        and session[4] == role[4]
+        and session_rest.split("/", 1)[0] == role_path.rsplit("/", 1)[-1]
+    )
+
+
 def get_assumed_role_boto_session(
     boto_session: boto3.Session,
     assumed_role_arn: str | None = None,
@@ -1446,22 +1470,12 @@ def get_assumed_role_boto_session(
                 try:
                     caller_identity = sts_client.get_caller_identity()
                     current_arn = caller_identity.get("Arn", "")
-                    if "assumed-role" in current_arn:
-                        current_role_name = (
-                            current_arn.split("/")[-2] if "/" in current_arn else ""
+                    if _is_session_of_role(current_arn, assumed_role_arn):
+                        logger.debug(
+                            "Already using assumed role '%s', skipping duplicate assume",
+                            assumed_role_arn,
                         )
-                        target_role_name = (
-                            assumed_role_arn.split("/")[-1]
-                            if "/" in assumed_role_arn
-                            else ""
-                        )
-
-                        if current_role_name == target_role_name:
-                            logger.debug(
-                                "Already using assumed role '%s', skipping duplicate assume",
-                                assumed_role_arn,
-                            )
-                            return boto_session
+                        return boto_session
                 except (BotoCoreError, ClientError) as e:
                     logger.debug("Could not verify current role identity: %s", e)
     except (BotoCoreError, ClientError) as e:

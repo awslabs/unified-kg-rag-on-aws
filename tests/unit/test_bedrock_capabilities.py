@@ -12,6 +12,7 @@ no-op (``assumed_role_arn=None``) and patched-``assume_role`` paths.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -567,6 +568,72 @@ def test_assumed_role_session_calls_assume_role(mocker) -> None:
     _, kwargs = spy.call_args
     assert kwargs["RoleSessionName"] == bedrock_mod.DEFAULT_ROLE_SESSION_NAME
     assert kwargs["DurationSeconds"] == 3600
+
+
+class _AssumedRoleSession(FakeBotoSession):
+    """A session already running as an assumed role (``caller_arn``)."""
+
+    def __init__(self, caller_arn: str) -> None:
+        super().__init__()
+        self.caller_arn = caller_arn
+
+    def get_credentials(self) -> Any:
+        return SimpleNamespace(method="assume-role")
+
+    def client(self, service_name: str, **kwargs: Any) -> Any:
+        self.clients_requested.append(service_name)
+        return SimpleNamespace(get_caller_identity=lambda: {"Arn": self.caller_arn})
+
+
+@pytest.mark.parametrize(
+    ("caller_arn", "role_arn", "assumes"),
+    [
+        # The configured role already: kept (the role's path is not in a
+        # session ARN).
+        (
+            "arn:aws:sts::111111111111:assumed-role/Reader/s",
+            "arn:aws:iam::111111111111:role/Reader",
+            False,
+        ),
+        (
+            "arn:aws:sts::111111111111:assumed-role/Reader/s",
+            "arn:aws:iam::111111111111:role/team/Reader",
+            False,
+        ),
+        # A same-named role of another account: assumed (the name alone
+        # kept the caller's session, ARCH CD-3).
+        (
+            "arn:aws:sts::111111111111:assumed-role/Reader/s",
+            "arn:aws:iam::222222222222:role/Reader",
+            True,
+        ),
+        (
+            "arn:aws:sts::111111111111:assumed-role/Reader/s",
+            "arn:aws-cn:iam::111111111111:role/Reader",
+            True,
+        ),
+        (
+            "arn:aws:sts::111111111111:assumed-role/Writer/s",
+            "arn:aws:iam::111111111111:role/Reader",
+            True,
+        ),
+        (
+            "arn:aws:iam::111111111111:user/Reader",
+            "arn:aws:iam::111111111111:role/Reader",
+            True,
+        ),
+        ("", "arn:aws:iam::111111111111:role/Reader", True),
+    ],
+)
+def test_assumed_role_session_kept_only_for_the_same_role(
+    mocker, caller_arn: str, role_arn: str, assumes: bool
+) -> None:
+    session = _AssumedRoleSession(caller_arn)
+    assumed = object()
+    spy = mocker.patch.object(bedrock_mod, "assume_role", return_value=assumed)
+    out = get_assumed_role_boto_session(session, assumed_role_arn=role_arn)
+    assert (out is assumed) is assumes
+    assert spy.call_count == int(assumes)
 
 
 # --- CountTokens capability ------------------------------------------------

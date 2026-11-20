@@ -524,6 +524,9 @@ Bugs present in 0.3.0.
   columns.
 - The MCP server's instructions said the index holds the GraphRAG and LightRAG methodologies only; they name every
   methodology (HippoRAG 2 and RAPTOR too).
+- With `aws.bedrock.assumed_role_arn` set and the caller already in an assumed role of the same name in another
+  account (or partition), the role was not assumed and the Bedrock calls ran in the caller's account; the role is kept
+  only when partition, account and name match.
 
 ## [0.3.0] - 2026-11-14
 
