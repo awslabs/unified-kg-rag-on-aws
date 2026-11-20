@@ -171,6 +171,23 @@ so an inline `# gitleaks:allow` added later does not clear it. A test that needs
 `userinfo_url` (`tests/fixtures/url_credentials.py`); a document writes the password as a placeholder (`<password>`).
 `tests/unit/test_no_literal_url_credentials.py` fails on a literal in any tracked file.
 
+gitleaks (default rules) finds no secret in the tree or the history: its false positives are listed by fingerprint in
+[`.gitleaksignore`](./.gitleaksignore), each with what it matched. Scan a clone, not the work tree (`gitleaks dir`
+also reads untracked files such as `__pycache__/`), with the image pinned by digest:
+
+```bash
+git clone --quiet . /tmp/gitleaks-scan
+docker run --rm -v /tmp/gitleaks-scan:/repo:ro -w /repo \
+  zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+  git . --log-opts=HEAD --redact --no-banner   # the history; then `dir .` for the tree
+```
+
+(`--log-opts=HEAD` reads the checked-out branch's commits; without it gitleaks reads every ref the clone has.)
+
+A new finding that is not a secret gets its fingerprint (from `--report-format json`) and a comment in
+`.gitleaksignore`. A tree fingerprint holds the line number, so an edit above a listed line moves it: replace the
+entry.
+
 ### Pins Dependabot does not move
 
 [Dependabot](./.github/dependabot.yml) updates both uv locks, the console's npm lock (`console/web`), the SHA-pinned
