@@ -3,10 +3,10 @@
 """The logic of the read-only MCP tools, without the MCP SDK
 (docs/design.md#84-agent-access-the-read-only-mcp-server).
 
-:class:`KnowledgeGraphTools` answers the five tools over one
+:class:`KnowledgeGraphTools` answers the six tools over one
 :class:`GraphRAGChain`: ``kg_search`` and ``kg_answer`` through the chain's
-public query API, ``kg_get_entity``, ``kg_neighbors`` and
-``kg_describe_schema`` through ``application.retrieval.graph_lookup``.
+public query API, ``kg_get_entity``, ``kg_neighbors``, ``kg_get_chunks``
+and ``kg_describe_schema`` through ``application.retrieval.graph_lookup``.
 Every result is a Pydantic model whose records share one chunk-oriented
 shape (:class:`SupportingContent`). The namespace a call reads is the one
 the tools were built for unless ``mcp.allowed_namespaces`` lists the one it
@@ -33,6 +33,7 @@ from unified_kg_rag.application.presentation.answer_view import (
     SourceView,
 )
 from unified_kg_rag.application.retrieval import graph_lookup
+from unified_kg_rag.application.retrieval.citations import unit_from_metadata
 from unified_kg_rag.application.retrieval.rag_chain import (
     ConversationTurn,
     GraphRAGChain,
@@ -55,6 +56,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.domain.models.schema import ExtractionSchema
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import Degradation
 from unified_kg_rag.domain.retrieval.source_fields import EntityRef
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -197,7 +199,9 @@ class SupportingContent(BaseModel):
     )
     attributes: dict[str, Any] = Field(
         default_factory=dict,
-        description="Kind-specific scalars: rank, weight, in_schema, iris, hops",
+        description="Kind-specific values: rank, weight, in_schema, iris, hops; "
+        "of a kg_get_chunks chunk, n_tokens, relative_path, page_start, "
+        "page_end, community_ids and the document's filters",
     )
     citation: int | None = Field(
         default=None,
@@ -323,6 +327,18 @@ class NeighborsToolResult(_Records):
     )
     relationships_capped: bool = Field(
         default=False, description="More relationships were stored than returned"
+    )
+
+
+class ChunksToolResult(_Records):
+    """``kg_get_chunks``'s result: the records are chunks (text units), in
+    the order asked."""
+
+    missing: list[str] = Field(
+        default_factory=list,
+        description="The ids asked that name no chunk of the namespace the "
+        "filters pass (an unknown id, an entity's or a seed graph's, or a "
+        "chunk the filters exclude)",
     )
 
 
@@ -1082,6 +1098,93 @@ class KnowledgeGraphTools:
         )
 
     # -- the graph tools -------------------------------------------------
+
+    def _chunk_ids(self, ids: list[str] | None) -> list[str]:
+        """``ids``, each once in the order given, refused when empty, past
+        ``mcp.max_top_k`` ids or with an id past ``mcp.max_query_chars``."""
+        wanted = list(dict.fromkeys(self._text("id", i) for i in ids or []))
+        if not wanted:
+            raise InvalidArgumentError("ids is empty.")
+        if len(wanted) > self.settings.max_top_k:
+            raise InvalidArgumentError(
+                f"Give at most {self.settings.max_top_k} ids (mcp.max_top_k)."
+            )
+        return wanted
+
+    def _chunk_record(
+        self, rank: int, unit_id: str, metadata: dict[str, Any]
+    ) -> SupportingContent:
+        """A chunk's record from its stored fields: its text, document and
+        lineage (its path relative to the corpus root, never the host's)."""
+        record = _record(
+            SourceView.of(
+                rank,
+                SectionType.TEXT,
+                str(metadata.get("text") or ""),
+                source=unit_id,
+                score=None,
+                metadata=metadata,
+                chunk_id=unit_id,
+            ),
+            self.settings.max_text_chars,
+        )
+        unit = unit_from_metadata(metadata, unit_id)
+        stored = metadata.get("attributes")
+        filters = stored.get("filters") if isinstance(stored, dict) else None
+        record.attributes.update(
+            (key, value)
+            for key, value in (
+                ("n_tokens", metadata.get("n_tokens")),
+                ("relative_path", unit.file_path),
+                ("page_start", unit.page),
+                ("page_end", unit.page_end),
+                ("community_ids", source_fields.listed(metadata, "community_ids")),
+                ("filters", filters if isinstance(filters, dict) else None),
+            )
+            if value not in (None, "", [], {})
+        )
+        return record
+
+    async def get_chunks(
+        self,
+        ids: list[str],
+        *,
+        filters: dict[str, Any] | None = None,
+        namespace: str | None = None,
+    ) -> ChunksToolResult:
+        """``kg_get_chunks``: the chunks (text units) of ``ids``, as other
+        records list them (``chunk_id``, ``text_unit_ids``), with their text
+        and documents; an id that names none the ``filters`` pass is listed
+        in ``missing``."""
+
+        async def run() -> ChunksToolResult:
+            wanted = self._chunk_ids(ids)
+            suffix = self._suffix(namespace)
+            typed = self._filters(filters)
+            with usage_scope() as meter:
+                found = await graph_lookup.text_units(
+                    self.chain, suffix, wanted, filters=typed
+                )
+            records = [
+                self._chunk_record(rank, unit_id, found[unit_id])
+                for rank, unit_id in enumerate((u for u in wanted if u in found), 1)
+            ]
+            kept, omitted = self._capped(records)
+            return ChunksToolResult(
+                namespace=suffix,
+                records=kept,
+                missing=[u for u in wanted if u not in found],
+                truncated=omitted > 0,
+                omitted=omitted,
+                usage=meter.snapshot(),
+            )
+
+        return await self._call(
+            "kg_get_chunks",
+            {"ids": ids, "filters": filters},
+            run,
+            namespace,
+        )
 
     def _entity_arguments(
         self, entity_id: str | None, name: str | None, iri: str | None

@@ -36,6 +36,7 @@ from unified_kg_rag.application.cli.mcp_tools import (
     UNTRUSTED_NOTE,
     AnswerRecords,
     AnswerToolResult,
+    ChunksToolResult,
     EntityToolResult,
     KnowledgeGraphTools,
     NeighborsToolResult,
@@ -51,9 +52,8 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     validation_message,
 )
-from unified_kg_rag.domain.models import QueryLimits, SearchType
+from unified_kg_rag.domain.models import Methodology, QueryLimits, SearchType
 from unified_kg_rag.domain.models.config import McpServerConfig
-from unified_kg_rag.domain.models.methodology import Methodology
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
@@ -394,6 +394,12 @@ def _descriptions(tools: KnowledgeGraphTools) -> dict[str, str]:
             "and the relationships among them, with the chunks and documents "
             "they come from."
         ),
+        "kg_get_chunks": (
+            "Read chunks (text units) by id, as other records list them "
+            "(chunk_id, text_unit_ids): each chunk's text, source document, "
+            "path in the corpus, pages and the filters its document carries. "
+            "Ids that name no chunk are listed in 'missing'. No model call."
+        ),
         "kg_describe_schema": (
             "What the index namespace holds: its methodologies, the search "
             "strategies kg_search and kg_answer can run, its last build, the "
@@ -441,10 +447,10 @@ def build_mcp_server(
         title="Unified KG RAG (read-only)",
         version=__version__,
         instructions=(
-            "Read-only tools over a knowledge-graph RAG index (methodologies: "
-            f"{', '.join(m.value for m in Methodology)}): search it, ask it, look "
-            "up entities and walk their neighbourhood. Namespace: "
-            f"{tools.namespace}. " + UNTRUSTED_NOTE
+            "Read-only tools over a knowledge-graph RAG index (methodologies "
+            f"{', '.join(m.value for m in Methodology)}): search it, ask it, "
+            "look up entities, walk their neighbourhood and read the chunks a "
+            f"record cites. Namespace: {tools.namespace}. " + UNTRUSTED_NOTE
         ),
     )
     read_only = annotations_class(
@@ -636,6 +642,9 @@ def build_mcp_server(
     async def neighbors(**kw: Any) -> NeighborsToolResult:
         return await tools.neighbors(entity_id=kw.pop("id", None), **kw)
 
+    async def get_chunks(**kw: Any) -> ChunksToolResult:
+        return await tools.get_chunks(**kw)
+
     async def describe(**kw: Any) -> SchemaToolResult:
         return await tools.describe_schema(**kw)
 
@@ -662,6 +671,46 @@ def build_mcp_server(
             ],
             NeighborsToolResult,
             neighbors,
+        ),
+        "kg_get_chunks": (
+            [
+                _parameter(
+                    "ids",
+                    Annotated[
+                        list[
+                            Annotated[
+                                str,
+                                Field(min_length=1, max_length=limits.max_query_chars),
+                            ]
+                        ],
+                        Field(
+                            min_length=1,
+                            max_length=limits.max_top_k,
+                            description=(
+                                "The chunk ids (a record's chunk_id or "
+                                "text_unit_ids)"
+                            ),
+                        ),
+                    ],
+                    inspect.Parameter.empty,
+                ),
+                _parameter(
+                    "filters",
+                    Annotated[
+                        Filters,
+                        Field(
+                            description=(
+                                "Attribute filters, as kg_search takes them: a "
+                                "chunk they exclude is listed in missing"
+                            )
+                        ),
+                    ],
+                    None,
+                ),
+                *namespace_parameter,
+            ],
+            ChunksToolResult,
+            get_chunks,
         ),
         "kg_describe_schema": (namespace_parameter, SchemaToolResult, describe),
     }

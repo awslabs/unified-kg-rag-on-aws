@@ -54,6 +54,7 @@ Ctrl-C.
 | `kg_answer` | The full RAG answer first, with the abstention fields (`abstained`, `abstention_reason`), then the records it rests on and `usage`. `records`: `cited` (the default: the sources and model-written sections the answer cites; when it cites none, as a `global` or `drift` answer, the first `mcp.uncited_records`, `records_kept: top`), `all` (every source the answer model saw, after the model-written sections it may cite: global search's key points, DRIFT's intermediate answers) or `none`; `records_kept` says which applied. `degraded` lists the steps the answer was given without (a partial answer: each `step`, `reason` and `error_type`), `citations_unresolved` the lineage reads that failed For a follow-up question, pass the conversation so far as `history` (below) | The above, the follow-up rewrite with a `history`, and the answer |
 | `kg_get_entity` | Entities by `id`, `iri` or `name` (exact first, as the strategies link a name: case, Arabic alef forms or `ё`/`е` aside; without one, the closest names, `match: search`) | None |
 | `kg_neighbors` | The entities within `max_hops` of one entity and the relationships among them | None |
+| `kg_get_chunks` | The chunks (text units) of up to `mcp.max_top_k` `ids`, as other records list them (`chunk_id`, `text_unit_ids`): each one's text, document and lineage, in the order asked ([below](#reading-the-chunks-a-record-cites)) | None |
 | `kg_describe_schema` | The methodologies and strategies the namespace holds, its last build, why it is due for a rebuild (`rebuild`, [Incremental indexing](./incremental.md#rebuild-due)), the extraction schema's types and patterns, the filter keys and the server's limits; `exists: false` (and no methodology or strategy) for a namespace nothing was ingested under | None |
 
 `kg_search` and `kg_answer` take `limits` too: `deadline_seconds`,
@@ -107,11 +108,30 @@ and ontology tooling exchange:
 | `text_unit_ids` | The chunks a graph item was extracted from (the first 20) |
 | `entities` | References (`id`, `name`, `type`, `iri`): the entity itself, a relationship's or claim's endpoints, the entities a `query_result` returned (ids and names), or the entities of the same response that cite this chunk |
 | `provenance`, `synthesized` | Seed-graph provenance (`kind`, `seed_graphs`, `iri`); `true` for model-written text such as global search's key points |
-| `attributes` | Kind-specific scalars: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops` |
+| `attributes` | Kind-specific values: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops`; a `kg_get_chunks` chunk's `n_tokens`, `relative_path`, `page_start`, `page_end`, `community_ids` and `filters` |
 | `citation`, `cited` | `kg_answer` only: the `[n]` marker the answer context gave the record and whether the answer cites it ([citations](./query.md#citations)); `null` in `kg_search`, and in `kg_answer` for a strategy that does not cite (`global` and `drift` by default) |
 
 A response past `mcp.max_response_chars` drops its lowest-ranked records
 and says so (`truncated`, `omitted`).
+
+### Reading the chunks a record cites
+
+A graph record names the chunks it was extracted from (`text_unit_ids`)
+but not their text. `kg_get_chunks` reads them by id, with no model call
+and no ranking: each id once, in the order given, at most `mcp.max_top_k`
+of them (a record lists at most 20). Each record is a `text` record whose
+`text` is the stored chunk (cut to `mcp.max_text_chars`) and whose
+`document_id` and `document_name` name its document; `attributes` adds the
+chunk's `n_tokens`, its document's path relative to the corpus root
+(`relative_path`, never the indexing host's path), the pages it covers
+(`page_start`, `page_end`, for a converted document that recorded them),
+its `community_ids` and the document's `filters`. An id that names no
+chunk of the namespace (an unknown id, an entity's id, a seed graph's
+lineage unit) or whose chunk the call's `filters` exclude is listed in
+`missing`, not refused, so a caller cannot tell an excluded chunk from an
+absent one. The `filters` are those of `kg_search`, of the keys the
+chunks hold (`kg_describe_schema` lists them); another key is refused with
+`[invalid_filter]`, as it would filter nothing.
 
 ## Scope and limits
 
@@ -129,10 +149,10 @@ read from its own server and namespace, with the store roles of the
 
 | Key | Default | Bounds |
 |---|---|---|
-| `mcp.tools` | all five | The tools listed; leave `kg_answer` out to make no answer-model call |
+| `mcp.tools` | all six | The tools listed; leave `kg_answer` out to make no answer-model call |
 | `mcp.allowed_namespaces` | `[]` | Further namespaces a call may name |
 | `mcp.strategies` | every strategy | The strategies `kg_search` and `kg_answer` may run; with `auto` in the list, `auto` routes only among the listed ones, and is refused before any model call when the namespace serves none of them |
-| `mcp.max_top_k` | `20` | `top_k` of a search, `limit` of `kg_get_entity` |
+| `mcp.max_top_k` | `20` | `top_k` of a search, `limit` of `kg_get_entity`, the `ids` of `kg_get_chunks` |
 | `mcp.max_hops`, `mcp.max_neighbors` | `2`, `50` | A `kg_neighbors` walk |
 | `mcp.max_query_chars` | `2000` | A query or entity name |
 | `mcp.max_text_chars`, `mcp.max_response_chars` | `2000`, `60000` | A record's text, a response's records |

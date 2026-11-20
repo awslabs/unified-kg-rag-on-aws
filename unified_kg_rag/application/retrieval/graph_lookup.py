@@ -3,8 +3,9 @@
 """Read-only lookups of an index namespace's graph, for the MCP tools
 (docs/design.md#84-agent-access-the-read-only-mcp-server).
 
-An entity by id, IRI or name, the neighbourhood of one, the file names of
-text units and what a namespace holds. They read the stores through the
+An entity by id, IRI or name, the neighbourhood of one, text units by id
+(their stored text and lineage, or only their file names) and what a
+namespace holds. They read the stores through the
 chain's own retrievers (``GraphRAGChain._get_retriever``), with the read
 paths the search strategies use: a text-less fetch by id on an index of
 the document store and the graph walk of the graph store, so every backend
@@ -25,6 +26,9 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.retrieval import methodology_check
+from unified_kg_rag.application.retrieval.filter_validation import (
+    validate_filter_keys,
+)
 from unified_kg_rag.application.retrieval.text_units import fetch_text_units
 from unified_kg_rag.domain.ingestion.rebuild_due import RebuildReasons, rebuild_reasons
 from unified_kg_rag.domain.models import (
@@ -59,6 +63,16 @@ EntityMatch = Literal["id", "iri", "name", "search", "none"]
 
 # The artifacts a graph lookup reads: the entities index and the graph.
 GRAPH_ARTIFACTS = frozenset({IndexArtifact.ENTITIES, IndexArtifact.GRAPH})
+# The stored fields a text-unit lookup returns (text_units): its text, its
+# document and lineage, never an embedding or a translation.
+TEXT_UNIT_FIELDS = (
+    "id",
+    "text",
+    "document_ids",
+    "attributes",
+    "n_tokens",
+    "community_ids",
+)
 
 
 async def require_graph(chain: GraphRAGChain, suffix: str | None) -> None:
@@ -322,6 +336,42 @@ async def text_unit_file_names(
         for unit_id, metadata in fetched.units.items()
         if (name := source_fields.file_name(metadata))
     }
+
+
+async def text_units(
+    chain: GraphRAGChain,
+    suffix: str | None,
+    unit_ids: list[str],
+    *,
+    filters: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """``{text_unit_id: stored fields}`` (``TEXT_UNIT_FIELDS``) of the text
+    units of ``unit_ids`` stored in the namespace that pass ``filters``, in
+    the order asked, through the one fetch by id of the citations
+    (``text_units.fetch_text_units``). An id no unit has, a seed graph's
+    lineage unit (never a passage) or a unit the filters exclude is left
+    out alike.
+
+    Raises:
+        IndexNotFoundError: Nothing was ingested under ``suffix``.
+        InvalidFilterError: A filter key the text-units index does not
+            declare (it would be dropped, the lookup unfiltered).
+    """
+    suffix = resolve_namespace(chain.config, suffix)
+    await require_namespace(chain, suffix)
+    retriever = _document_retriever(chain)
+    validate_filter_keys(
+        filters, [retriever], [chain.config.indexing.opensearch.text_units_index_prefix]
+    )
+    fetched = await fetch_text_units(
+        retriever,
+        chain.config,
+        suffix,
+        unit_ids,
+        filters=filters,
+        fields=TEXT_UNIT_FIELDS,
+    )
+    return fetched.units
 
 
 class NamespaceDescription(methodology_check.NamespaceSummary):

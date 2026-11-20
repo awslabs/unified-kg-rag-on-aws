@@ -265,7 +265,7 @@ Generate a synthetic procurement world, its seed graph and graph-structure quest
 
 ## `run-mcp-server`
 
-Serve one index namespace to agents as read-only MCP (Model Context Protocol) tools: kg_search, kg_answer, kg_get_entity, kg_neighbors and kg_describe_schema. Needs the mcp extra
+Serve one index namespace to agents as read-only MCP (Model Context Protocol) tools: kg_search, kg_answer, kg_get_entity, kg_neighbors, kg_get_chunks and kg_describe_schema. Needs the mcp extra
 
 Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider-flags).
 

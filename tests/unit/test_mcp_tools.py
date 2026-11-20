@@ -1290,3 +1290,127 @@ async def test_a_failed_calls_log_line_carries_the_ids_its_error_names(
         await _tools(FailingChain()).search("q")
     (context,) = [context for message, context in lines if "failed after" in message]
     assert context == {"query_id": "q-logged", "trace_id": "t-logged"}
+
+
+# --- kg_get_chunks ---------------------------------------------------------
+
+
+def _stored_unit(unit_id: str, text: str = "Depot stores widgets.") -> dict[str, Any]:
+    return {
+        "id": unit_id,
+        "text": text,
+        "n_tokens": 4,
+        "community_ids": ["c-1"],
+        "attributes": {
+            "file_name": "logistics.txt",
+            "file_path": "/home/someone/private/corpus/ops/logistics.txt",
+            "relative_path": "ops/logistics.txt",
+            "document_id": "doc-1",
+            "page_start": 2,
+            "page_end": 3,
+            "filters": {"region": "north"},
+        },
+    }
+
+
+@pytest.fixture
+def stored_units(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """The chunk lookups made: each call's suffix, ids and filters; the
+    store holds unit-1 and unit-2."""
+    calls: list[dict[str, Any]] = []
+    held = {u: _stored_unit(u) for u in ("unit-1", "unit-2")}
+
+    async def lookup(
+        chain: Any,
+        suffix: str | None,
+        unit_ids: list[str],
+        *,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        calls.append({"suffix": suffix, "ids": unit_ids, "filters": filters})
+        return {u: held[u] for u in unit_ids if u in held}
+
+    monkeypatch.setattr(graph_lookup, "text_units", lookup)
+    return calls
+
+
+async def test_get_chunks_returns_each_chunk_with_its_provenance(
+    stored_units: list[dict[str, Any]],
+) -> None:
+    result = await _tools().get_chunks(["unit-2", "nope", "unit-1", "unit-2"])
+    # In the order asked, each id once; an unknown id is missing, no error.
+    assert [r.chunk_id for r in result.records] == ["unit-2", "unit-1"]
+    assert result.missing == ["nope"]
+    assert stored_units == [
+        {"suffix": "default", "ids": ["unit-2", "nope", "unit-1"], "filters": None}
+    ]
+    record = result.records[0]
+    assert (record.rank, record.kind, record.source_id) == (1, "text", "unit-2")
+    assert record.text == "Depot stores widgets." and record.score is None
+    assert (record.document_id, record.document_name) == ("doc-1", "logistics.txt")
+    assert record.attributes == {
+        "n_tokens": 4,
+        "relative_path": "ops/logistics.txt",
+        "page_start": 2,
+        "page_end": 3,
+        "community_ids": ["c-1"],
+        "filters": {"region": "north"},
+    }
+    # The host's path never leaves the server; no model call.
+    assert "/home/someone" not in result.model_dump_json()
+    assert result.usage["llm_calls"] == 0
+
+
+async def test_get_chunks_reads_under_the_namespace_and_filters(
+    stored_units: list[dict[str, Any]],
+) -> None:
+    tools = _tools(allowed_namespaces=["other"])
+    await tools.get_chunks(["unit-1"], namespace="other", filters={"n_tokens": "4"})
+    assert stored_units == [
+        {"suffix": "other", "ids": ["unit-1"], "filters": {"n_tokens": 4}}
+    ]
+    with pytest.raises(ToolArgumentError, match="not served"):
+        await tools.get_chunks(["unit-1"], namespace="secret")
+    with pytest.raises(InvalidFilterError):
+        await tools.get_chunks(["unit-1"], filters={"in_schema": "maybe"})
+    assert len(stored_units) == 1
+
+
+@pytest.mark.parametrize(
+    ("ids", "error"),
+    [([], "ids is empty"), ([" "], "id is empty"), (["x" * 2001], "longer than")],
+)
+async def test_get_chunks_refuses_bad_ids(
+    stored_units: list[dict[str, Any]], ids: list[str], error: str
+) -> None:
+    with pytest.raises(ToolArgumentError, match=error):
+        await _tools().get_chunks(ids)
+    assert stored_units == []
+
+
+async def test_get_chunks_bounds_the_ids_by_max_top_k(
+    stored_units: list[dict[str, Any]],
+) -> None:
+    tools = _tools(max_top_k=3)
+    with pytest.raises(ToolArgumentError, match="at most 3 ids"):
+        await tools.get_chunks([f"u{i}" for i in range(4)])
+    # Repeats count once.
+    await tools.get_chunks(["u1", "u1", "u2", "u3"])
+    assert stored_units[0]["ids"] == ["u1", "u2", "u3"]
+
+
+async def test_get_chunks_cuts_the_text_and_caps_the_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def lookup(
+        chain: Any, suffix: str | None, unit_ids: list[str], **_: Any
+    ) -> dict[str, dict[str, Any]]:
+        return {u: _stored_unit(u, "word " * 400) for u in unit_ids}
+
+    monkeypatch.setattr(graph_lookup, "text_units", lookup)
+    result = await _tools(max_text_chars=100, max_response_chars=2000).get_chunks(
+        [f"u{i}" for i in range(20)]
+    )
+    assert all(len(r.text) == 100 and r.text_truncated for r in result.records)
+    assert result.truncated and result.omitted == 20 - len(result.records)
+    assert result.missing == []

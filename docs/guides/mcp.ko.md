@@ -50,6 +50,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `kg_answer` | RAG 답변 전체와 답변 거절 필드(`abstained`, `abstention_reason`)를 먼저, 그다음 답변의 근거 레코드와 `usage`. `records`: `cited`(기본값: 답변이 인용한 출처와 모델 작성 섹션. `global`이나 `drift` 답변처럼 하나도 인용하지 않으면 앞의 `mcp.uncited_records`개, `records_kept: top`), `all`(답변 모델이 본 모든 출처. 답변이 인용할 수 있는 모델 작성 섹션인 global 검색의 핵심 요점과 DRIFT의 중간 답변이 먼저), `none`. 실제 적용된 값은 `records_kept`. `degraded`는 답변이 빠뜨린 단계(부분 답변: 각 `step`, `reason`, `error_type`), `citations_unresolved`는 실패한 계보(lineage) 읽기입니다. 후속 질문이면 지금까지의 대화를 `history`로 넘깁니다(아래 참고) | 위의 호출, `history`가 있으면 후속 질문 재작성, 답변 생성 |
 | `kg_get_entity` | `id`, `iri`, `name`으로 엔터티를 찾습니다(이름은 먼저 정확히 일치하는 것을 찾고(전략이 이름을 연결하는 방식대로 대소문자, 아랍어 알레프 형태, `ё`/`е` 차이는 무시), 없으면 가장 비슷한 이름을 찾고 `match: search`로 표시) | 없음 |
 | `kg_neighbors` | 한 엔터티에서 `max_hops` 안에 있는 엔터티와 그 사이의 관계 | 없음 |
+| `kg_get_chunks` | 다른 레코드가 가리키는 청크(텍스트 유닛) id(`chunk_id`, `text_unit_ids`)를 최대 `mcp.max_top_k`개 받아, 요청한 순서대로 각 청크의 텍스트, 문서, 계보를 돌려줍니다([아래](#레코드가-인용한-청크-읽기)) | 없음 |
 | `kg_describe_schema` | 네임스페이스가 가진 방법론과 전략, 마지막 빌드, 다시 빌드해야 하는 이유(`rebuild`, [증분 인덱싱](./incremental.ko.md#재구축이-필요한-때)), 추출 스키마의 타입과 패턴, 필터 키, 서버 한도. 아무것도 수집하지 않은 네임스페이스는 `exists: false`(방법론과 전략 없음) | 없음 |
 
 `kg_search`와 `kg_answer`는 `limits`도 받습니다. `deadline_seconds`, `max_model_calls`,
@@ -95,11 +96,26 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `text_unit_ids` | 그래프 항목이 추출된 청크(처음 20개) |
 | `entities` | 참조(`id`, `name`, `type`, `iri`). 엔터티 자신, 관계나 클레임의 양 끝, `query_result`가 돌려준 엔터티(id와 이름), 또는 같은 응답에서 이 청크를 인용하는 엔터티 |
 | `provenance`, `synthesized` | 시드 그래프 출처(`kind`, `seed_graphs`, `iri`). 글로벌 검색의 핵심 요점처럼 모델이 쓴 텍스트면 `true` |
-| `attributes` | 종류별 스칼라 값: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops` |
+| `attributes` | 종류별 값: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops`. `kg_get_chunks`의 청크는 `n_tokens`, `relative_path`, `page_start`, `page_end`, `community_ids`, `filters` |
 | `citation`, `cited` | `kg_answer`만: 답변 컨텍스트가 레코드에 붙인 `[n]` 표식과 답변이 그것을 인용했는지([인용](./query.ko.md#인용)). `kg_search`에서, 그리고 인용하지 않는 전략(기본값으로는 `global`과 `drift`)의 `kg_answer`에서는 `null` |
 
 응답이 `mcp.max_response_chars`를 넘으면 순위가 낮은 레코드부터 빼고 그 사실을
 알립니다(`truncated`, `omitted`).
+
+### 레코드가 인용한 청크 읽기
+
+그래프 레코드는 자신이 추출된 청크의 id(`text_unit_ids`)만 알려 주고 텍스트는 담지
+않습니다. `kg_get_chunks`는 모델 호출이나 순위 매기기 없이 id로 청크를 읽습니다. id는
+중복 없이 받은 순서대로, 최대 `mcp.max_top_k`개까지 받습니다(레코드 하나가 나열하는
+id는 최대 20개). 각 레코드는 `text` 레코드로, `text`에는 저장된 청크(`mcp.max_text_chars`로
+자름)가, `document_id`와 `document_name`에는 문서가 들어갑니다. `attributes`에는 청크의
+`n_tokens`, 코퍼스 루트 기준 문서 경로(`relative_path`. 인덱싱한 호스트의 경로는 절대
+담지 않음), 청크가 걸친 페이지(`page_start`, `page_end`. 변환 시 페이지를 기록한 문서만),
+`community_ids`, 문서의 `filters`가 들어갑니다. 네임스페이스에 없는 id(모르는 id, 엔터티
+id, 시드 그래프의 계보 유닛)나 호출의 `filters`가 제외한 청크의 id는 거부하지 않고
+`missing`에 담습니다. 그래서 호출자는 제외된 청크와 없는 청크를 구별할 수 없습니다.
+`filters`는 `kg_search`와 같고, 청크가 가진 키만 받습니다(`kg_describe_schema`가 알려
+줌). 다른 키는 아무것도 거르지 못하므로 `[invalid_filter]`로 거부합니다.
 
 ## 범위와 한도
 
@@ -117,10 +133,10 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 
 | 키 | 기본값 | 제한 대상 |
 |---|---|---|
-| `mcp.tools` | 다섯 개 모두 | 제공할 도구. `kg_answer`를 빼면 답변 모델을 호출하지 않음 |
+| `mcp.tools` | 여섯 개 모두 | 제공할 도구. `kg_answer`를 빼면 답변 모델을 호출하지 않음 |
 | `mcp.allowed_namespaces` | `[]` | 호출이 추가로 지정할 수 있는 네임스페이스 |
 | `mcp.strategies` | 모든 전략 | `kg_search`와 `kg_answer`가 실행할 수 있는 전략. 목록에 `auto`가 있으면 `auto`도 목록 안에서만 라우팅하고, 네임스페이스가 목록의 전략을 하나도 제공하지 않으면 모델 호출 전에 거부 |
-| `mcp.max_top_k` | `20` | 검색의 `top_k`, `kg_get_entity`의 `limit` |
+| `mcp.max_top_k` | `20` | 검색의 `top_k`, `kg_get_entity`의 `limit`, `kg_get_chunks`의 `ids` |
 | `mcp.max_hops`, `mcp.max_neighbors` | `2`, `50` | `kg_neighbors` 탐색 |
 | `mcp.max_query_chars` | `2000` | 질의나 엔터티 이름 |
 | `mcp.max_text_chars`, `mcp.max_response_chars` | `2000`, `60000` | 레코드 하나의 텍스트, 응답 하나의 레코드 |
