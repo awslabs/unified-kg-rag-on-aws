@@ -26,6 +26,7 @@ from unified_kg_rag.shared.exceptions import (
     GraphRAGException,
     LanguageModelError,
     ModelUnreachableError,
+    QueryTimeoutError,
     causes,
     class_names,
 )
@@ -72,12 +73,14 @@ def is_unreachable_error(exc: BaseException) -> bool:
     ``EmbeddingModelError`` wraps the client's) is a connection to a model
     server that could not be made: refused, no route, a name that does not
     resolve, no connection in time. Never a store's (``AWSServiceError``:
-    ``StoreConnectionError``, which the store clients raise for theirs)."""
+    ``StoreConnectionError``, which the store clients raise for theirs), nor
+    a query limit's that passed meanwhile (``QueryTimeoutError``: a first
+    chunk's window is the client's connect timeout too)."""
     chain = list(causes(exc))
     for at, error in enumerate(chain):
         if isinstance(error, ModelUnreachableError):
             return True
-        if isinstance(error, AWSServiceError):
+        if isinstance(error, AWSServiceError | QueryTimeoutError):
             return False
         names = class_names(error)
         if names & _REACHED_NAMES:

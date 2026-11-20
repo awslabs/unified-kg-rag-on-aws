@@ -35,7 +35,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
 from unified_kg_rag.domain.models import Config, PipelineStageStatus, SearchStrategy
-from unified_kg_rag.shared import reader_stop
+from unified_kg_rag.shared import query_stop
 from unified_kg_rag.shared.utils import concurrency
 
 pytestmark = pytest.mark.integration
@@ -74,7 +74,7 @@ def _waiting(
 
     async def counted(future: asyncio.Future[Any]) -> Any:
         waiting = queries.setdefault(id(future), set())
-        waiting.add(id(reader_stop._READER_STOP.get()))
+        waiting.add(id(query_stop._QUERY_STOP.get()))
         started.set()
         if len(waiting) >= readers:
             joined.set()

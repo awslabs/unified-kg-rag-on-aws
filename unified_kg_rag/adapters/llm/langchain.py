@@ -35,7 +35,7 @@ from unified_kg_rag.domain.models.config import RETRY_PROFILES, RetryPolicy
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.logging import log_failure
-from unified_kg_rag.shared.reader_stop import blank_in_shared_calls
+from unified_kg_rag.shared.query_stop import blank_in_shared_calls
 from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,

@@ -12,10 +12,10 @@ query's per-query lifecycle state, so it is started detachable
   under a scope of its own, which ends when it does, not when its query
   does, so the query closing what it left open closes nothing this work
   still reads;
-- it stops with the query's reader (``shared.reader_stop``) only until the
-  query keeps it (:func:`detach`): until then it is the query's work and
-  sends no model request after the reader's stop; once kept, that reader
-  is gone from it, and it is bounded by its own retry budget and timeouts
+- it stops with the query (its reader's stop or its deadline,
+  ``shared.query_stop``) only until the query keeps it (:func:`detach`):
+  until then it is the query's work and sends no model request after the
+  query's stop; once kept, that stop is gone from it, and it is bounded by its own retry budget and timeouts
   and by whoever keeps it (a cancel at the query's deadline, or when its
   owner closes).
 
@@ -31,7 +31,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
 from unified_kg_rag.shared.model_responses import closing_responses
-from unified_kg_rag.shared.reader_stop import detachable_context
+from unified_kg_rag.shared.query_stop import detachable_context
 
 _T = TypeVar("_T")
 
@@ -43,7 +43,7 @@ _DETACHES: weakref.WeakKeyDictionary[asyncio.Future[Any], Callable[[], None]] = 
 
 def start_detachable(coroutine: Coroutine[Any, Any, _T]) -> asyncio.Task[_T]:
     """Run ``coroutine`` as a task of this query that may outlive it: under
-    a model-response scope of its own, stopped by the query's reader until
+    a model-response scope of its own, stopped with the query until
     :func:`detach`."""
     context, release = detachable_context()
     task = asyncio.get_running_loop().create_task(
@@ -55,7 +55,7 @@ def start_detachable(coroutine: Coroutine[Any, Any, _T]) -> asyncio.Task[_T]:
 
 def detach(task: asyncio.Future[Any]) -> None:
     """``task`` (a :func:`start_detachable` one) is kept past its query: its
-    reader's stop no longer stops it. A no-op for any other future."""
+    query's stop no longer stops it. A no-op for any other future."""
     release = _DETACHES.pop(task, None)
     if release is not None:
         release()

@@ -192,6 +192,16 @@ def test_the_ollama_clients_refused_connection_is_unreachable() -> None:
             ),
             True,
         ),
+        # A query limit that passed while a connect timed out (the first
+        # chunk's window is the client's connect timeout too) is the
+        # limit's: the query timed out, its server was not found down.
+        (
+            _raised_from(
+                x.QueryTimeoutError("no first chunk within 1 s", timeout_seconds=1.0),
+                httpx.ConnectTimeout("timed out"),
+            ),
+            False,
+        ),
         (ValueError("bad"), False),
     ],
 )

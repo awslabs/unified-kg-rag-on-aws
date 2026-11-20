@@ -31,11 +31,11 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from unified_kg_rag.shared.reader_stop import (
-    ReaderStop,
+from unified_kg_rag.shared.query_stop import (
+    QueryStop,
     abackoff_wait,
     backoff_wait,
-    reader_stop_scope,
+    query_stop_scope,
 )
 from unified_kg_rag.shared.utils.concurrency import single_flight
 
@@ -73,7 +73,7 @@ class _Call:
 
 @dataclass
 class _Waiter:
-    stop: ReaderStop | None
+    stop: QueryStop | None
     task: asyncio.Future[Any] | None = None
     call: _Call | None = None
     stopped: bool = False
@@ -126,7 +126,7 @@ async def _schedule(actions: list[tuple[str, Any]], specs: list[_CallSpec]) -> N
 
     async def wait(waiter: _Waiter) -> str:
         scope = (
-            reader_stop_scope(waiter.stop)
+            query_stop_scope(waiter.stop)
             if waiter.stop is not None
             else contextlib.nullcontext()
         )
@@ -165,7 +165,7 @@ async def _schedule(actions: list[tuple[str, Any]], specs: list[_CallSpec]) -> N
 
     for action, arg in actions:
         if action == "join" and len(waiters) < 8:
-            waiter = _Waiter(ReaderStop() if arg else None)
+            waiter = _Waiter(QueryStop() if arg else None)
             waiters.append(waiter)
             waiter.task = asyncio.ensure_future(wait(waiter))
         elif action in ("stop", "cancel"):

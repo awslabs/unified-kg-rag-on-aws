@@ -46,7 +46,7 @@ from unified_kg_rag.shared.model_responses import (
     raise_if_scope_ended,
     track_response,
 )
-from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped
+from unified_kg_rag.shared.query_stop import raise_if_stopped
 
 logger = get_logger(__name__)
 
@@ -100,11 +100,11 @@ def tls_context() -> Any:
 
 
 def _raise_if_stopped() -> None:
-    """A stop point of a model request: its query's reader stopped
-    (``shared.reader_stop``), or the query it is for ended
+    """A stop point of a model request: its query stopped (its reader's
+    stop or its deadline, ``shared.query_stop``), or the query it is for ended
     (``shared.model_responses``: a cancellation lost on the way, nobody
     reads its answer)."""
-    raise_if_reader_stopped()
+    raise_if_stopped()
     raise_if_scope_ended()
 
 
@@ -261,8 +261,8 @@ def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
     response closed at its query's end, as for Ollama.
 
     The OpenAI client retries a call itself: each request it sends, a
-    resend included, is a stop point of a query whose reader stopped
-    (``shared.reader_stop``, ``_stop_before_request``), so none is sent
+    resend included, is a stop point of a stopped query
+    (``shared.query_stop``, ``_stop_before_request``), so none is sent
     after the stop (the client's own backoff wait still runs to its end).
 
     ``transport`` (tests: ``httpx.MockTransport``) opens no connection, so a

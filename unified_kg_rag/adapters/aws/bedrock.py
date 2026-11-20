@@ -89,7 +89,7 @@ from unified_kg_rag.shared.model_responses import (
     raise_if_scope_ended,
     track_response,
 )
-from unified_kg_rag.shared.reader_stop import raise_if_reader_stopped, reader_stopped
+from unified_kg_rag.shared.query_stop import query_stopped, raise_if_stopped
 
 logger = get_logger(__name__)
 
@@ -276,12 +276,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         """Count every request a new runtime client of ``purpose``'s calls
         sends, and those throttled (``sent_requests``,
         ``throttled_requests``), which botocore retries inside a call; stop
-        its requests at a stopped reader (``stop_at_reader_stop``); and close
+        its requests at a stopped reader (``stop_at_query_stop``); and close
         each event stream it opens when its answer stream ends
         (``track_event_streams``)."""
         service = self._get_boto_service_name()
         count_requests(client, service, self._usage_role(purpose))
-        stop_at_reader_stop(client, service)
+        stop_at_query_stop(client, service)
         track_event_streams(client, service)
 
     def _client_for(self, purpose: ModelPurpose) -> Any:
@@ -571,7 +571,7 @@ class BedrockCrossRegionModelHelper:
 def _raise_if_unread(**_: Any) -> None:
     """``before-send``: no request once the reader stopped, nor once the
     answer stream it is for ended (a late worker thread's)."""
-    raise_if_reader_stopped()
+    raise_if_stopped()
     raise_if_scope_ended()
 
 
@@ -654,16 +654,16 @@ def _stop_failed_attempt(
     failed = caught_exception is not None or (
         getattr(http_response, "status_code", 200) >= 300
     )
-    stopped = failed and reader_stopped()
+    stopped = failed and query_stopped()
     refund.after(_request_context(request_dict), refund=stopped)
     if stopped:
         raise asyncio.CancelledError
 
 
-def stop_at_reader_stop(client: Any, service: str) -> None:
+def stop_at_query_stop(client: Any, service: str) -> None:
     """Make the requests botocore sends and resends inside one call of
     ``client`` stop points of a query whose reader stopped
-    (``shared.reader_stop``), as the application's retry backoffs are:
+    (``shared.query_stop``), as the application's retry backoffs are:
     no request is sent after the stop, before or after the client-side rate
     limiter's wait (``adaptive`` mode), and no resend follows a failed
     attempt (whose retry-quota cost is given back: ``_RetryQuotaRefund``).

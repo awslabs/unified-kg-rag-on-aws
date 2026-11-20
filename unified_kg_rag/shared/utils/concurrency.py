@@ -33,7 +33,7 @@ from types import TracebackType
 from typing import Any, Literal, ParamSpec, TypeVar
 
 from unified_kg_rag.shared.exceptions import waiter_copy
-from unified_kg_rag.shared.reader_stop import (
+from unified_kg_rag.shared.query_stop import (
     SharedContext,
     await_unless_stopped,
     reader_stopped,
@@ -122,8 +122,8 @@ async def gather_bounded(limit: int, aws: Iterable[Awaitable[_T]]) -> list[_T]:
 async def await_shared(future: asyncio.Future[_T]) -> _T:
     """The result of ``future``, one call concurrent waiters share (an
     in-flight cache), shielded so one waiter's cancellation cancels no
-    other's, and one waiter's reader's stop (``shared.reader_stop``) ends
-    its own wait only. Its failure reaches each waiter as a copy of its own
+    other's, and one waiter's stop (its reader's or its deadline's,
+    ``shared.query_stop``) ends its own wait only. Its failure reaches each waiter as a copy of its own
     (``waiter_copy``, raised from the shared error): the waiters are
     different queries, each tagging and reporting the error with its ids."""
     try:
@@ -162,10 +162,11 @@ async def single_flight(
     task of its own, so a cancelled first caller does not end it, and its
     error reaches each waiter as a copy of its own (:func:`await_shared`:
     the waiters are different queries). The call is every waiter's, not
-    its first caller's (it runs in a ``shared.reader_stop.SharedContext``):
-    a waiter whose reader stops leaves it, and it stops at its next stop
+    its first caller's (it runs in a ``shared.query_stop.SharedContext``):
+    a waiter whose query stops leaves it, and it stops at its next stop
     point only once every waiter's reader stopped, when ``memo`` drops it
-    too; a waiter cancelled otherwise keeps it running. The per-query state
+    too; a waiter cancelled otherwise, or past its deadline, keeps it
+    running for the others and later callers. The per-query state
     it reads is its waiters' too (``share_with_waiters``): no retry starts
     past the latest deadline of the waiters still holding it, and its usage
     is counted once, in the meter of the earliest waiter still waiting.
@@ -233,6 +234,8 @@ async def _await_shared_call(
     try:
         return await await_shared(call)
     except asyncio.CancelledError:
+        # Only a reader's stop gives the call up: a waiter that leaves at
+        # its deadline keeps it running, as one cancelled otherwise does.
         stopped = not call.done() and reader_stopped()
         raise
     finally:

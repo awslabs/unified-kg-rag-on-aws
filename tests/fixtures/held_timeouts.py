@@ -18,7 +18,9 @@ import pytest
 class HeldTimeouts:
     """Records the ``asyncio.timeout`` scopes the chain opens, so a test can
     expire a long deadline at a moment it chooses (once the model call is in
-    flight) instead of racing the setup before it on a slow runner."""
+    flight) instead of racing the setup before it on a slow runner. A query
+    deadline's timer is expired through its scope, which sets the query's
+    stop with it (``rag_chain._DeadlineScope``)."""
 
     class _Recorded(asyncio.Timeout):
         exited = False
@@ -38,6 +40,17 @@ class HeldTimeouts:
             return timeout
 
         monkeypatch.setattr(asyncio, "timeout", opening)
+
+        from unified_kg_rag.application.retrieval import rag_chain
+
+        self._scopes: list[Any] = []
+        enter = rag_chain._DeadlineScope.__aenter__
+
+        async def entering(scope: Any) -> None:
+            self._scopes.append(scope)
+            await enter(scope)
+
+        monkeypatch.setattr(rag_chain._DeadlineScope, "__aenter__", entering)
 
     def _held(self, beyond: float) -> list[asyncio.Timeout]:
         now = asyncio.get_running_loop().time()
@@ -60,7 +73,11 @@ class HeldTimeouts:
         held deadlines; nothing else in the query waits that long)."""
         now = asyncio.get_running_loop().time()
         for timeout in self._held(beyond):
-            timeout.reschedule(now)
+            scope = next((s for s in self._scopes if s._timeout is timeout), None)
+            if scope is not None:
+                scope._reschedule(now)
+            else:
+                timeout.reschedule(now)
 
 
 class HeldCallTimeouts:

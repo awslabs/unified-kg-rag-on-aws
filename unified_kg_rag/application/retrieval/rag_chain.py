@@ -234,13 +234,17 @@ from unified_kg_rag.shared.metrics import (
     QUERY_THROTTLED_METRIC,
 )
 from unified_kg_rag.shared.model_responses import closing_responses
-from unified_kg_rag.shared.query_work import detach
-from unified_kg_rag.shared.reader_stop import (
-    ReaderStop,
+from unified_kg_rag.shared.query_stop import (
+    QueryStop,
+    StopCause,
     blank_in_shared_calls,
-    reader_stop_scope,
+    query_stop_scope,
+    query_stopped,
+    raise_if_stopped,
     reader_stopped,
+    window_stop_scope,
 )
+from unified_kg_rag.shared.query_work import detach
 from unified_kg_rag.shared.usage import UsageLimits, UsageMeter, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
@@ -3961,7 +3965,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         once, wherever it is, as its deadline would: its model responses
         are closed and their connections released
         (``shared.model_responses``), and its worker threads send no model
-        request after the stop (``shared.reader_stop``). Nothing is written
+        request after the stop (``shared.query_stop``). Nothing is written
         to memory, and its metrics record its latency and usage up to there
         with no failure. LangChain's ``Runnable.astream_events`` (the
         callbacks' events) is left as LangChain defines it.
@@ -3971,7 +3975,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         async def produce() -> None:
             token = _QUERY_EVENTS.set(channel)
             try:
-                with reader_stop_scope(channel.reader_stop):
+                with query_stop_scope(channel.reader_stop):
                     output = await self._query(input, config, search=False)
                 assert isinstance(output, RAGOutput)
             except _ReaderStopped:
@@ -4317,12 +4321,13 @@ class _EventChannel(_EventSink):
         # The send waiting for its event to be taken, if any.
         self._taken: asyncio.Future[None] | None = None
         self.sources_sent = False
-        # Set by stop(); the query's task binds it (reader_stop_scope).
-        self.reader_stop = ReaderStop()
+        # Set by stop(); the query's task binds it (query_stop_scope).
+        self.reader_stop = QueryStop()
 
     async def send(self, event: QueryEvent) -> None:
-        # A stop point, for a cancellation lost under the query (_ended).
-        if self.reader_stop.is_set():
+        # A stop point (its reader's, its deadline's), for a cancellation
+        # lost under the query (_ended).
+        if self.reader_stop.is_set() or query_stopped():
             raise asyncio.CancelledError
         if isinstance(event, QuerySources):
             self.sources_sent = True
@@ -4358,7 +4363,7 @@ class _EventChannel(_EventSink):
     def stop(self) -> None:
         """The reader stopped: the query, cancelled next, ends as
         :class:`_ReaderStopped`, and its worker threads send no model
-        request (``shared.reader_stop``)."""
+        request (``shared.query_stop``)."""
         self.reader_stop.set()
 
 
@@ -4370,7 +4375,7 @@ _QUERY_EVENTS: contextvars.ContextVar[_EventSink | None] = contextvars.ContextVa
 )
 
 
-# A call several queries share (shared.reader_stop.SharedContext) sends
+# A call several queries share (shared.query_stop.SharedContext) sends
 # no query's events, keeps none of its extractions or grounding and runs
 # under none of its deadlines (it takes the latest of its waiters').
 blank_in_shared_calls(_QUERY_EVENTS, _LEFTOVER_EXTRACTIONS, _GROUNDING_CAPTURE)
@@ -4404,7 +4409,9 @@ async def _ended(task: asyncio.Task[Any]) -> None:
     nothing was cancelled. The query's next event, answer chunk, model
     request (before its connection and again before it is written, its
     response as its headers arrive) or retry wait then raises
-    ``CancelledError`` at the reader's stop (``shared.reader_stop``)."""
+    ``CancelledError`` at the query's stop (``shared.query_stop``), set by
+    its reader before the cancellation, as by its deadline
+    (:class:`_DeadlineScope`)."""
     try:
         await asyncio.wait({task})
     finally:
@@ -4519,10 +4526,9 @@ def _streamed_to(
                     # A stop point at every chunk, one that sends nothing
                     # too (reasoning, a held-back marker, an answer the
                     # output guardrail screens first): a chunk read after
-                    # the reader stopped is one whose cancellation was lost
-                    # (_ended).
-                    if reader_stopped():
-                        raise asyncio.CancelledError
+                    # the query's stop (its reader's, its deadline's) is
+                    # one whose cancellation was lost (_ended).
+                    raise_if_stopped()
                     text = str(chunk)
                     if not text:
                         continue
@@ -4895,11 +4901,12 @@ class _QueryDeadline:
     earlier deadline (:func:`caller_deadline`) wins.
 
     ``async with`` it bounds the awaits inside to the time left: past it the
-    task is cancelled (and, through ``gather_or_cancel``, the calls it fans
-    out) and :class:`QueryTimeoutError` is raised. No transient retry starts
-    past it either, on worker threads too (``retry_deadline``). Inside it a
-    streamed answer bounds the wait for its first chunk
-    (:func:`_first_chunk_window`).
+    query's stop is set and its task cancelled (and, through
+    ``gather_or_cancel``, the calls it fans out), as at its reader's stop
+    (:class:`_DeadlineScope`), and :class:`QueryTimeoutError` is raised. No
+    transient retry starts past it either, on worker threads too
+    (``retry_deadline``). Inside it a streamed answer bounds the wait for its
+    first chunk (:func:`_first_chunk_window`).
     """
 
     def __init__(self, seconds: float | None) -> None:
@@ -4954,12 +4961,29 @@ class _QueryDeadline:
 
 
 class _DeadlineScope:
-    """One ``async with`` window of a :class:`_QueryDeadline`."""
+    """One ``async with`` window of a :class:`_QueryDeadline`.
+
+    Its deadline ends the query as its reader's stop does, through the
+    query's stop (``shared.query_stop``): when it passes, the window's stop
+    is set (``StopCause.DEADLINE``), then its task is cancelled, in the same
+    turn. The cancellation ends the awaits in flight; the stop reaches the
+    rest: the query's worker threads (their retries and the model clients'
+    requests), the calls it shares (it leaves them, as it leaves them at its
+    reader's stop), and a cancellation a layer under it loses (anyio's
+    ``connect_tcp``, 3.11's ``asyncio.wait_for``: ``_ended``), which its
+    next stop point (a model request, an answer chunk, an event, a retry
+    wait) raises again, so the query cannot outlive its deadline past that
+    stop point. Either way it ends with :class:`QueryTimeoutError`.
+    """
 
     def __init__(self, deadline: _QueryDeadline) -> None:
         self._deadline = deadline
         self._timeout: asyncio.Timeout | None = None
         self._retry_scope: AbstractContextManager[None] | None = None
+        self._stop_scope: AbstractContextManager[QueryStop] | None = None
+        self._stop: QueryStop | None = None
+        # Sets the stop when the timer fires (_arm_stop).
+        self._stop_handle: asyncio.Handle | None = None
         self._window: contextvars.Token[_DeadlineScope | None] | None = None
         # The first-chunk limit in force (first_chunk_within), else None.
         self._first_chunk_seconds: float | None = None
@@ -4971,8 +4995,34 @@ class _DeadlineScope:
             return
         self._retry_scope = retry_deadline(at)
         self._retry_scope.__enter__()
+        self._stop_scope = window_stop_scope()
+        self._stop = self._stop_scope.__enter__()
         self._timeout = asyncio.timeout(max(0.0, at - time.monotonic()))
         await self._timeout.__aenter__()
+        self._arm_stop()
+
+    def _reschedule(self, when: float) -> None:
+        """Move the timer to loop time ``when``, the stop with it: the scope
+        moves its timer only through here."""
+        assert self._timeout is not None
+        self._timeout.reschedule(when)
+        self._arm_stop()
+
+    def _arm_stop(self) -> None:
+        """Set the stop when the timer fires: at the timer's time, scheduled
+        right after it (a time already past with ``call_soon``, as the
+        timer's ``reschedule`` does), so both run in the same turn, before
+        the task sees the cancellation."""
+        assert self._timeout is not None and self._stop is not None
+        if self._stop_handle is not None:
+            self._stop_handle.cancel()
+        when = self._timeout.when()
+        assert when is not None
+        loop = asyncio.get_running_loop()
+        stop = functools.partial(self._stop.set, StopCause.DEADLINE)
+        self._stop_handle = (
+            loop.call_soon(stop) if when <= loop.time() else loop.call_at(when, stop)
+        )
 
     async def __aexit__(
         self,
@@ -4982,9 +5032,15 @@ class _DeadlineScope:
     ) -> None:
         timeout, self._timeout = self._timeout, None
         retry_scope, self._retry_scope = self._retry_scope, None
+        stop_scope, self._stop_scope = self._stop_scope, None
+        stop_handle, self._stop_handle = self._stop_handle, None
         window, self._window = self._window, None
+        if stop_handle is not None and not (timeout and timeout.expired()):
+            stop_handle.cancel()
         if window is not None:
             _DEADLINE_SCOPE.reset(window)
+        if stop_scope is not None:
+            stop_scope.__exit__(None, None, None)
         if retry_scope is not None:
             retry_scope.__exit__(None, None, None)
         if timeout is None:
@@ -5013,7 +5069,7 @@ class _DeadlineScope:
             yield
             return
         loop = asyncio.get_running_loop()
-        timeout.reschedule(loop.time() + seconds)
+        self._reschedule(loop.time() + seconds)
         self._first_chunk_seconds = seconds
         try:
             with retry_deadline(
@@ -5026,7 +5082,7 @@ class _DeadlineScope:
         finally:
             if not timeout.expired():
                 self._first_chunk_seconds = None
-                timeout.reschedule(loop.time() + max(0.0, at - time.monotonic()))
+                self._reschedule(loop.time() + max(0.0, at - time.monotonic()))
 
     def _expired(self) -> QueryTimeoutError:
         if self._first_chunk_seconds is not None:

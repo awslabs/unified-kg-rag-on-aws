@@ -372,7 +372,7 @@ replaces the streamed text with its `answer`). The sink hands each event to
 the reader and waits until the reader asks for the next, so the query never
 runs ahead of it. A reader that stops (closes the iterator, or is
 cancelled while it waits: a client that disconnected) sets the query's
-`shared.reader_stop.ReaderStop`, then cancels the query at once, as its
+`shared.query_stop.QueryStop`, then cancels the query at once, as its
 deadline does, wherever it is, before it writes memory; it waits for the
 query to end without cancelling it again (`_ended`: an anyio cancel scope
 cancels the reader at every await, and a second cancellation passed on
@@ -384,7 +384,15 @@ can return a connected stream to a task cancelled while it connected; on
 3.11 `asyncio.wait_for`, which langchain-openai reads each stream chunk
 through, returns a chunk that arrived with the cancellation): the query's
 next event and its answer's next chunk, one without text too, raise at the
-stop. The application's retry
+stop. The query's deadline and its answer's first-chunk window end it the
+same way (`_DeadlineScope`): when one passes, the window's stop (a
+`FollowingStop` of the reader's, or one of its own under `ainvoke`) is set
+with `StopCause.DEADLINE`, then the task is cancelled, in the same turn, so
+every stop point below honours the deadline too and a lost cancellation
+keeps the query no further than its next stop point. The stop keeps the
+cause that set it first: a deadline ends the query with `QueryTimeoutError`
+(a timeout), a reader's stop with no failure (`reader_stopped`). The
+application's retry
 loops check it before each attempt and race their wait against it, and
 the model clients check it before each request, resends included, so a
 throttled model is not called again for a reader that left: the httpx
@@ -400,8 +408,9 @@ cost botocore's retry handler took for the resend is given back. A stop ends onl
 own query's work: a call concurrent queries share (a query embedding,
 `single_flight`) runs in a context of its own (`SharedContext`), under a
 `SharedStop` set once every waiting query's reader stopped, and a waiter
-whose reader stops leaves it (`await_unless_stopped`) while it goes on for
-the others; a waiter cancelled otherwise keeps it running. The other
+whose query stops leaves it (`await_unless_stopped`) while it goes on for
+the others; a waiter cancelled otherwise, or whose deadline passed, keeps it
+running (only every waiter's reader stopping stops it). The other
 per-query state it reads is its waiters' as well (`share_with_waiters`) or
 blank (`blank_in_shared_calls`: the events' sink, the open model
 responses, the query memo and ledgers), never its first caller's alone: no

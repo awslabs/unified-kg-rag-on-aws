@@ -282,7 +282,11 @@ Bugs present in 0.3.0.
   translation, an extraction); a Bedrock stream's socket is shut down first, ending a blocked read, and its worker
   thread sends no request after the query ended. Work the query keeps running past its end (`auto`'s speculative
   extraction its route did not read) closes its own responses and is no longer its reader's, so it still fills the
-  extraction cache. The query still fails with `QueryTimeoutError` at the limit.
+  extraction cache. A cut whose cancellation a library under the query lost (anyio's `connect_tcp` on any Python,
+  langchain-openai's chunk read on 3.11) let the query run on to the model's read timeout (30 s; about 1 in 200 cuts
+  under load). A limit now ends the query as a reader's stop does: no model request, resend, retry wait, answer chunk
+  or event goes past it, a query sharing a call leaves it to the others, and the query fails with `QueryTimeoutError`
+  at the limit, also when a model connect timed out with it (it read as `ModelUnreachableError` before).
 - `Ctrl-C` while a sync `stream()` or `query_events()` waited for the answer's next chunk raised `RuntimeError:
   aclose(): asynchronous generator is already running` and left the query running on the chain's loop; it raises
   `KeyboardInterrupt` at once and cancels the query, as closing the stream does.

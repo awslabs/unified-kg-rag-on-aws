@@ -53,7 +53,7 @@ from unified_kg_rag.domain.models import (
     SectionType,
 )
 from unified_kg_rag.shared.model_responses import track_response
-from unified_kg_rag.shared.reader_stop import ReaderStop, reader_stopped
+from unified_kg_rag.shared.query_stop import QueryStop, reader_stopped
 from unified_kg_rag.shared.usage import usage_scope
 
 pytestmark = pytest.mark.unit
@@ -385,14 +385,14 @@ async def test_a_kept_extraction_is_no_longer_its_readers(
 ) -> None:
     # Kept past its query, the extraction is detached from the query's
     # reader: a stop of that reader set afterwards does not end it.
-    stops: list[ReaderStop] = []
-    scope = rag_chain.reader_stop_scope
+    stops: list[QueryStop] = []
+    scope = rag_chain.query_stop_scope
 
-    def recording(stop: ReaderStop) -> Any:
+    def recording(stop: QueryStop) -> Any:
         stops.append(stop)
         return scope(stop)
 
-    monkeypatch.setattr(rag_chain, "reader_stop_scope", recording)
+    monkeypatch.setattr(rag_chain, "query_stop_scope", recording)
     model = _ThreadedChat(gates={"keywords": release}, threaded=False)
     chain = _chain(model, query_extraction_cache_size=8)
     _ = [event async for event in chain.aquery_events(_auto())]

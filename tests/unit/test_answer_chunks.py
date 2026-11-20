@@ -204,7 +204,7 @@ async def test_a_failure_raises_after_the_events_before_it(config: Config) -> No
 
 
 # Set once a _HeldModel holds its next chunk, with the stop of the query
-# it streams for (shared.reader_stop): the cues the stop tests wait on.
+# it streams for (shared.query_stop): the cues the stop tests wait on.
 _HOLDING = threading.Event()
 _HELD_FOR: list[Any] = []
 # A hang backstop (seconds), far past anything a passing run waits: the
@@ -216,10 +216,10 @@ class _HeldModel(GenericFakeChatModel):
     """Streams one chunk, then a second only after a long wait."""
 
     async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-        from unified_kg_rag.shared import reader_stop
+        from unified_kg_rag.shared import query_stop
 
         yield ChatGenerationChunk(message=AIMessageChunk(content="Vendor "))
-        _HELD_FOR.append(reader_stop._READER_STOP.get())
+        _HELD_FOR.append(query_stop._QUERY_STOP.get())
         _HOLDING.set()
         await asyncio.sleep(600)
         yield ChatGenerationChunk(message=AIMessageChunk(content="ships."))
@@ -317,7 +317,7 @@ class _FailingModel(GenericFakeChatModel):
     a client's own retries giving up, which no stop point interrupts."""
 
     async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-        from unified_kg_rag.shared.reader_stop import reader_stopped
+        from unified_kg_rag.shared.query_stop import reader_stopped
 
         _HOLDING.set()
         await _until(reader_stopped)
@@ -774,7 +774,7 @@ class _ReasoningModel(GenericFakeChatModel):
     reasoning, emptied), then its answer; records each chunk and its end."""
 
     async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-        from unified_kg_rag.shared.reader_stop import reader_stopped
+        from unified_kg_rag.shared.query_stop import reader_stopped
 
         try:
             for _ in range(30_000):

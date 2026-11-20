@@ -1,79 +1,106 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The stop of a query whose reader stopped reading its events.
+"""The stop of a query: its end, requested by its reader or its deadline.
 
-A query streamed to a reader (``GraphRAGChain.aquery_events``) runs in a
-task of its own, which a reader that stops cancels at once. The query
-binds its :class:`ReaderStop` (:func:`reader_stop_scope`) and the reader
-sets it first: it reaches what the cancellation does not, the work the
-query left on worker threads (a retry loop there checks it before each
-attempt and races its backoff wait against it, :func:`backoff_wait`, and
-the model clients that resend a call themselves check it before each
-request), so a stopped reader's query sends no model request, and it tells
-the query's end as a stopped reader's, not as a failure. A stop raises
-``asyncio.CancelledError`` where nothing is held (between attempts).
+A query's end is requested two ways, through one :class:`QueryStop`: the
+reader of a query streamed to it (``GraphRAGChain.aquery_events``, a task
+of its own) stops reading its events, or the query's deadline (or its
+answer stream's first-chunk window) passes. Either sets the stop, then
+cancels the query's task; the stop keeps the :class:`StopCause` that set it
+first, so the query ends as a stopped reader's (no failure) or as a timed
+out one (``QueryTimeoutError``). The stop reaches what the cancellation
+does not: the work the query left on worker threads (a retry loop there
+checks it before each attempt and races its backoff wait against it,
+:func:`backoff_wait`, and the model clients that resend a call themselves
+check it before each request), and a cancellation a layer under the query
+loses (the query's next stop point raises), so a stopped query sends no
+model request. A stop raises ``asyncio.CancelledError`` where nothing is
+held (between attempts).
 
-Outside such a query no stop is bound and the waits are plain sleeps.
+The reader's stop is bound for the whole query (:func:`query_stop_scope`);
+each deadline window binds a :class:`FollowingStop` of it (or a stop of its
+own without a reader), set by the reader's stop or by the deadline. Outside
+both no stop is bound and the waits are plain sleeps.
 
-A stop ends only the work its reader owns. A call several queries share (an
+A stop ends only the work its query owns. A call several queries share (an
 in-flight cache, ``shared.utils.concurrency.single_flight``) is each
 waiter's: it runs in a :class:`SharedContext`, under a :class:`SharedStop`
-of its own set once every waiter's reader stopped, and a waiter whose reader
-stops leaves it (:func:`await_unless_stopped`), so one reader's stop never
-ends another's query. The other per-query state such a call reads is taken
+of its own set once every waiter's reader stopped, and a waiter whose query
+stops leaves it (:func:`await_unless_stopped`), so one query's stop never
+ends another's query (a waiter whose deadline passed leaves it running, as
+a cancelled one does). The other per-query state such a call reads is taken
 from all its waiters the same way (:func:`share_with_waiters`), or it starts
 without it (:func:`blank_in_shared_calls`), never from its first caller
 alone.
 
 Work a query starts that may outlive it (``shared.query_work``) is stopped
-by its reader through a :class:`FollowingStop` (:func:`detachable_context`)
-only until the query keeps it past its end: then the reader is no longer
-its.
+by its query through a :class:`FollowingStop` (:func:`detachable_context`)
+only until the query keeps it past its end: then the query's stop is no
+longer its.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextvars
+import enum
 import threading
 import time
 from collections.abc import Callable, Hashable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from typing import Any, Protocol, TypeVar
 
 _T = TypeVar("_T")
 
 
-class ReaderStop:
-    """Set once the reader of a query stopped reading its events; wakes the
-    backoff waits of that query, in any thread or event loop."""
+class StopCause(enum.Enum):
+    """What requested a query's end (:attr:`QueryStop.cause`)."""
+
+    # Its reader stopped reading its events: the query ends with no failure.
+    READER = "reader"
+    # Its deadline, or its answer stream's first-chunk window, passed: the
+    # query ends with its QueryTimeoutError.
+    DEADLINE = "deadline"
+
+
+class QueryStop:
+    """Set once a query's end was requested (its reader stopped, or its
+    deadline passed: :attr:`cause`); wakes the backoff waits of that query,
+    in any thread or event loop."""
 
     def __init__(self) -> None:
         self._event = threading.Event()
         self._lock = threading.Lock()
         self._waiters: set[asyncio.Future[None]] = set()
         self._followers: set[FollowingStop] = set()
+        # What set the stop first (None: not set).
+        self.cause: StopCause | None = None
 
     def is_set(self) -> bool:
         return self._event.is_set()
 
-    def set(self) -> None:
+    def set(self, cause: StopCause = StopCause.READER) -> None:
+        """Request the query's end; a stop set already keeps its cause."""
         with self._lock:
+            if self.cause is None:
+                self.cause = cause
+            first = self.cause
             self._event.set()
             waiters, self._waiters = self._waiters, set()
             followers, self._followers = self._followers, set()
         for waiter in waiters:
             waiter.get_loop().call_soon_threadsafe(_wake, waiter)
         for follower in followers:
-            follower.set()
+            follower.set(first)
 
     def _follow(self, follower: FollowingStop) -> None:
-        """Set ``follower`` when this stop is set (at once if it is)."""
+        """Set ``follower`` when this stop is set (at once if it is), with
+        this stop's cause."""
         with self._lock:
             if not self._event.is_set():
                 self._followers.add(follower)
                 return
-        follower.set()
+        follower.set(self.cause or StopCause.READER)
 
     def _unfollow(self, follower: FollowingStop) -> None:
         with self._lock:
@@ -106,11 +133,11 @@ class ReaderStop:
                 await asyncio.gather(slept, return_exceptions=True)
 
 
-class SharedStop(ReaderStop):
+class SharedStop(QueryStop):
     """The stop of a call several queries share, set once the reader of
     each query waiting for it stopped (:meth:`leave`). A waiter with no
-    stop bound (no streamed query's), or one cancelled otherwise, keeps it
-    running: its call is still wanted, or was before. Counted on the event
+    stop bound (no streamed query's), or one cancelled otherwise or past its
+    deadline, keeps it running: its call is still wanted, or was before. Counted on the event
     loop the call runs on."""
 
     def __init__(self) -> None:
@@ -131,18 +158,19 @@ class SharedStop(ReaderStop):
         return True
 
 
-class FollowingStop(ReaderStop):
-    """The stop of work a query started that may outlive it
-    (:func:`detachable_context`): set when the query's stop (``leader``) is,
-    until :meth:`detach`."""
+class FollowingStop(QueryStop):
+    """A stop set when another (``leader``) is, with its cause, until
+    :meth:`detach`, and also on its own: a deadline window's (set by its
+    deadline too), or that of work a query started that may outlive it
+    (:func:`detachable_context`)."""
 
-    def __init__(self, leader: ReaderStop) -> None:
+    def __init__(self, leader: QueryStop) -> None:
         super().__init__()
         self._leader = leader
         leader._follow(self)
 
     def detach(self) -> None:
-        """The work is no longer its query's: its reader's stop no longer
+        """The work is no longer its query's: the query's stop no longer
         stops it (a stop already set stays set)."""
         self._leader._unfollow(self)
 
@@ -152,20 +180,30 @@ def _wake(waiter: asyncio.Future[None]) -> None:
         waiter.set_result(None)
 
 
-_READER_STOP: contextvars.ContextVar[ReaderStop | None] = contextvars.ContextVar(
-    "kg_rag_reader_stop", default=None
+_QUERY_STOP: contextvars.ContextVar[QueryStop | None] = contextvars.ContextVar(
+    "kg_rag_query_stop", default=None
 )
 
 
 @contextmanager
-def reader_stop_scope(stop: ReaderStop) -> Iterator[ReaderStop]:
+def query_stop_scope(stop: QueryStop) -> Iterator[QueryStop]:
     """Bind ``stop`` as the stop of the query running in this context (and
     of the tasks and threads that copy it)."""
-    token = _READER_STOP.set(stop)
+    token = _QUERY_STOP.set(stop)
     try:
         yield stop
     finally:
-        _READER_STOP.reset(token)
+        _QUERY_STOP.reset(token)
+
+
+def window_stop_scope() -> AbstractContextManager[QueryStop]:
+    """Bind the stop of a deadline window of the query running in this
+    context: a :class:`FollowingStop` of the query's stop (its reader's),
+    else a stop of its own. The window sets it (``StopCause.DEADLINE``) when
+    its deadline passes, so every stop point under it ends the query then,
+    as at its reader's stop, a cancellation lost under it included."""
+    leader = _QUERY_STOP.get()
+    return query_stop_scope(QueryStop() if leader is None else FollowingStop(leader))
 
 
 # The context variables of per-query state a call several queries share
@@ -184,7 +222,7 @@ def blank_in_shared_calls(*variables: contextvars.ContextVar[Any]) -> None:
         _BLANKED[variable] = contextvars.Context().run(variable.get)
 
 
-def detached_context(stop: ReaderStop | None = None) -> contextvars.Context:
+def detached_context(stop: QueryStop | None = None) -> contextvars.Context:
     """A copy of the current context with ``stop`` bound in place of the
     reader's (``None``: no stop) and the per-query state registered with
     :func:`blank_in_shared_calls` at its defaults, for work that is not this
@@ -193,7 +231,7 @@ def detached_context(stop: ReaderStop | None = None) -> contextvars.Context:
     context = contextvars.copy_context()
 
     def detach() -> None:
-        _READER_STOP.set(stop)
+        _QUERY_STOP.set(stop)
         for variable, default in _BLANKED.items():
             variable.set(default)
 
@@ -205,17 +243,17 @@ def detachable_context() -> tuple[contextvars.Context, Callable[[], None]]:
     """A copy of the current context for work this query starts that may
     outlive it, and the function that detaches the work from the query.
 
-    Until it is detached the work stops when the query's reader stops (a
+    Until it is detached the work stops when the query stops (a
     :class:`FollowingStop` of the query's stop is bound in its place), as
     the query's own work does; detached (the query kept it running past its
-    end), the reader's stop no longer reaches it. The rest of the context
+    end), the query's stop no longer reaches it. The rest of the context
     is the query's. Without a stop bound there is nothing to detach."""
     context = contextvars.copy_context()
-    leader = _READER_STOP.get()
+    leader = _QUERY_STOP.get()
     if leader is None:
         return context, _nothing
     stop = FollowingStop(leader)
-    context.run(_READER_STOP.set, stop)
+    context.run(_QUERY_STOP.set, stop)
     return context, stop.detach
 
 
@@ -288,11 +326,11 @@ class SharedContext:
 
 
 async def await_unless_stopped(future: asyncio.Future[_T]) -> None:
-    """Wait for ``future`` (work this reader shares with others) to finish,
-    ending with ``asyncio.CancelledError`` once this query's reader stops;
-    ``future`` runs on, never cancelled here (as under ``asyncio.shield``).
-    Without a stop bound, a plain wait."""
-    stop = _READER_STOP.get()
+    """Wait for ``future`` (work this query shares with others) to finish,
+    ending with ``asyncio.CancelledError`` once this query stops (its
+    reader's stop or its deadline); ``future`` runs on, never cancelled here
+    (as under ``asyncio.shield``). Without a stop bound, a plain wait."""
+    stop = _QUERY_STOP.get()
     if stop is None:
         await asyncio.wait({future})
         return
@@ -301,39 +339,47 @@ async def await_unless_stopped(future: asyncio.Future[_T]) -> None:
         raise asyncio.CancelledError
 
 
-def reader_stopped() -> bool:
-    """Whether the reader of the query running in this context stopped."""
-    stop = _READER_STOP.get()
+def query_stopped() -> bool:
+    """Whether the end of the query running in this context was requested
+    (its reader stopped, or its deadline passed)."""
+    stop = _QUERY_STOP.get()
     return stop is not None and stop.is_set()
 
 
-def raise_if_reader_stopped() -> None:
-    """Raise ``asyncio.CancelledError`` once the query's reader stopped: a
-    stop point before a call."""
-    if reader_stopped():
+def reader_stopped() -> bool:
+    """Whether the query running in this context stopped because its reader
+    did (no failure), not at its deadline."""
+    stop = _QUERY_STOP.get()
+    return stop is not None and stop.is_set() and stop.cause is StopCause.READER
+
+
+def raise_if_stopped() -> None:
+    """Raise ``asyncio.CancelledError`` once the query's end was requested
+    (:func:`query_stopped`): a stop point before a call."""
+    if query_stopped():
         raise asyncio.CancelledError
 
 
 def backoff_wait(delay: float, sleep: Callable[[float], object] | None = None) -> None:
     """Wait ``delay`` s before a retry, ending early with
-    ``asyncio.CancelledError`` when the query's reader stops (before or
-    during the wait); ``sleep`` (``time.sleep``) without a stop bound."""
-    stop = _READER_STOP.get()
+    ``asyncio.CancelledError`` when the query stops (before or during the
+    wait); ``sleep`` (``time.sleep``) without a stop bound."""
+    stop = _QUERY_STOP.get()
     if stop is None:
         (sleep or time.sleep)(delay)
         return
     # Set already, it returns at once.
     stop._wait(delay)
-    raise_if_reader_stopped()
+    raise_if_stopped()
 
 
 async def abackoff_wait(delay: float) -> None:
     """Async twin of :func:`backoff_wait` (``asyncio.sleep`` without a stop
     bound)."""
-    stop = _READER_STOP.get()
+    stop = _QUERY_STOP.get()
     if stop is None:
         await asyncio.sleep(delay)
         return
     # Set already, it returns at once.
     await stop._await(delay)
-    raise_if_reader_stopped()
+    raise_if_stopped()

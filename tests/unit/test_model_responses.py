@@ -256,7 +256,7 @@ async def test_a_bedrock_request_after_its_scope_ended_is_not_sent() -> None:
         aws_access_key_id="AKIDEXAMPLE",
         aws_secret_access_key="example",
     )
-    bedrock.stop_at_reader_stop(client, "bedrock-runtime")
+    bedrock.stop_at_query_stop(client, "bedrock-runtime")
 
     def send() -> None:
         client.meta.events.emit(

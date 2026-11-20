@@ -34,10 +34,10 @@ from unified_kg_rag.shared.exceptions import (
     class_names,
 )
 from unified_kg_rag.shared.logging import log_failure
-from unified_kg_rag.shared.reader_stop import (
+from unified_kg_rag.shared.query_stop import (
     abackoff_wait,
     backoff_wait,
-    raise_if_reader_stopped,
+    raise_if_stopped,
     share_with_waiters,
 )
 from unified_kg_rag.shared.utils.common import (
@@ -131,7 +131,7 @@ def current_deadline() -> float | None:
 
 class _WaitersDeadline:
     """The retry deadline of a call several queries share
-    (``shared.reader_stop.SharedContext``): the latest deadline of the
+    (``shared.query_stop.SharedContext``): the latest deadline of the
     waiters still holding it (none when one of them has none), so a query
     with a short deadline does not give up a call a query with a longer one
     still waits for; a waiter whose reader stopped no longer holds it. The
@@ -574,14 +574,14 @@ def call_with_transient_retry(
     budget are exhausted, the last transient error is re-raised unchanged so
     callers' existing error handling keeps working.
 
-    The backoff is a stop point of a query whose reader stopped
-    (``shared.reader_stop``): no attempt starts after the stop, and a wait
+    The backoff is a stop point of a stopped query (its reader's stop or
+    its deadline, ``shared.query_stop``): no attempt starts after the stop, and a wait
     under way ends at it, raising ``asyncio.CancelledError``.
     """
     started_at = time.monotonic()
     attempt = 1
     while True:
-        raise_if_reader_stopped()
+        raise_if_stopped()
         try:
             return func()
         except Exception as exc:
@@ -610,7 +610,7 @@ async def acall_with_transient_retry(
     started_at = time.monotonic()
     attempt = 1
     while True:
-        raise_if_reader_stopped()
+        raise_if_stopped()
         try:
             return await func()
         except Exception as exc:
