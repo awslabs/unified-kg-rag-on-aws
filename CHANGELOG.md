@@ -305,15 +305,18 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - `Ctrl-C` while `run-rag --interactive` answers stops that question and returns to the prompt; it ended the session
   with exit code 130. `Ctrl-C` at the prompt, or a second one while the question stops, ends the session as before.
 - Dependencies: pypdf 7.0.1, langchain-core 1.8.1, langchain-aws 1.9.3, pydantic 2.14.3, boto3 1.44 (also in the CDK
-  lock), aws-cdk-lib 2.276, the `ollama/ollama` 0.40.16 image in `docker/compose.local.yaml`. botocore 1.44 makes
+  lock), aws-cdk-lib 2.277, the `ollama/ollama` 0.40.16 image in `docker/compose.local.yaml`. botocore 1.44 makes
   `standard` the default retry mode, so the clients the package leaves at botocore's defaults (S3, STS, the Bedrock
   control plane) make 3 attempts, not 5, and retry an unmodeled HTTP 429 as throttling; the Bedrock runtime, guardrail
-  and DynamoDB clients set their own. The IaC's Nori package handlers run on Python 3.15, the newest Lambda runtime
-  aws-cdk-lib 2.276 knows (cdk-nag AwsSolutions-L1). pypdf and langchain-core versions are part of the parser
-  fingerprint, so the first ingestion after upgrading parses every file again once. pypdf 7 gives the same page text,
-  labels and offsets as 6.21.4 on the repo's PDF fixtures, but separates words a line shifts between baselines
-  (`AlphaBeta Gamma` for `AlphaBetaGamma`): such a document's text changes, so that first run also extracts and indexes
-  it again once (model calls).
+  and DynamoDB clients set their own. The IaC's Nori package handlers run on Python 3.15, the newest Python Lambda
+  runtime aws-cdk-lib 2.277 knows (cdk-nag AwsSolutions-L1). aws-cdk-lib 2.277 adds nodejs26.x but keeps the functions
+  it creates itself (the AwsCustomResource singleton, a custom-resource provider's `framework-*` functions) on
+  nodejs24.x, and the stack cannot set their runtime, so L1 failed the synth on them: L1 is suppressed on those
+  functions only, whatever their runtime ("runtime chosen by aws-cdk-lib"), and the stack's own handlers keep it. pypdf
+  and langchain-core versions are part of the parser fingerprint, so the first ingestion after upgrading parses every
+  file again once. pypdf 7 gives the same page text, labels and offsets as 6.21.4 on the repo's PDF fixtures, but
+  separates words a line shifts between baselines (`AlphaBeta Gamma` for `AlphaBetaGamma`): such a document's text
+  changes, so that first run also extracts and indexes it again once (model calls).
 - Graph extraction builds each unit's record as its call completes, while the other calls are in flight, not all
   after the last call (500 units: 9 s after the last call to 0.01 s), and `entity_key` is cached (bounded LRU; record
   building takes 25-33% less CPU). Outputs are unchanged.
