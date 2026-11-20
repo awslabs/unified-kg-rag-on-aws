@@ -84,6 +84,9 @@ class _RecordingManager:
     def offer_summaries(self, entities: Any) -> None:
         return None
 
+    def clear_outdated_note(self, suffix: str) -> None:
+        return None
+
     def index_all_data(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(kwargs)
         return {"entities": IndexingStats(total_items=2, successful_items=2)}
