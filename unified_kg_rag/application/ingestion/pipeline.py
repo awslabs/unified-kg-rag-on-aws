@@ -85,6 +85,7 @@ from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeS
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.application.storage.visualization_export import (
     EXPORT_HEAD_BYTES,
+    ExportUnsupportedError,
     export_build_time,
     export_head,
     export_namespace,
@@ -2744,6 +2745,16 @@ class DataIngestionPipeline:
                 )
                 return
             counts = write_visualization_data(self.providers, suffix, path)
+        except ExportUnsupportedError:
+            # The store's documented "cannot" (StoreInspection), not a
+            # failure: skipped as the summary_tree stage skips its tree.
+            logger.warning(
+                "The vector store cannot page its items "
+                "(StoreInspection.scan_items): no visualization data is "
+                "exported for '%s' (graph.visualization.export_data)",
+                suffix,
+            )
+            return
         except Exception as e:  # noqa: BLE001 - the export is optional
             # By its class: a write failure names its folder (own_text).
             log_error(

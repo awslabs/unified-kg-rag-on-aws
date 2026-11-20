@@ -345,6 +345,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   component on its own, packed in rows largest first, as the console's Graph page did, and the Graph page draws
   `graph.visualization.interactive.max_nodes` nodes (it drew 600 whatever that said). Its default is 600 (from 2000):
   laying out 600 nodes takes about 1.4 s, 2000 about 15 s. Set it to 2000 for the former interactive page.
+- A full build on a vector store that cannot page its items (`StoreInspection.scan_items` left at its default, as a
+  custom backend may) skips the visualization export with one WARNING saying why, as the `summary_tree` stage skips its
+  tree; it logged `Visualization data export failed: [configuration] ...` on every build. The store conformance suites
+  also run on a custom backend that `UKR_TEST_BACKEND` names, without editing the test fixtures ([extend
+  guide](docs/guides/extend.md#custom-backends-run-without-aws)).
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0
