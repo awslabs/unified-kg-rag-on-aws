@@ -42,6 +42,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     extraction_cache_scope,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import (
+    answer_settings,
     answer_settings_fingerprint,
     index_language,
 )
