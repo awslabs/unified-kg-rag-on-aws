@@ -298,7 +298,8 @@ class SearchConfig(ConfigSection):
         default=1024,
         ge=0,
         description=(
-            "Query entity and keyword extractions a chain keeps in memory, "
+            "Query translations and entity and keyword extractions a chain "
+            "keeps in memory, "
             "keyed by the question, the target language, the model, the "
             "prompt text (a custom_prompts override is a new key) and the "
             "index namespace (no namespace reads by a cache hit what another "
@@ -306,8 +307,8 @@ class SearchConfig(ConfigSection):
             "recently used dropped first. A repeated question (run-eval "
             "--repeats, the arms of a strategy comparison, a retry) reuses "
             "the extraction instead of calling the model again, so every "
-            "arm searches with the same entities and keywords. A failed "
-            "extraction is not kept. 0 disables it."
+            "arm searches with the same translation, entities and keywords. "
+            "A failed extraction is not kept. 0 disables it."
         ),
         json_schema_extra=evidence("operational"),
     )

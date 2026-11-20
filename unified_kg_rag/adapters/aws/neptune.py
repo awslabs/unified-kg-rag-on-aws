@@ -69,8 +69,32 @@ def is_permanent_neptune_error(exc: BaseException) -> bool:
     """
     if isinstance(exc, GremlinServerError):
         message = str(exc.status_message)
-        return any(code in message for code in PERMANENT_NEPTUNE_ERROR_CODES)
+        return is_request_too_large(exc) or any(
+            code in message for code in PERMANENT_NEPTUNE_ERROR_CODES
+        )
     return isinstance(exc, ValueError | TypeError)
+
+
+# What a Gremlin Server answers a traversal too long for its stack: status
+# 500 with no message, the Java error opening the stack trace attribute.
+_STACK_OVERFLOW = "java.lang.StackOverflowError"
+
+
+def is_request_too_large(exc: BaseException) -> bool:
+    """Whether a Gremlin request failed for its size, so that the same
+    request fails on every try and a smaller one may pass: Neptune's
+    ``QueryTooLargeException``, or a Gremlin Server's stack overflow (a
+    traversal of some thousands of chained steps overflows a 1 MiB thread
+    stack, the JVM's default; ``indexing.neptune.batch_max_steps``)."""
+    if not isinstance(exc, GremlinServerError):
+        return False
+    if "QueryTooLargeException" in str(exc.status_message):
+        return True
+    attributes = getattr(exc, "status_attributes", None) or {}
+    exceptions = attributes.get("exceptions") or ()
+    return str(attributes.get("stackTrace") or "").startswith(_STACK_OVERFLOW) or (
+        isinstance(exceptions, list | tuple) and _STACK_OVERFLOW in exceptions
+    )
 
 
 # Neptune engine error codes a later try of the same read may pass (the

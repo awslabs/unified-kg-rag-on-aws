@@ -389,8 +389,9 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   records as `citations.strategies`) warns that the answer prompt differs
   too: `global` and `drift` do not cite by default, so they warn against
   the other strategies unless the map sets them alike.
-- An arm retrieves on the base runs' query extractions (entities and
-  keywords, one call per question) when its overlay leaves them alone; one
+- An arm retrieves on the base runs' query extractions (the translation,
+  entities and keywords, one call each per question) when its overlay
+  leaves them alone; one
   that changes the extraction's model, the default tier's effort,
   `search.output_ceilings.query_extraction`,
   `models.default_max_output_tokens`, the LLM provider (kind, `base_url`,

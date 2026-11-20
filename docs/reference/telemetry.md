@@ -84,8 +84,8 @@ with `stages.<stage>`), `--metrics-sink cloudwatch` emits it per stage
 (`EvaluationResult.usage`) and per run (`summary.usage`). A response the
 ingestion response cache served, a chunk-boundary or community report
 answer the extraction store served, a description summary a full build took
-from its stored copy, or a query entity or keyword extraction the chain's
-extraction cache served (`search.query_extraction_cache_size`), counts as
+from its stored copy, or a query translation or entity or keyword extraction
+the chain's extraction cache served (`search.query_extraction_cache_size`), counts as
 a cache hit, not a call; a call that
 failed before its response started is not in `llm_calls` but in
 `failed_calls`; retries are calls: each attempt sent counts. A query's

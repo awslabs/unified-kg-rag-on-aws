@@ -11,6 +11,7 @@ import traceback
 import unicodedata
 import uuid
 from collections.abc import Iterable
+from functools import lru_cache
 from itertools import zip_longest
 from multiprocessing import cpu_count
 from pathlib import Path
@@ -503,6 +504,15 @@ def clean_display_name(name: str | None) -> str:
     return " ".join(name.split())
 
 
+# Names whose entity_key is kept (least recently used dropped first). The
+# extraction, merge, resolution and indexing steps key the same names again
+# and again (8% of an ingestion's CPU samples was entity_key); a 3,000-entity
+# corpus with its surface variants fits many times over. A short Latin name
+# takes about 140 bytes (9 MiB full; more for longer names).
+_ENTITY_KEY_CACHE_SIZE = 65_536
+
+
+@lru_cache(maxsize=_ENTITY_KEY_CACHE_SIZE)
 def entity_key(name: str | None) -> str:
     """Return the identity key of an entity name (used for ids and exact match).
 
@@ -528,6 +538,9 @@ def entity_key(name: str | None) -> str:
 
     Entity and relationship ids are hashes of this key; changing it changes
     every id, which requires a full re-index of existing graphs.
+
+    A pure function of ``name`` (module constants and ``unicodedata`` only),
+    so its keys are cached (``_ENTITY_KEY_CACHE_SIZE``).
     """
     if not name:
         return ""

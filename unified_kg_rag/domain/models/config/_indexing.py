@@ -70,6 +70,24 @@ class NeptuneIndexingConfig(ConfigSection):
         description=("Items per Neptune write batch."),
         json_schema_extra=evidence("operational"),
     )
+    batch_max_steps: int = Field(
+        default=1500,
+        ge=1,
+        description=(
+            "Gremlin steps per entity or community write request: a batch "
+            "closes at batch_size items or at this many steps, whichever "
+            "comes first (each scalar property is a step, and so is each "
+            "value of a set such as text_unit_ids, so an entity cited by "
+            "many text units takes many). Neptune's user guide advises at "
+            "most 1,500 steps a request; a Gremlin Server 3.7 overflowed its "
+            "stack at 4,675 steps (a fresh JVM, 1 MiB default thread "
+            "stack). An item larger than this is written alone, and a "
+            "request refused for its size is split in two."
+        ),
+        json_schema_extra=evidence(
+            "upstream", "Neptune's guide: at most 1,500 Gremlin steps a request"
+        ),
+    )
     index_concurrency: int = Field(
         default=1,
         ge=1,

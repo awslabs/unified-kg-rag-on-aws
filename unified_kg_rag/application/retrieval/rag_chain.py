@@ -979,9 +979,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Prompt chains (prompt | llm | parser) by prompt, model, parser type
         # and model kwargs; not loop-bound, so shared by every loop.
         self._prompt_chains: dict[tuple[Any, ...], Runnable[Any, Any]] = {}
-        # Query entity and keyword extractions by question, language, model
-        # and prompt (search.query_extraction_cache_size): repeats and the
-        # arms of a comparison reuse them.
+        # Query translations and entity and keyword extractions by question,
+        # language, model and prompt (search.query_extraction_cache_size):
+        # repeats and the arms of a comparison reuse them.
         self._extractions = _ExtractionCache(
             self.config.search.query_extraction_cache_size
         )
@@ -1492,11 +1492,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
     async def _translate_query(
-        self, query: str, target_language: str, config: RunnableConfig | None
+        self,
+        query: str,
+        target_language: str,
+        config: RunnableConfig | None,
+        *,
+        namespace: str | None = None,
     ) -> str | None:
         """``query_processing.translate_query``."""
         return await query_processing.translate_query(
-            self, query, target_language, config
+            self, query, target_language, config, namespace=namespace
         )
 
     async def _process_query_step(

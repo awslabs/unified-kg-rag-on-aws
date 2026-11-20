@@ -57,6 +57,12 @@ services:
 
   gremlin-server:
     image: tinkerpop/gremlin-server:3.7.7@sha256:afc395b5e96cfeea72b6d0b59d22ad5cee502c31bfdad6f4d3b2de070d905e0f
+    environment:
+      # The image's heap settings, plus a 16 MiB thread stack: a traversal
+      # runs its chained steps recursively, and at the JVM's default 1 MiB
+      # one of 4,675 steps overflowed (indexing.neptune.batch_max_steps
+      # keeps the indexer's well below; 16 MiB took 30,600).
+      JAVA_OPTIONS: -Xms512m -Xmx4096m -Xss16m
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     ports:

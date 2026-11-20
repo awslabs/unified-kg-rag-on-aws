@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
+import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -213,7 +214,7 @@ def start_query_inputs(
         )
     if translation and not skip_translation:
         coroutines["translation"] = chain._translate_query(
-            question, target_language, config
+            question, target_language, config, namespace=namespace
         )
     return {
         name: start_detachable(_optional(coroutine))
@@ -234,26 +235,45 @@ async def translate_query(
     query: str,
     target_language: str,
     config: RunnableConfig | None,
+    *,
+    namespace: str | None = None,
 ) -> str | None:
     """The query in ``target_language``, or None when the model answered
-    that it cannot translate it (``CANNOT_TRANSLATE_MARKER``).
+    that it cannot translate it (``CANNOT_TRANSLATE_MARKER``), from the
+    extraction cache when this question was translated before on
+    ``namespace`` (``shared_extraction``: the arms of a comparison search
+    the same translation, as they do the same entities and keywords).
 
     Raises ``OutputParserException`` when the answer is no translation
-    JSON even after one repair (``process_query`` marks it degraded).
+    JSON even after one repair (``process_query`` marks it degraded); that
+    answer is not kept.
     """
-    translator = chain._get_chain_for_prompt(TranslationPrompt, StrOutputParser())
-    raw = str(
-        await translator.ainvoke(
-            {"query": query, "target_language": target_language}, config
-        )
+    key = chain._extraction_key(
+        TranslationPrompt, query, target_language, namespace=namespace
     )
-    if CANNOT_TRANSLATE_MARKER in raw:
-        return None
-    answer = await chain._json_parser(
-        TranslationPrompt, schema=_TranslationAnswer, instructions=_TRANSLATION_FIX
-    ).aparse(raw)
-    text = str(answer.translation).strip()
-    return None if not text or CANNOT_TRANSLATE_MARKER in text else text
+
+    async def translate() -> str:
+        translator = chain._get_chain_for_prompt(TranslationPrompt, StrOutputParser())
+        raw = str(
+            await translator.ainvoke(
+                {"query": query, "target_language": target_language}, config
+            )
+        )
+        text = ""
+        if CANNOT_TRANSLATE_MARKER not in raw:
+            answer = await chain._json_parser(
+                TranslationPrompt,
+                schema=_TranslationAnswer,
+                instructions=_TRANSLATION_FIX,
+            ).aparse(raw)
+            text = str(answer.translation).strip()
+            if CANNOT_TRANSLATE_MARKER in text:
+                text = ""
+        # "" is the model's "cannot translate", kept as any answer is.
+        chain._cache_extraction(key, text)
+        return text
+
+    return await shared_extraction(chain, key, translate) or None
 
 
 async def process_query(
@@ -530,17 +550,26 @@ def extraction_key(
     *,
     namespace: str | None = None,
 ) -> tuple[str, ...]:
-    """The extraction cache key: the prompt, its model, a digest of its
-    templates (a custom_prompts override is another key), the question,
-    the target language and the index namespace the query reads (one
-    namespace's callers never see by a hit what another's asked)."""
+    """The extraction cache key: the prompt, its model (its
+    ``model_role``'s), a digest of its templates (a custom_prompts override
+    is another key), the question, the target language, the index
+    namespace the query reads (one namespace's callers never see by a hit
+    what another's asked), and the model's call settings (its tier's
+    effort, its ``model_overrides``): a run-eval arm sharing the cache that
+    changes them does not read the run's answers (``extraction_settings``
+    keeps the rest alike)."""
+    role = prompt_class.model_role
+    if role is None:
+        raise ValueError(f"No model role declared for prompt {prompt_class.__name__}")
+    model = chain.config.model_id(role)
+    bedrock = chain.config.aws.bedrock
     resolved = prompt_class.resolve(custom_prompts=chain.config.custom_prompts)
     templates = hashlib.sha256(
         f"{resolved.system_prompt_template}\0{resolved.human_prompt_template}".encode()
     ).hexdigest()
     return (
         prompt_class.__name__,
-        chain.config.model_id(ModelRole.ENTITY_EXTRACTION),
+        model,
         templates,
         query,
         target_language,
@@ -548,6 +577,8 @@ def extraction_key(
         # namespaces share, so an arm on another index searches with the
         # same keywords as the run it is paired with.
         "" if _EXTRACTION_SCOPE.get() else (namespace or ""),
+        str(bedrock.tier_effort(chain.config.model_tier(model))),
+        json.dumps(bedrock.model_overrides.get(model), sort_keys=True, default=str),
     )
 
 

@@ -181,6 +181,7 @@ ALLOWED: dict[str, str] = {
         "evaluation/comparison.py:_SIGN_FLIP_CHUNK",
         "evaluation/comparison.py:_CACHE_HIT_TOLERANCE",
         "shared/utils/common.py:_DEFAULT_WORKER_CPU_FRACTION",
+        "shared/utils/common.py:_ENTITY_KEY_CACHE_SIZE",
         "shared/write_fence.py:INGESTION_REQUEST_TIMEOUT_SECONDS",
         "shared/write_fence.py:INDEXING_REQUEST_TIMEOUT_SECONDS",
         "shared/write_fence.py:REGISTRY_CONNECT_TIMEOUT_SECONDS",

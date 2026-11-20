@@ -83,6 +83,17 @@ _NAMES = st.one_of(
 )
 
 
+@given(names=st.lists(_NAMES, max_size=6))
+def test_a_cached_entity_key_is_the_key_computed_anew(names: list[str]) -> None:
+    # entity_key is cached (bounded): pure, so a cached key is the one the
+    # function computes, whatever was keyed before.
+    from unified_kg_rag.shared.utils.common import _ENTITY_KEY_CACHE_SIZE
+
+    assert entity_key.cache_info().maxsize == _ENTITY_KEY_CACHE_SIZE
+    for name in [*names, *reversed(names)]:
+        assert entity_key(name) == entity_key.__wrapped__(name)
+
+
 @given(name=_NAMES)
 @example(name="漢・》漢《")
 @example(name="・·イ・」주식회사")
