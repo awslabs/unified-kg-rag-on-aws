@@ -318,7 +318,7 @@ def check_requested_filter_keys(
         check_path_filter_keys(
             rag_input.filters,
             holdings,
-            resolve_namespace(chain.config, rag_input.suffix),
+            resolve_namespace(chain.config, rag_input.namespace),
         )
     if rag_input.search_strategy is SearchStrategy.AUTO:
         _check_schema_filter_keys(chain, rag_input.filters)

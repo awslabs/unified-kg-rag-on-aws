@@ -28,13 +28,20 @@ _INTERNAL = tuple(
 )
 
 
+class PackageDeprecationWarning(DeprecationWarning):
+    """A deprecated name of this package. Its own class so a test suite can
+    turn every one into an error (``filterwarnings``): the package must
+    never read its own deprecated names, which a caller cannot fix."""
+
+
 @lru_cache(maxsize=256)
 def _internal(filename: str) -> bool:
     return os.path.realpath(filename).startswith(_INTERNAL)
 
 
 def warn_deprecated(message: str) -> None:
-    """Warn with ``message`` (a ``DeprecationWarning``) at the first frame
+    """Warn with ``message`` (a :class:`PackageDeprecationWarning`, a
+    ``DeprecationWarning``) at the first frame
     outside this package and pydantic: the caller's line, which Python's
     default filters show when it is ``__main__``'s (a ``stacklevel`` counted
     from a validator named a pydantic frame, which they hide)."""
@@ -48,4 +55,4 @@ def warn_deprecated(message: str) -> None:
     while frame.f_back is not None and _internal(frame.f_code.co_filename):
         frame = frame.f_back
         level += 1
-    warnings.warn(message, DeprecationWarning, stacklevel=level)
+    warnings.warn(message, PackageDeprecationWarning, stacklevel=level)
