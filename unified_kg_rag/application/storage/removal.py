@@ -109,16 +109,16 @@ class TextUnitRemoval:
         if outdated:
             logger.warning(
                 "%d community reports in '%s' cite removed text units and other "
-                "ones: they are kept, and may state the removed text until "
-                "indexing.reset: true rebuilds them",
+                "ones: they are kept, flagged outdated, and may state the "
+                "removed text until indexing.reset: true rebuilds them",
                 len(outdated),
                 suffix,
             )
-            m.outdated_reports.update(outdated)
 
         shared_entities, shared_relationships, shared_claims, doomed = (
             self._shared_and_doomed(citing, text_unit_ids)
         )
+        m.stripped_entities.setdefault(suffix, set()).update(shared_entities)
         logger.info(
             "Removing %d artifacts of %d text units in '%s'; stripping %d "
             "shared entities, %d relationships and %d claims",
@@ -160,6 +160,16 @@ class TextUnitRemoval:
         )
         if summaries.total_items or summaries.failed_items:
             results[f"vector_summary_nodes_{suffix}"] = summaries
+        if outdated:
+            # Flagged before the text they were written from is stripped
+            # from the rest: a run that dies after this leaves them flagged.
+            results[f"vector_outdated_reports_{suffix}"] = (
+                m.vector_indexer.mark_reports_outdated(outdated, suffix)
+            )
+            m.outdated_reports.setdefault(suffix, set()).update(outdated)
+        m.deleted_reports.setdefault(suffix, set()).update(
+            i for i, units in citing.reports.items() if gone(units)
+        )
         if _rejected(results):
             # Strip nothing until the removed text units are gone: a retry
             # tells a removal that got further by their missing copies (not

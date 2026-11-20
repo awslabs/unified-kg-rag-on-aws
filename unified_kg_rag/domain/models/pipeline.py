@@ -193,6 +193,27 @@ class IndexBuildRecord(BaseModel):
             "writing it again. None when the run exports none."
         ),
     )
+    outdated_reports: list[str] | None = Field(
+        default=None,
+        description=(
+            "The stored community reports a run kept although it removed text "
+            "they were written from (a deleted or edited document's): they may "
+            "state that text, and are flagged outdated where they are read, "
+            "until a run writes them again. A full build writes every report "
+            "([]); an incremental record adds the ones its removals kept and "
+            "takes out the ones it deleted or wrote. None in a record written "
+            "by an earlier version."
+        ),
+    )
+    reports_written: list[str] = Field(
+        default_factory=list,
+        exclude=True,
+        description=(
+            "Incremental record, not stored: the stored community reports the "
+            "commit deleted or wrote again, which over() takes out of the "
+            "stored outdated_reports."
+        ),
+    )
     community_change: CommunityChange | None = Field(
         default=None,
         exclude=True,
@@ -221,13 +242,16 @@ class IndexBuildRecord(BaseModel):
         except ValidationError:
             return self
         if self.mode != "incremental":
-            if stored.communities is None:
-                return self
-            return self.model_copy(
-                update={"communities": self._counted(stored.communities)}
-            )
+            # Written by a delta: the stored reports it kept stay outdated.
+            delta: dict[str, Any] = {
+                "outdated_reports": self._outdated(stored.outdated_reports)
+            }
+            if stored.communities is not None:
+                delta["communities"] = self._counted(stored.communities)
+            return self.model_copy(update=delta)
         update: dict[str, Any] = {
             "communities": self._counted(stored.communities),
+            "outdated_reports": self._outdated(stored.outdated_reports),
             # The stored answers were written by the full build the stored
             # record keeps, this run's by its delta alone.
             "answer_fingerprints": stored.answer_fingerprints,
@@ -240,6 +264,7 @@ class IndexBuildRecord(BaseModel):
                     "extraction_settings": None,
                     "full_build": None,
                     "communities": None,
+                    "outdated_reports": None,
                 }
             )
         return self.model_copy(update=update)
@@ -264,6 +289,15 @@ class IndexBuildRecord(BaseModel):
             recorded_artifacts(self.artifacts, stored, incremental=True)
         )
         return {"artifacts": kept.artifacts, "methodologies": kept.methodologies}
+
+    def _outdated(self, stored: list[str] | None) -> list[str] | None:
+        """The outdated reports over the ``stored`` ones: both sets, without
+        those this commit deleted or wrote (``reports_written``). ``None``
+        when neither record knows them."""
+        if stored is None and self.outdated_reports is None:
+            return None
+        kept = set(stored or ()) | set(self.outdated_reports or ())
+        return sorted(kept - set(self.reports_written))
 
     def _counted(self, counters: CommunityCounters | None) -> CommunityCounters | None:
         """``counters`` with this commit's change added, once per commit."""

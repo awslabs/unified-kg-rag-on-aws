@@ -52,6 +52,8 @@ class _Detector:
     def __init__(self, fail: bool) -> None:
         self.fail = fail
         self.graphs: list[nx.Graph] = []
+        # The communities whose report failed for an error of its own.
+        self.item_failed_community_ids: list[str] = []
 
     def __call__(
         self, graph: nx.Graph, stored: object = None, *, empty_expected: bool = False

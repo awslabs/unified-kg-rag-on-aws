@@ -2046,3 +2046,41 @@ def test_isolated_entities_do_not_decide_the_hierarchy(isolated: int) -> None:
         graph.add_node(f"x{i}", name=f"X{i}")
     partitions, _ = build_hierarchy(graph, Config().graph.community_detection)
     assert len(partitions) == 1
+
+
+def test_only_a_reports_own_error_counts_against_its_documents() -> None:
+    # Baseline issue (3): a report cut off at temperature 0 is cut off again;
+    # uncounted, its documents were retried by every run. An error of its
+    # own (output that does not parse or was cut off) counts; an outage
+    # (a timeout, throttling) does not.
+    from unittest.mock import MagicMock
+
+    from langchain_core.exceptions import OutputParserException
+
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from unified_kg_rag.adapters.providers import Providers
+
+    config = Config()
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(lambda system, human: ""),
+    )
+    detector = CommunityDetector(config, show_progress=False, providers=providers)
+    detector._unit_documents = {"t1": ["doc-1"], "t2": ["doc-2"], "t3": ["doc-3"]}
+    communities = [
+        Community(
+            id=f"c{i}",
+            name=f"c{i}",
+            level="0",
+            parent="",
+            children=[],
+            text_unit_ids=[f"t{i}"],
+        )
+        for i in (1, 2, 3)
+    ]
+    detector._record_item_failures(
+        {0: OutputParserException("no report"), 1: TimeoutError("slow")},
+        communities,
+    )
+    assert detector.item_failed_community_ids == ["c1"]

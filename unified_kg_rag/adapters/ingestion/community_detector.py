@@ -18,6 +18,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     usage_model_id,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.adapters.llm.retry import (
+    item_error_predicate,
+    item_failed_indices,
+)
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
@@ -30,11 +34,13 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 )
 from unified_kg_rag.domain.ingestion.community_clustering import (
     build_hierarchy,
+    community_name,
     entity_subgraph,
     hierarchical_communities,
     small_component_nodes,
     with_usable_weights,
 )
+from unified_kg_rag.domain.ingestion.community_hierarchy import community_report_id
 from unified_kg_rag.domain.ingestion.contributions import (
     REPORT_RECORD_ATTRIBUTE,
     record_key,
@@ -67,7 +73,6 @@ from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.logging import log_failure
 from unified_kg_rag.shared.usage import record_cache_hit
-from unified_kg_rag.shared.utils import generate_stable_id
 
 logger = get_logger(__name__)
 
@@ -153,6 +158,14 @@ class CommunityDetector:
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_config(self.config, self.factory)
+        self.is_item_error = item_error_predicate(self.factory)
+        # The communities of the last generate_reports whose report failed
+        # for an error of its own (output cut off or that does not parse, a
+        # request rejected for its content: item_failed_indices), which
+        # indexing.max_document_failures counts against their documents;
+        # and the documents of each text unit, which tell them.
+        self.item_failed_community_ids: list[str] = []
+        self._unit_documents: dict[str, list[str]] = {}
 
         if self.community_detection_config.report_generation.enabled:
             parser = create_robust_xml_output_parser(
@@ -198,13 +211,7 @@ class CommunityDetector:
         given small components that reach ``min_community_size`` entities in
         the whole graph: they are clustered (see ``small_component_nodes``).
         """
-        self._report_claims = (
-            self._claims_by_subject(graph)
-            if self.config.processing.claim_extraction.enabled
-            else {}
-        )
-        self.graph = with_usable_weights(entity_subgraph(graph))
-        graph = self.graph
+        graph = self.report_on(graph).graph
         self.unclustered = small_component_nodes(
             graph, self.community_detection_config.min_community_size, whole_graph
         )
@@ -214,6 +221,21 @@ class CommunityDetector:
             graph.number_of_edges(),
         )
         self.detect_communities(empty_expected=empty_expected)
+        return self
+
+    def report_on(self, graph: nx.Graph) -> "CommunityDetector":
+        """Read the reports' members from ``graph`` (its entities, their
+        edges and, when claim extraction is on, the claims about them):
+        :meth:`generate_reports` packs each community's input from it, and
+        ranks its members by their degree in it. Detection does this first;
+        a report written again for a stored community (an incremental run's
+        refresh) does it alone, on the stored members and their edges."""
+        self._report_claims = (
+            self._claims_by_subject(graph)
+            if self.config.processing.claim_extraction.enabled
+            else {}
+        )
+        self.graph = with_usable_weights(entity_subgraph(graph))
         return self
 
     @staticmethod
@@ -376,7 +398,7 @@ class CommunityDetector:
         return Community(
             id=hier_comm.community_id,
             short_id=label,
-            name=f"Level {hier_comm.level} Community {label.rsplit('_C', 1)[-1]}",
+            name=community_name(hier_comm.level, label),
             name_embedding=None,
             level=str(hier_comm.level),
             parent=hier_comm.parent_id or "",
@@ -405,6 +427,7 @@ class CommunityDetector:
         records: ReportRecords | None = None,
         *,
         empty_expected: bool = False,
+        sub_reports: Mapping[str, CommunityReport] | None = None,
     ) -> tuple[list[CommunityReport], list[str]]:
         """Generate one report per community.
 
@@ -427,6 +450,11 @@ class CommunityDetector:
                 (``REPORT_RECORD_ATTRIBUTE``).
             empty_expected: No communities is no fault (a run with nothing
                 to index): logged at debug level, not as a warning.
+            sub_reports: Community id -> the stored report of a child of a
+                community in ``communities`` that is not itself among them
+                (an incremental refresh writes only some of the hierarchy):
+                a parent's roll-up reads it as it reads a report generated
+                beside it.
 
         Returns:
             One report per community that produced a non-empty LLM result, and
@@ -447,6 +475,10 @@ class CommunityDetector:
         self._report_descriptions = dict(descriptions or {})
         self._report_types = dict(types or {})
         self._report_records = records
+        self.item_failed_community_ids = []
+        self._unit_documents = {
+            unit.id: list(unit.document_ids or []) for unit in text_units or []
+        }
         try:
             logger.info("Generating reports for %s communities.", len(communities))
             start_time = time.time()
@@ -456,7 +488,7 @@ class CommunityDetector:
                 self.community_detection_config.report_generation.enable_sub_community_rollup
             ):
                 reports, failed = self._generate_reports_with_rollup(
-                    communities, graph_attributes
+                    communities, graph_attributes, sub_reports
                 )
             else:
                 reports, failed = self._generate_reports_flat(
@@ -634,14 +666,19 @@ class CommunityDetector:
             index: record["response"] for index, record in stored.items()
         }
         if pending:
+            errors: dict[int, BaseException] = {}
             answers = self.batch_processor.execute_with_fallback(
                 items_to_process=[report_inputs[index] for index in pending],
                 prepare_inputs_func=self._create_report_chain_inputs,
                 sequential_func=self.report_generator.invoke,
                 task_name="Community report generation",
                 show_progress=self.show_progress,
+                errors=errors,
             )
             results.update(zip(pending, answers, strict=True))
+            self._record_item_failures(
+                errors, [communities[index] for index in pending]
+            )
         generated_at = datetime.now()
         new_records: dict[str, dict[str, Any]] = {}
 
@@ -683,6 +720,81 @@ class CommunityDetector:
             self._report_records.write_records({suffix: new_records})
         return reports, failed
 
+    def _record_item_failures(
+        self, errors: Mapping[int, BaseException], communities: list[Community]
+    ) -> None:
+        """Add to ``item_failed_community_ids`` the ``communities`` (a
+        batch, by index in ``errors``) whose report failed for an error of
+        its own, as the extraction stages tell their units'
+        (``item_failed_indices``: when every report failed alike, output
+        cut off on more than one document's counts, else one known-good
+        report request decides)."""
+        if not errors:
+            return
+        items = [
+            TextUnit.model_validate(
+                {
+                    "id": community.id,
+                    "text": "",
+                    "document_ids": sorted(
+                        {
+                            d
+                            for u in community.text_unit_ids or []
+                            for d in self._unit_documents.get(u, ())
+                        }
+                    ),
+                }
+            )
+            for community in communities
+        ]
+        own = item_failed_indices(
+            errors,
+            items,
+            self.is_item_error,
+            "Community report generation",
+            self.batch_processor,
+            self._create_report_chain_inputs,
+            self.report_generator.invoke,
+            known_good=self._known_good_report_input(),
+        )
+        self.item_failed_community_ids.extend(communities[i].id for i in own)
+
+    def _known_good_report_input(self) -> dict[str, Any]:
+        """The report input of the known-good request: two organizations
+        and the agreement between them (``retry.known_good_unit``'s text)."""
+        report_config = self.community_detection_config.report_generation
+        return {
+            "community_id": "known-good-request",
+            "entities": [
+                {
+                    "id": "vendor",
+                    "name": "Vendor Corp",
+                    "type": "organization",
+                    "description": "A supplier",
+                },
+                {
+                    "id": "buyer",
+                    "name": "Buyer Ltd",
+                    "type": "organization",
+                    "description": "A buyer",
+                },
+            ],
+            "relationships": [
+                {
+                    "source": "Vendor Corp",
+                    "target": "Buyer Ltd",
+                    "type": "supply agreement",
+                    "description": "Vendor Corp and Buyer Ltd signed a supply "
+                    "agreement in 2020.",
+                    "id": "agreement",
+                }
+            ],
+            "claims": [],
+            "sub_community_reports": [],
+            "content_length": report_config.content_length,
+            "target_language": language_name(index_language(self.config)),
+        }
+
     def _generate_reports_flat(
         self, communities: list[Community], graph_attributes: dict[str, Any]
     ) -> tuple[list[CommunityReport], list[str]]:
@@ -691,7 +803,10 @@ class CommunityDetector:
         return self._run_report_batch(report_inputs, communities, graph_attributes)
 
     def _generate_reports_with_rollup(
-        self, communities: list[Community], graph_attributes: dict[str, Any]
+        self,
+        communities: list[Community],
+        graph_attributes: dict[str, Any],
+        sub_reports: Mapping[str, CommunityReport] | None = None,
     ) -> tuple[list[CommunityReport], list[str]]:
         """Bottom-up per-level generation with sub-community roll-up.
 
@@ -709,7 +824,7 @@ class CommunityDetector:
             except (TypeError, ValueError):
                 return 0
 
-        reports_by_id: dict[str, CommunityReport] = {}
+        reports_by_id: dict[str, CommunityReport] = dict(sub_reports or {})
         all_reports: list[CommunityReport] = []
         total_failed: list[str] = []
 
@@ -1106,7 +1221,7 @@ class CommunityDetector:
             result.get("rating_explanation"), join=True
         )
 
-        report_id = generate_stable_id(f"report:{community.id}")
+        report_id = community_report_id(community.id)
         current_time = generated_at or datetime.now()
 
         attributes = {

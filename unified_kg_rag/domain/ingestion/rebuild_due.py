@@ -13,7 +13,11 @@ stale, each with what applies it:
 - ``communities`` (``RebuildRemedy.RESET``): the community counters crossed
   an ``indexing.community_compaction`` threshold, or the run that wrote the
   record measured a drift that recommends one
-  (``community_drift.reset_reasons``).
+  (``community_drift.reset_reasons``); and (``RebuildRemedy.NEXT_RUN``),
+  whatever the thresholds, the record lists community reports kept after a
+  run removed text they were written from and could not write them again
+  from what remains (``IndexBuildRecord.outdated_reports``): they may state
+  it, and the next incremental run tries again (``report_refresh``).
 - ``answer_settings`` (reset): the community reports or description
   summaries the last full build wrote were made under other settings
   (prompt, model, language; ``cache_keys.corpus_answer_fingerprints``)
@@ -55,6 +59,7 @@ from unified_kg_rag.domain.models import (
     CommunityCounters,
     Config,
     ExtractionSettings,
+    IndexArtifact,
 )
 
 
@@ -124,11 +129,13 @@ def rebuild_reasons(
     under ``config``, in the order of the module docstring; empty when
     nothing is (or without a record). ``drift_recommended``: the run that
     writes ``record`` measured a community drift that recommends a rebuild
-    (no record keeps it)."""
+    (a reason only under ``on_drift_recommendation``; the record keeps
+    the reports it kept outdated, which are one whatever the setting)."""
     if not isinstance(record, Mapping):
         return []
     return [
         *_community_reasons(record, config, drift_recommended),
+        *_outdated_report_reasons(record, config),
         *_answer_reasons(record, config),
         *_extraction_reasons(record, config),
         *_methodology_reasons(record, config),
@@ -159,6 +166,29 @@ def _community_reasons(
             "indexing.reset: true re-clusters it, reusing the unchanged "
             "summaries and reports",
             settings=["indexing.community_compaction"],
+        )
+    ]
+
+
+def _outdated_report_reasons(
+    record: Mapping[str, Any], config: Config
+) -> list[RebuildReason]:
+    outdated = record.get("outdated_reports")
+    if not isinstance(outdated, list) or not outdated:
+        return []
+    if IndexArtifact.COMMUNITY_REPORTS not in held_artifacts(record, config):
+        return []
+    return [
+        RebuildReason(
+            kind=RebuildReasonKind.COMMUNITIES,
+            remedy=RebuildRemedy.NEXT_RUN,
+            detail=f"{len(outdated)} community reports were kept after "
+            "documents they were written from were deleted or changed, and "
+            "the run could not write them again from what remains: they may "
+            "still state the removed text and are flagged outdated where "
+            "they are read; the next incremental run tries again, a model "
+            "call each (a run with indexing.reset: true writes every report)",
+            settings=[IndexArtifact.COMMUNITY_REPORTS.value],
         )
     ]
 

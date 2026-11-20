@@ -30,6 +30,7 @@ from tests.fixtures.store_backends import (
 )
 from unified_kg_rag.domain.ingestion.report_references import (
     REPORT_FINDINGS_FIELD,
+    REPORT_OUTDATED_FIELD,
     report_cited_ids,
 )
 from unified_kg_rag.domain.models import (
@@ -2175,6 +2176,36 @@ def test_a_re_key_repoints_the_stored_reports_findings(harness: StoreHarness) ->
         {"e-vendor-inc": "e-y"}, "other"
     )
     assert (other.total_items, other.failed_items) == (0, 0)
+
+
+@pytest.mark.parametrize("harness", backends(RETRIEVERS), indirect=True)
+def test_an_outdated_report_is_flagged_where_it_is_read_until_written_again(
+    harness: StoreHarness,
+) -> None:
+    # B-2: a removal flags the reports it keeps (they may state removed
+    # text) in place; a query reads the flag; writing the report drops it.
+    report = _report_with_findings()
+    _write(harness, "community_reports", "upsert", [report])
+    indexer = harness.vector_indexer
+
+    stats = indexer.mark_reports_outdated([report.id], "default")
+
+    assert (stats.successful_items, stats.failed_items) == (1, 0)
+    (hit,) = _report_hits(harness)
+    assert hit.metadata[REPORT_OUTDATED_FIELD] is True
+    # Read back by id with its hierarchy and findings, for the refresh.
+    (stored,) = indexer.read_community_reports([report.id, "absent"], "default")
+    assert (stored.community_id, stored.findings) == (
+        report.community_id,
+        report.findings,
+    )
+    assert indexer.read_community_reports([report.id], "other") == []
+    # Flagged in place: the findings and the embedding are kept.
+    assert report_cited_ids(hit.metadata)[0] == ["e-vendor", "e-buyer", "e-depot"]
+
+    indexer.upsert_community_reports([report])
+    (hit,) = _report_hits(harness)
+    assert REPORT_OUTDATED_FIELD not in hit.metadata
 
 
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)

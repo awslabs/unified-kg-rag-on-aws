@@ -830,12 +830,15 @@ class IndexingConfig(ConfigSection):
         le=1.0,
         description=(
             "Per-index-type write failure rate above which the indexing stage "
-            "fails, and share of communities without a report above which "
-            "community detection fails, recording no document; the failed "
-            "items are noted and written again by the next run (below it, a "
-            "document whose own text units failed is recorded FAILED and "
-            "retried). A fully failed index type always fails the stage. 1.0 "
-            "disables the partial-failure gate."
+            "fails, recording no document; the failed items are noted and "
+            "written again by the next run (below it, a document whose own "
+            "text units failed is recorded FAILED and retried). A fully failed "
+            "index type always fails the stage. Community detection reads it "
+            "as the tolerated chance that one report fails: it fails when more "
+            "reports failed than that chance explains (a one-sided binomial "
+            "test at 5%, so a small delta's few failures do not fail it: 4 of "
+            "11 passes at 0.2, 6 of 11 fails; on many reports it fails close to "
+            "the rate itself). 1.0 disables the partial-failure gate."
         ),
         json_schema_extra=evidence("operational"),
     )

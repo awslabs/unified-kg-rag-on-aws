@@ -124,6 +124,7 @@ from unified_kg_rag.shared.utils import error_name, first_names
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:
+    from unified_kg_rag.application.ingestion.report_refresh import ReportRefresh
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
     from unified_kg_rag.ports.indexer import IndexingStats
 
@@ -643,6 +644,7 @@ class IncrementalIndexer:
         unclustered_entities: int = 0,
         settings_changed: bool = False,
         before_registry: Callable[[Mapping[str, IndexingStats]], None] | None = None,
+        refresh_reports: ReportRefresh | None = None,
     ) -> dict[str, IndexingStats]:
         """Upsert delta artifacts and update the registry for processed docs.
 
@@ -675,6 +677,12 @@ class IncrementalIndexer:
         fails now are noted in their place (see
         ``IndexingManager.read_pending_writes``): a failed item write is
         written again by the next commit, not re-extracted.
+
+        Once every write succeeded, ``refresh_reports`` (the indexing
+        stage's ``ReportRefresh``) writes again the stored community
+        reports the run's removals left outdated, and those the build
+        record lists from earlier runs (:meth:`_refresh_reports`), before
+        the community drift is measured and the record written.
         """
         check_write_fence()
         # The items an earlier commit's stores rejected are written again
@@ -718,9 +726,6 @@ class IncrementalIndexer:
             entities, relationships = merged.entities, merged.relationships
             communities, claims, community_reports = _remap_references(
                 communities, claims, merged.id_remap_by_suffix, community_reports
-            )
-            self.community_drift = self._measure_drift(
-                entities, communities, unclustered_entities
             )
             claims = self.indexing_manager.merge_with_stored_claims(
                 claims, text_units or ()
@@ -773,6 +778,15 @@ class IncrementalIndexer:
         except BaseException:
             self.indexing_manager.discard_retired_ids()
             raise
+        if refresh_reports is not None and not any(
+            stats.failed_items for stats in results.values() if stats
+        ):
+            # From the stored state the commit left: what the strip derived
+            # and the delta merged is written.
+            self._refresh_reports(refresh_reports, community_reports or [])
+        self.community_drift = self._measure_drift(
+            entities, communities, unclustered_entities
+        )
         if self.record(
             lineages,
             fingerprints,
@@ -790,6 +804,48 @@ class IncrementalIndexer:
             self.indexing_manager.collect_extraction_records()
         return results
 
+    def _refresh_reports(
+        self,
+        refresh: ReportRefresh,
+        written: Sequence[CommunityReport],
+    ) -> None:
+        """Write again, per suffix, the stored reports outdated by this
+        run's removals or listed outdated in the stored build record, but
+        the ones the run deleted or wrote (the delta's reports). Those
+        written again or deleted leave the run's outdated reports and are
+        taken out of the record's (``IndexingManager.refreshed_reports``);
+        the others stay, for the next run."""
+        m = self.indexing_manager
+        delta_reports: dict[str, set[str]] = defaultdict(set)
+        for report in written:
+            delta_reports[BaseIndexer.get_suffix(report)].add(report.id)
+        for suffix in sorted({*m.outdated_reports, self.suffix}):
+            try:
+                stored = m.vector_indexer.read_build_record(suffix) or {}
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the run's own still refresh
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Reading the build record of '%s' failed (%s): only the "
+                    "reports this run left outdated are written again",
+                    suffix,
+                    error=e,
+                )
+                stored = {}
+            listed = stored.get("outdated_reports")
+            ids = (
+                m.outdated_reports.get(suffix, set())
+                | set(listed if isinstance(listed, list) else ())
+            ) - (m.deleted_reports.get(suffix, set()) | delta_reports[suffix])
+            if not ids:
+                continue
+            done = refresh(suffix, ids, m.stripped_entities.get(suffix, set()))
+            settled = done.written | done.deleted
+            m.outdated_reports[suffix] = m.outdated_reports.get(suffix, set()) - settled
+            m.refreshed_reports.setdefault(suffix, set()).update(settled)
+
     def _measure_drift(
         self,
         entities: list[Entity] | None,
@@ -797,7 +853,12 @@ class IncrementalIndexer:
         unclustered_entities: int = 0,
     ) -> CommunityDrift | None:
         """Measure and log the commit's community drift (see community_drift)."""
-        outdated = self.indexing_manager.outdated_reports
+        # The build record lists them (IndexingStage._record_build).
+        outdated = [
+            report_id
+            for _, ids in sorted(self.indexing_manager.outdated_reports.items())
+            for report_id in sorted(ids)
+        ]
         if not communities and not outdated:
             return None
         drift = measure_community_drift(
@@ -807,7 +868,6 @@ class IncrementalIndexer:
             outdated,
             unclustered_entities,
         )
-        outdated.clear()
         if drift is None:
             return None
         if drift.rebuild_recommended:
@@ -3392,6 +3452,7 @@ def index_delta(
     community_reports: list[CommunityReport],
     claims: list[Claim],
     before_registry: Callable[[Mapping[str, IndexingStats]], None] | None = None,
+    refresh_reports: ReportRefresh | None = None,
 ) -> tuple[dict[str, IndexingStats], CommunityDrift | None]:
     """Idempotent delta indexing + stale-artifact pruning + registry write-back.
 
@@ -3400,7 +3461,8 @@ def index_delta(
     the stale artifacts of changed/deleted documents are removed, the
     freshly extracted delta is upserted and the PENDING records replaced
     with per-document lineage so subsequent runs diff correctly
-    (``before_registry``: see :meth:`IncrementalIndexer.record`).
+    (``before_registry``: see :meth:`IncrementalIndexer.record`;
+    ``refresh_reports``: :meth:`IncrementalIndexer.commit`).
     """
     delta = context.incremental_delta
     if delta is None:
@@ -3486,6 +3548,7 @@ def index_delta(
                 0,
             ),
             before_registry=before_registry,
+            refresh_reports=refresh_reports,
         )
     finally:
         vectors.set_replaced_vector_keeping(True)

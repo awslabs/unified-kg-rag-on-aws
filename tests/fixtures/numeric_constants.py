@@ -297,6 +297,8 @@ ALLOWED: dict[str, str] = {
         "adapters/search_strategies/tree_search.py:_EXPANSION_STEP",
         "domain/ingestion/base_processor.py:MIN_EDGE_WEIGHT",
         "domain/ingestion/base_processor.py:MAX_EDGE_WEIGHT",
+        # The failure-rate gate's significance level, the conventional 5%.
+        "domain/ingestion/failure_rate.py:FAILURE_RATE_SIGNIFICANCE",
         "domain/retrieval/hybrid_normalization.py:MIN_SCORE",
         "domain/retrieval/hybrid_normalization.py:SINGLE_RESULT_SCORE",
         "evaluation/pairwise.py:_LOG_TOLERANCE",

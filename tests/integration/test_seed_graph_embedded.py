@@ -743,7 +743,9 @@ def test_a_seed_edit_reports_the_current_descriptions_only(tmp_path: Path) -> No
         built.seed.write_text(harness.seed.read_text())
         built.ok()
         expected = _vendor_entries(built)
-        assert expected and _vendor_entries(harness, before) == expected
+        # The delta's report and the stored community's, written again (it
+        # cited the replaced seed unit), read Vendor alike.
+        assert expected and set(_vendor_entries(harness, before)) == set(expected)
         (entry,) = set(expected)
         # The documents' line, then the seed's current one (if any).
         lines = entry.split("\n")
@@ -857,7 +859,11 @@ def test_a_seed_edit_on_a_summarized_entity_reports_its_summary(
     harness.ok()
     stored = harness.entities()["Vendor"]["description"]
     assert stored == f"{SUMMARY}\nSeed v2 says vendor."
-    assert _vendor_entries(harness, before) == [f"- Vendor (organization): {stored}"]
+    # The delta's report and the stored community's, written again (it cited
+    # the replaced seed unit), read it alike, from one summary call.
+    assert set(_vendor_entries(harness, before)) == {
+        f"- Vendor (organization): {stored}"
+    }
     assert asked == [doc_lines]
 
     built = make(tmp_path / "built")
@@ -925,7 +931,9 @@ def test_a_hub_entitys_report_entry_stays_a_summary(
     asked.clear()
     before = len(harness.server.prompts)
     harness.ok()
-    (entry,) = _vendor_entries(harness, before)
+    # The delta's report and the stored community's written again read it
+    # alike.
+    (entry,) = set(_vendor_entries(harness, before))
     assert entry == f"- Vendor (organization): {SUMMARY}\nSeed v2 says vendor."
     (lines,) = asked
     assert len(lines) == 320 and "Seed v1 says vendor." not in lines

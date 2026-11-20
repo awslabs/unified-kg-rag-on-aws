@@ -499,8 +499,8 @@ def test_seed_only_communities_get_no_report_and_no_failure(mocker) -> None:
 
 
 def test_the_failure_rate_counts_the_evidenced_communities_only(mocker) -> None:
-    # 1 of 2 evidenced is within 50%; over all four it would be 25%, and a
-    # seed-only community that "failed" would not count either.
+    # The gate tests the failures among the evidenced communities only: a
+    # seed-only community gets no report, and does not count either.
     communities = [
         _community("leaf", ["v"], ["u1"]),
         _community("other", ["b"], ["u2"]),
@@ -510,9 +510,10 @@ def test_the_failure_rate_counts_the_evidenced_communities_only(mocker) -> None:
     stage, context, _ = _community_stage(mocker, communities, failed=["leaf"])
     _, _, metrics = stage._execute_core(context)
     assert metrics is not None and metrics["communities_seed_only"] == 2
-    # Both evidenced ones failing is 100%, over the limit; over all four it
-    # would be 50%, within it.
+    # Both evidenced ones failing at a 20% chance each is 4% likely, past
+    # the gate's 5%; 2 of all four would be 18% likely, within it.
     stage, context, _ = _community_stage(mocker, communities, failed=["leaf", "other"])
+    stage.config.indexing.max_failure_rate = 0.2
     with pytest.raises(PipelineStageError, match="for 2 of 2 communities"):
         stage._execute_core(context)
 

@@ -49,7 +49,13 @@ read stops it before anything is indexed
 - **Delete a document:** remove it and re-run. What only its chunks stated
   (entities, relationships, claims) is deleted; shared artifacts are kept
   without its chunks, and a community or report goes once none of its chunks
-  is left.
+  is left. A report the community keeps for the chunks of other documents
+  is written again from the members that remain (one model call each, none
+  when its input is unchanged), as a summary of the RAPTOR tree is. One the
+  run cannot write again (the model failed) may still state what the deleted
+  document said: it is flagged `outdated` where it is read (a query's source
+  metadata), its namespace lists a rebuild reason
+  ([Rebuild due](#rebuild-due)), and the next run tries again.
 - **Change the extraction settings** (a tuned `custom_prompts` set,
   `entity_types`, an extraction, gleaning or chunking model, chunk sizes,
   translation, resolution): the next run re-extracts the unchanged documents
@@ -152,9 +158,10 @@ The indexing stage reports `community_drift` metrics: `delta_communities`,
 (default `0.5`) of the entities the run clustered also belong to an earlier
 level-0 community, the run logs a WARNING and reports
 `community_rebuild_recommended: 1` (the counts are an upper bound). A run that
-removes text units also reports `outdated_reports`, stored reports that still
-cite a removed unit and may state what was removed: any such report
-recommends a rebuild too. `unclustered_entities` counts stored entities
+removes text units also reports `outdated_reports`, stored reports that
+cite a removed unit and that it could not write again, so may state what was
+removed: any such report recommends a rebuild too. The build record keeps
+their ids (`outdated_reports`) until a run writes them again or deletes them. `unclustered_entities` counts stored entities
 without a community that a small delta component the run clustered links to:
 a full build clusters them, a delta run clusters only its delta.
 
@@ -213,6 +220,7 @@ cost (`remedy: next_run`).
 | `kind` | When | `remedy` |
 |---|---|---|
 | `communities` | The community counters crossed an `indexing.community_compaction` threshold (the WARNING above) | `reset` |
+| `communities` (`settings: [community_reports]`) | The build record lists reports kept after the text they were written from was removed, which a run could not write again (`outdated_reports`, whatever `on_drift_recommendation`) | `next_run`: a model call per report |
 | `answer_settings` | The community reports or description summaries the last full build wrote were made under other settings (their model, prompt, language, summarization switched on) than the config's: incremental runs write their delta's alone | `reset`: a model call per report or summary |
 | `extraction_settings` | The extraction settings changed since the last run (the changed paths in `settings`) | `next_run`: it extracts every document again |
 | `methodologies` | The config builds a corpus-wide artifact the namespace lacks | `next_run`: it rebuilds the namespace from the stored extractions |

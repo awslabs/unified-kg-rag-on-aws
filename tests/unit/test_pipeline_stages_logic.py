@@ -583,10 +583,39 @@ def test_community_stage_records_text_units_of_failed_reports(mocker) -> None:
 
 
 def test_community_stage_fails_above_the_tolerated_failure_rate(mocker) -> None:
-    stage, ctx = _community_stage(mocker, failed=["c1", "c2"], max_failure_rate=0.25)
+    # 3 of 4 at a 25% chance each is 5% likely, 4 of 4 under 1%: only the
+    # second is more than the chance explains (failure_rate_exceeded).
+    stage, ctx = _community_stage(
+        mocker, failed=["c1", "c2", "c3"], max_failure_rate=0.25
+    )
+    stage._execute_core(ctx)
 
-    with pytest.raises(PipelineStageError, match="2 of 4 communities"):
+    failed = ["c0", "c1", "c2", "c3"]
+    stage, ctx = _community_stage(mocker, failed=failed, max_failure_rate=0.25)
+    with pytest.raises(PipelineStageError, match="4 of 4 communities"):
         stage._execute_core(ctx)
+
+
+def test_a_small_run_passes_the_failures_a_large_one_would_explain(mocker) -> None:
+    # The ARCH baseline: a 5-document delta failed with 4 of 11 reports cut
+    # off (36%) where the full build of the corpus passed with 6 of 59, at the
+    # same chance per report; 4 of 11 at 20% is 16% likely and passes now.
+    # The plain share failed it; 6 of 11 (1% likely) still fails.
+    from unified_kg_rag.domain.ingestion.failure_rate import failure_rate_exceeded
+
+    assert not failure_rate_exceeded(4, 11, 0.2)
+    assert not failure_rate_exceeded(6, 59, 0.2)
+    assert failure_rate_exceeded(6, 11, 0.2)
+    assert failure_rate_exceeded(18, 59, 0.2) and not failure_rate_exceeded(17, 59, 0.2)
+    # Many items: close to the rate itself.
+    assert failure_rate_exceeded(222, 1000, 0.2)
+    assert not failure_rate_exceeded(221, 1000, 0.2)
+    # Every item of two failing; one item alone does not tell.
+    assert failure_rate_exceeded(2, 2, 0.2) and not failure_rate_exceeded(1, 1, 0.2)
+    # 1.0 tolerates every failure, 0.0 none.
+    assert not failure_rate_exceeded(10, 10, 1.0)
+    assert failure_rate_exceeded(1, 100, 0.0)
+    assert not failure_rate_exceeded(0, 0, 0.0)
 
 
 def test_community_stage_without_report_failures_records_none(mocker) -> None:

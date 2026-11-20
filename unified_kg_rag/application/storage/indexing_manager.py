@@ -228,9 +228,18 @@ class IndexingManager:
         # away or dropped) and may not have deleted (a write failed, or it
         # was killed): this commit derives the items stored under them again.
         self._noted_retired: dict[str, set[str]] = {}
-        # The stored community reports a removal kept although they cite a
-        # removed text unit (see community_drift).
-        self.outdated_reports: set[str] = set()
+        # By suffix, the stored community reports a removal kept although
+        # they cite a removed text unit (see community_drift), and those it
+        # deleted (every text unit they cite is gone): the build record's
+        # outdated_reports adds the first and takes out the second.
+        self.outdated_reports: dict[str, set[str]] = {}
+        self.deleted_reports: dict[str, set[str]] = {}
+        # By suffix, the stored entities a removal stripped of some text
+        # units (a kept report's member may cite none of the report's units
+        # once stripped: the refresh looks at them too), and the reports the
+        # refresh wrote again or deleted (out of outdated_reports).
+        self.stripped_entities: dict[str, set[str]] = {}
+        self.refreshed_reports: dict[str, set[str]] = {}
         # By suffix, the stored communities this run's removals deleted
         # (the build record's community counters subtract them).
         self.deleted_communities: dict[str, set[str]] = {}
@@ -1211,6 +1220,9 @@ class IndexingManager:
         failed before its commit measured, counted or collected them)."""
         self.discard_retired_ids()
         self.outdated_reports.clear()
+        self.deleted_reports.clear()
+        self.stripped_entities.clear()
+        self.refreshed_reports.clear()
         self.deleted_communities.clear()
         self._removed_record_keys.clear()
         self._offered_summaries.clear()

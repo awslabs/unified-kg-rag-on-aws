@@ -516,6 +516,8 @@ class FakeVectorStore(_Recorder):
         self.builds: dict[str, IndexBuildRecord] = {}
         # The extraction store: (suffix, key) -> record payload.
         self.extraction_records: dict[tuple[str, str], dict[str, Any]] = {}
+        # (suffix, id) of the community reports flagged outdated.
+        self.outdated_reports: set[tuple[str, str]] = set()
 
     def clear(self, suffixes: list[str]) -> None:
         # Only the given suffixes' documents, like the per-alias delete.
@@ -746,7 +748,35 @@ class FakeVectorStore(_Recorder):
         return self._put("claims", claims)
 
     def upsert_community_reports(self, reports: list[Any]) -> IndexingStats:
+        # A report written again is no longer outdated.
+        self.outdated_reports -= {(BaseIndexer.get_suffix(r), r.id) for r in reports}
         return self._put("community_reports", reports)
+
+    def read_community_reports(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[Any] | None:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get("community_reports", {})
+        return [
+            bucket[i].model_copy(deep=True)
+            for i in sorted(set(ids))
+            if i in bucket and BaseIndexer.get_suffix(bucket[i]) == wanted
+        ]
+
+    def mark_reports_outdated(
+        self, report_ids: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get("community_reports", {})
+        stats = IndexingStats(total_items=len(set(report_ids)))
+        for report_id in sorted(set(report_ids)):
+            report = bucket.get(report_id)
+            if report is None or BaseIndexer.get_suffix(report) != wanted:
+                stats.add_error("document missing", ids=[report_id])
+                continue
+            self.outdated_reports.add((wanted, report_id))
+            stats.add_success()
+        return stats
 
     def _update(
         self, collection: str, items: list[Any], fields: tuple[str, ...]

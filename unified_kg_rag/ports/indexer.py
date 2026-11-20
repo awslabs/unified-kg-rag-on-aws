@@ -874,6 +874,28 @@ class VectorIndexer(BaseIndexer):
         nothing; adapters that override it raise when the read fails."""
         return IndexingStats()
 
+    def read_community_reports(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[CommunityReport] | None:
+        """The stored community reports ``ids`` of ``suffix`` (no vector;
+        an id not stored is absent), in no set order: an incremental run
+        writes an outdated one again from its community's place in the
+        hierarchy and its children's reports. ``None`` (the default) when the
+        backend cannot read them by id; adapters that override it raise
+        when the read fails."""
+        return None
+
+    def mark_reports_outdated(
+        self, report_ids: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Flag ``suffix``'s stored community reports ``report_ids`` outdated
+        in place (``REPORT_OUTDATED_FIELD``, no re-embedding): a removal kept
+        them for the other text units they cite, so they may state the
+        removed text, and a query reads the flag with the report. Writing a
+        report again (an upsert) drops it. One item per report. Default
+        flags nothing."""
+        return IndexingStats()
+
     def read_text_unit_ids(
         self, ids: list[str], suffix: str | None = None
     ) -> list[str] | None:
