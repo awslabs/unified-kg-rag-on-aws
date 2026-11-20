@@ -363,10 +363,11 @@ def item_failed_indices(
     is_item_error: ItemErrorPredicate,
     task: str,
     batch_processor: BatchProcessor,
-    prepare_inputs: Callable[[list[TextUnit]], list[dict[str, Any]]],
+    prepare_inputs: Callable[[list[Any]], list[dict[str, Any]]],
     invoke: Callable[[dict[str, Any]], Any],
     *,
     counted: bool = True,
+    known_good: Any = None,
 ) -> list[int]:
     """The indices, of the batch of ``units``, whose ``errors`` count
     against their document (``is_item_error``).
@@ -389,6 +390,9 @@ def item_failed_indices(
     the answer must also parse; for a rejection, being answered is enough.
     ``counted=False`` (claims, which are optional) only words the warnings
     so: their documents are indexed without them, counted for none.
+    ``known_good`` is the item of that request when the items are not text
+    units (a community report's input; ``units`` then carry each item's
+    documents), else :func:`known_good_unit`.
 
     The request is neither served from nor stored in the run's LLM response
     cache (``uncached_responses``): a response an earlier run cached for it
@@ -427,7 +431,7 @@ def item_failed_indices(
 
         with uncached_responses():
             passed = batch_processor.answered(
-                known_good_unit(),
+                known_good if known_good is not None else known_good_unit(),
                 prepare_inputs,
                 invoke,
                 f"{task} (known-good request)",

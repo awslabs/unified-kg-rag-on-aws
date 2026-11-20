@@ -18,6 +18,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     usage_model_id,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.adapters.llm.retry import (
+    item_error_predicate,
+    item_failed_indices,
+)
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
@@ -154,6 +158,14 @@ class CommunityDetector:
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_config(self.config, self.factory)
+        self.is_item_error = item_error_predicate(self.factory)
+        # The communities of the last generate_reports whose report failed
+        # for an error of its own (output cut off or that does not parse, a
+        # request rejected for its content: item_failed_indices), which
+        # indexing.max_document_failures counts against their documents;
+        # and the documents of each text unit, which tell them.
+        self.item_failed_community_ids: list[str] = []
+        self._unit_documents: dict[str, list[str]] = {}
 
         if self.community_detection_config.report_generation.enabled:
             parser = create_robust_xml_output_parser(
@@ -463,6 +475,10 @@ class CommunityDetector:
         self._report_descriptions = dict(descriptions or {})
         self._report_types = dict(types or {})
         self._report_records = records
+        self.item_failed_community_ids = []
+        self._unit_documents = {
+            unit.id: list(unit.document_ids or []) for unit in text_units or []
+        }
         try:
             logger.info("Generating reports for %s communities.", len(communities))
             start_time = time.time()
@@ -650,14 +666,19 @@ class CommunityDetector:
             index: record["response"] for index, record in stored.items()
         }
         if pending:
+            errors: dict[int, BaseException] = {}
             answers = self.batch_processor.execute_with_fallback(
                 items_to_process=[report_inputs[index] for index in pending],
                 prepare_inputs_func=self._create_report_chain_inputs,
                 sequential_func=self.report_generator.invoke,
                 task_name="Community report generation",
                 show_progress=self.show_progress,
+                errors=errors,
             )
             results.update(zip(pending, answers, strict=True))
+            self._record_item_failures(
+                errors, [communities[index] for index in pending]
+            )
         generated_at = datetime.now()
         new_records: dict[str, dict[str, Any]] = {}
 
@@ -698,6 +719,81 @@ class CommunityDetector:
         if new_records and self._report_records is not None:
             self._report_records.write_records({suffix: new_records})
         return reports, failed
+
+    def _record_item_failures(
+        self, errors: Mapping[int, BaseException], communities: list[Community]
+    ) -> None:
+        """Add to ``item_failed_community_ids`` the ``communities`` (a
+        batch, by index in ``errors``) whose report failed for an error of
+        its own, as the extraction stages tell their units'
+        (``item_failed_indices``: when every report failed alike, output
+        cut off on more than one document's counts, else one known-good
+        report request decides)."""
+        if not errors:
+            return
+        items = [
+            TextUnit.model_validate(
+                {
+                    "id": community.id,
+                    "text": "",
+                    "document_ids": sorted(
+                        {
+                            d
+                            for u in community.text_unit_ids or []
+                            for d in self._unit_documents.get(u, ())
+                        }
+                    ),
+                }
+            )
+            for community in communities
+        ]
+        own = item_failed_indices(
+            errors,
+            items,
+            self.is_item_error,
+            "Community report generation",
+            self.batch_processor,
+            self._create_report_chain_inputs,
+            self.report_generator.invoke,
+            known_good=self._known_good_report_input(),
+        )
+        self.item_failed_community_ids.extend(communities[i].id for i in own)
+
+    def _known_good_report_input(self) -> dict[str, Any]:
+        """The report input of the known-good request: two organizations
+        and the agreement between them (``retry.known_good_unit``'s text)."""
+        report_config = self.community_detection_config.report_generation
+        return {
+            "community_id": "known-good-request",
+            "entities": [
+                {
+                    "id": "vendor",
+                    "name": "Vendor Corp",
+                    "type": "organization",
+                    "description": "A supplier",
+                },
+                {
+                    "id": "buyer",
+                    "name": "Buyer Ltd",
+                    "type": "organization",
+                    "description": "A buyer",
+                },
+            ],
+            "relationships": [
+                {
+                    "source": "Vendor Corp",
+                    "target": "Buyer Ltd",
+                    "type": "supply agreement",
+                    "description": "Vendor Corp and Buyer Ltd signed a supply "
+                    "agreement in 2020.",
+                    "id": "agreement",
+                }
+            ],
+            "claims": [],
+            "sub_community_reports": [],
+            "content_length": report_config.content_length,
+            "target_language": language_name(index_language(self.config)),
+        }
 
     def _generate_reports_flat(
         self, communities: list[Community], graph_attributes: dict[str, Any]

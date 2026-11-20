@@ -2308,6 +2308,21 @@ class _StoredMembers(NamedTuple):
     unattributed: dict[str, Entity]
 
 
+def _base_level_units(communities: Sequence[Community], ids: set[str]) -> list[str]:
+    """The text units of the base-level ``communities`` among ``ids``, but
+    a seed graph's: a failed report never imports a seed shard again (its
+    statements need no model call)."""
+    return sorted(
+        {
+            unit_id
+            for community in communities
+            if community.id in ids and str(community.level) == "0"
+            for unit_id in community.text_unit_ids or []
+            if not is_seed_unit(unit_id)
+        }
+    )
+
+
 def _in_suffix(entity: Entity, suffix: str) -> Entity:
     """``entity`` (a copy) tagged with the index ``suffix`` it was read
     from, as the indexing groups items."""
@@ -2395,7 +2410,13 @@ class CommunityDetectionStage(_RegistryStage):
 
         Their documents are recorded FAILED, so the next incremental run
         re-processes them and generates the missing reports, the same way an
-        extraction failure is retried. A failed parent-level report is only
+        extraction failure is retried; a report that failed for an error of
+        its own (cut off, output that does not parse: the detector's
+        ``item_failed_community_ids``) counts toward
+        ``indexing.max_document_failures`` as an extraction's does, so one
+        that fails alike every run stops being retried (the stage records
+        those units in ``item_failed_text_unit_ids`` first, which a failed
+        stage records too). A failed parent-level report is only
         logged (and counted in the stage metrics): a parent spans many
         base-level communities, so recording its text units would re-extract
         most of the corpus on the next run for one report. More failures
@@ -2421,8 +2442,9 @@ class CommunityDetectionStage(_RegistryStage):
                 own_text=True,
             )
         failed_ids = set(failed_community_ids)
-        failed = [c for c in communities if c.id in failed_ids]
-        parents = [c.id for c in failed if str(c.level) != "0"]
+        parents = [
+            c.id for c in communities if c.id in failed_ids and str(c.level) != "0"
+        ]
         if parents:
             logger.warning(
                 "%s parent-level community report(s) failed and are missing "
@@ -2430,15 +2452,7 @@ class CommunityDetectionStage(_RegistryStage):
                 len(parents),
                 ", ".join(parents),
             )
-        return sorted(
-            {
-                unit_id
-                for community in failed
-                if str(community.level) == "0"
-                for unit_id in community.text_unit_ids or []
-                if not is_seed_unit(unit_id)
-            }
-        )
+        return _base_level_units(communities, failed_ids)
 
     def _allows_empty_output(self, context: PipelineContext) -> bool:
         """Also when every entity is in a component too small to cluster.
@@ -2793,6 +2807,10 @@ class CommunityDetectionStage(_RegistryStage):
 
         context.communities = community_objects
         context.community_reports = community_reports
+        # Counted against their documents, failed stage or not.
+        context.item_failed_text_unit_ids[self.name] = _base_level_units(
+            evidenced, set(self.detector.item_failed_community_ids)
+        )
         context.failed_text_unit_ids[self.name] = self._check_report_failures(
             evidenced, failed_community_ids
         )

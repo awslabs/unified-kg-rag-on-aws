@@ -284,6 +284,10 @@ Bugs present in 0.3.0.
   which the indexer defines in each index from built-in components (no plugin;
   `adapters/storage/opensearch_analysis.py`) and tokenizes as the embedded engine and `nori` do (every term found).
   Japanese and Chinese were not affected.
+- A base-level community report that failed for an error of its own (cut off at the output limit, output that does
+  not parse) recorded its documents `FAILED` uncounted, so every incremental run processed them again and, at
+  temperature 0, failed the same way. It now counts toward `indexing.max_document_failures`, as an extraction's own
+  error does (an outage still counts for none).
 - Community detection failed a small delta on noise: its gate compared the share of reports without one to
   `indexing.max_failure_rate`, so a 5-document delta failed with 4 of 11 reports cut off where its full build passed
   with 6 of 59 at the same chance per report. The gate now reads the rate as that chance and fails when more reports
@@ -294,8 +298,8 @@ Bugs present in 0.3.0.
   documents, and once the run ended nothing said so (`rebuild_due_reasons` 0: the WARNING and the drift metric were
   the only trace). The incremental run now writes such a report again from its community's remaining members, by the
   summary tree's rule (a parent's too; a community without a member left loses its report), as a full build's
-  detector reads them, one model call each in the indexing stage's usage and the run's `processing.max_run_*` budget
-  (none when the input is unchanged: the answer is kept in the extraction store). One it cannot write again stays
+  detector reads them, one model call each in the indexing stage's usage and the run's budget (none when the input
+  is unchanged: the answer is kept in the extraction store). One it cannot write again stays
   flagged `outdated` in the stores (a query reads it in the report's source metadata, and on a global key point drawn
   from it), listed in the build record (`outdated_reports`) and named by every reader of the record as a
   `communities` rebuild reason (`settings: [community_reports]`, remedy `next_run`) whatever

@@ -1116,7 +1116,10 @@ A document is recorded `FAILED` in five cases:
   failed parent-level report only logs a WARNING and counts in
   `reports_failed`; with more reports failed than a chance of
   `indexing.max_failure_rate` per report explains, a one-sided binomial test
-  at 5%, community detection fails);
+  at 5%, community detection fails). A report that failed for an error of its
+  own (cut off, output that does not parse, a request rejected for its
+  content) counts toward `indexing.max_document_failures`, as an
+  extraction's does;
 - an artifact stage (translation through community detection) crashed in a
   `--continue-on-error` run, which records every document of the run `FAILED`;
 - writing one of its text units to the stores failed (another artifact's
