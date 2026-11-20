@@ -797,7 +797,12 @@ class IncrementalIndexer:
         unclustered_entities: int = 0,
     ) -> CommunityDrift | None:
         """Measure and log the commit's community drift (see community_drift)."""
-        outdated = self.indexing_manager.outdated_reports
+        # The build record lists them (IndexingStage._record_build).
+        outdated = [
+            report_id
+            for _, ids in sorted(self.indexing_manager.outdated_reports.items())
+            for report_id in sorted(ids)
+        ]
         if not communities and not outdated:
             return None
         drift = measure_community_drift(
@@ -807,7 +812,6 @@ class IncrementalIndexer:
             outdated,
             unclustered_entities,
         )
-        outdated.clear()
         if drift is None:
             return None
         if drift.rebuild_recommended:

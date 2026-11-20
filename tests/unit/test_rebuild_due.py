@@ -221,3 +221,62 @@ def test_summaries_switched_on_since_the_build_say_so() -> None:
     changed.models.roles.community_report = changed.tier_model_id("fast")
     (reason,) = rebuild_reasons(_record(Config()), changed)
     assert "under other settings (their model, prompt or language)" in reason.detail
+
+
+def test_reports_kept_after_a_deletion_are_a_reason_whatever_the_drift_setting() -> (
+    None
+):
+    # B-2: the run that kept them recorded no reason (it was tied to
+    # on_drift_recommendation, off by default, and no record kept it).
+    config = Config()
+    assert not config.indexing.community_compaction.on_drift_recommendation
+    (reason,) = rebuild_reasons(
+        _record(config, outdated_reports=["report-1", "report-2"]), config
+    )
+    assert reason.kind is RebuildReasonKind.COMMUNITIES
+    assert reason.remedy is RebuildRemedy.RESET
+    assert reason.settings == [IndexArtifact.COMMUNITY_REPORTS.value]
+    assert reason.detail.startswith("2 community reports were kept")
+    # None left, or a record from before the field: no reason.
+    assert rebuild_reasons(_record(config, outdated_reports=[]), config) == []
+    assert rebuild_reasons(_record(config, outdated_reports=None), config) == []
+    # A namespace without the reports has none to be outdated.
+    lightrag = config.model_copy(deep=True)
+    lightrag.indexing.methodologies = [Methodology.LIGHTRAG]
+    record = _record(lightrag, outdated_reports=["report-1"])
+    assert rebuild_reasons(record, lightrag) == []
+
+
+def test_the_record_keeps_the_outdated_reports_until_a_run_writes_them() -> None:
+    config = Config()
+    full = _record(config, outdated_reports=[])
+
+    def delta(outdated: list[str], written: list[str]) -> IndexBuildRecord:
+        return IndexBuildRecord(
+            pipeline_id="delta",
+            mode="incremental",
+            built_at=datetime.now(UTC),
+            documents=1,
+            extraction_fingerprint="x",
+            outdated_reports=outdated,
+            reports_written=written,
+        )
+
+    first = delta(["r1", "r2"], []).over(full)
+    assert first.outdated_reports == ["r1", "r2"]
+    # A later run adds its own and takes out those it deleted or wrote.
+    second = delta(["r3"], ["r1"]).over(first.model_dump(mode="json"))
+    assert second.outdated_reports == ["r2", "r3"]
+    # Written again by the same run (a resumed one): the same record.
+    again = delta(["r3"], ["r1"]).over(second.model_dump(mode="json"))
+    assert again.outdated_reports == ["r2", "r3"]
+    # Not stored: the next record does not take them out again.
+    assert "reports_written" not in second.model_dump(mode="json")
+    # A full build writes every report.
+    rebuilt = IndexBuildRecord.model_validate(_record(config, outdated_reports=[]))
+    assert rebuilt.over(second.model_dump(mode="json")).outdated_reports == []
+    # A record from before the field and a delta that kept none tell nothing.
+    old = {k: v for k, v in full.items() if k != "outdated_reports"}
+    assert delta([], []).over(old).outdated_reports == []
+    unknown = delta([], []).model_copy(update={"outdated_reports": None})
+    assert unknown.over(old).outdated_reports is None

@@ -284,6 +284,13 @@ Bugs present in 0.3.0.
   which the indexer defines in each index from built-in components (no plugin;
   `adapters/storage/opensearch_analysis.py`) and tokenizes as the embedded engine and `nori` do (every term found).
   Japanese and Chinese were not affected.
+- A community report written partly from a deleted or edited document was kept for the other documents' text units
+  and served as it was: local, global and DRIFT answers could state the removed text, cited to the remaining
+  documents, and once the run ended nothing said so (`rebuild_due_reasons` 0: the WARNING and the drift metric were
+  the only trace). The removal now flags such a report `outdated` in the stores (a query reads it in the report's
+  source metadata, and on a global key point drawn from it), the build record lists them (`outdated_reports`, kept
+  until a run writes or deletes them) and every reader of the record names them as a `communities` rebuild reason
+  (`settings: [community_reports]`), whatever `on_drift_recommendation` says.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server

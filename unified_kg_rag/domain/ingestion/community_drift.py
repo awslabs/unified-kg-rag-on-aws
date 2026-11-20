@@ -14,7 +14,9 @@ entity's level-0 communities is the number of clusterings that placed it.
 A run that removes text units (a deleted or edited document) deletes the
 communities and reports citing only them, but keeps the ones citing other
 text units too: their reports were written from the removed text and may
-still state it. Only a rebuild writes them again.
+still state it. The removal flags them outdated in the stores and the build
+record lists them (``IndexBuildRecord.outdated_reports``, a rebuild reason
+until a run writes them again).
 
 Across runs, the build record's community counters (``CommunityCounters``)
 count the incremental commits and the communities since the last full

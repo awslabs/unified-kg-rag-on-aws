@@ -35,6 +35,7 @@ __all__ = [
     "FINDINGS_RECORD_IDS_FIELD",
     "FINDINGS_TEXT_UNITS_FIELD",
     "REPORT_FINDINGS_FIELD",
+    "REPORT_OUTDATED_FIELD",
     "findings_record_ids",
     "repointed_findings",
     "report_cited_ids",
@@ -56,6 +57,13 @@ REPORT_FINDINGS_FIELD = "findings"
 # collide), so the stores can find the reports citing an id an incremental
 # run re-keyed and point them at its new id (``repointed_findings``).
 FINDINGS_RECORD_IDS_FIELD = "findings_record_ids"
+
+# The stored community report's flag (``true``) once a run removed text it
+# was written from (a deleted or edited document's) and kept it for the text
+# units it cites besides: it may state the removed text until it is written
+# again, which drops the flag (``IndexBuildRecord.outdated_reports`` lists
+# them). A query reads it with the report, in the report's metadata.
+REPORT_OUTDATED_FIELD = "outdated"
 
 # Set by the search strategies on a retrieved report whose findings cite
 # stored records: the text units and documents of those records, which its

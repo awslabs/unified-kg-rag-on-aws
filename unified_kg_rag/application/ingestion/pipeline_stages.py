@@ -2924,6 +2924,7 @@ class IndexingStage(_RegistryStage):
                     context,
                     text_units,
                     communities,
+                    community_reports,
                     tree_pruned=_tree_pruned(results),
                     rewrite=write == "rewrite",
                 )
@@ -3083,6 +3084,7 @@ class IndexingStage(_RegistryStage):
                     context,
                     text_units,
                     communities,
+                    community_reports,
                     tree_pruned=_tree_pruned(indexing_results),
                     rewrite=write == "rewrite",
                 )
@@ -3256,6 +3258,7 @@ class IndexingStage(_RegistryStage):
         context: PipelineContext,
         text_units: list[TextUnit],
         communities: Sequence[Community] = (),
+        community_reports: Sequence[CommunityReport] = (),
         tree_pruned: bool = True,
         rewrite: bool = False,
     ) -> dict[str, IndexBuildRecord] | None:
@@ -3286,6 +3289,12 @@ class IndexingStage(_RegistryStage):
         a read of them fails), the documents the registry records, and
         community counters started from the reports stored, not what the
         config would build.
+
+        A full build writes every report (no outdated one); an incremental
+        record adds the stored reports its removals kept although they cite
+        a removed text unit and takes out those it deleted or wrote
+        (``community_reports``): ``IndexBuildRecord.outdated_reports``, which
+        ``rebuild_due`` reports. A rewritten record does not know them.
         """
         delta = context.incremental_delta
         incremental = is_incremental_build(context, self.config)
@@ -3349,6 +3358,10 @@ class IndexingStage(_RegistryStage):
             ),
         ).with_artifacts(artifacts)
         deleted = self.indexing_manager.deleted_communities
+        manager = self.indexing_manager
+        written_reports: dict[str, set[str]] = defaultdict(set)
+        for report in community_reports:
+            written_reports[BaseIndexer.get_suffix(report)].add(report.id)
         # Written by a delta (an incremental run, or one whose scope the
         # registry knew no document of): counted once per commit.
         commit = (
@@ -3374,6 +3387,15 @@ class IndexingStage(_RegistryStage):
                     commit=commit,
                     added=added[suffix],
                     deleted=len(deleted.get(suffix, ())),
+                )
+            if not rewritten:
+                update["outdated_reports"] = (
+                    sorted(manager.outdated_reports.get(suffix, ()))
+                    if commit is not None
+                    else []
+                )
+                update["reports_written"] = sorted(
+                    written_reports[suffix] | manager.deleted_reports.get(suffix, set())
                 )
             if not incremental and (not rewritten or added[suffix]):
                 update["communities"] = CommunityCounters(

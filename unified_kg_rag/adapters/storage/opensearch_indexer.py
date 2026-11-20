@@ -10,6 +10,7 @@ from array import array
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Collection, Hashable, Iterator, Mapping
 from functools import cached_property
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import numpy as np
@@ -42,6 +43,7 @@ from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.ingestion.report_references import (
     FINDINGS_RECORD_IDS_FIELD,
     REPORT_FINDINGS_FIELD,
+    REPORT_OUTDATED_FIELD,
     findings_record_ids,
     repointed_findings,
 )
@@ -1745,6 +1747,22 @@ class OpenSearchIndexer(VectorIndexer):
             units,
             prefix,
             lambda u: {"community_ids": list(u.community_ids or [])},
+            with_filters=False,
+        )
+
+    def mark_reports_outdated(
+        self, report_ids: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Flag the stored reports ``report_ids`` outdated in place (see the
+        port): a partial update of that field alone."""
+        attributes = {Constants.INDEX.value: suffix} if suffix else None
+        return self._update_fields(
+            [
+                SimpleNamespace(id=report_id, attributes=attributes)
+                for report_id in sorted(set(report_ids))
+            ],
+            self.opensearch_config.community_reports_index_prefix,
+            lambda _: {REPORT_OUTDATED_FIELD: True},
             with_filters=False,
         )
 

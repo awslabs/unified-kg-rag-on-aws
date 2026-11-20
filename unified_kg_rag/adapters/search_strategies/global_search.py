@@ -37,6 +37,7 @@ from unified_kg_rag.adapters.store_errors import (
     is_fatal_retrieval_error,
 )
 from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
+from unified_kg_rag.domain.ingestion.report_references import REPORT_OUTDATED_FIELD
 from unified_kg_rag.domain.models import (
     Config,
     Methodology,
@@ -1283,6 +1284,15 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                         "report_ids": [
                             str(r.source) for r in credited if r.source is not None
                         ],
+                        # Drawn from a report a removal left outdated.
+                        **(
+                            {REPORT_OUTDATED_FIELD: True}
+                            if any(
+                                (r.metadata or {}).get(REPORT_OUTDATED_FIELD)
+                                for r in credited
+                            )
+                            else {}
+                        ),
                         **lineage,
                     },
                 )

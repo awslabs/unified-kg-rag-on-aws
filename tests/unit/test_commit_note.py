@@ -184,7 +184,9 @@ def _with_run_state(manager: IndexingManager) -> IndexingManager:
     }
     for field, value in by_suffix.items():
         getattr(manager, field)["default"] = value
-    for field in ("_fresh", "_rank_only", "_commit_note_suffixes", "outdated_reports"):
+    manager.outdated_reports["default"] = {"report-1"}
+    manager.deleted_reports["default"] = {"report-2"}
+    for field in ("_fresh", "_rank_only", "_commit_note_suffixes"):
         getattr(manager, field).add("default")
     manager._rank_only_copies[("default", "r1")] = {"rank": 2}
     return manager
@@ -216,7 +218,8 @@ def test_a_commit_ends_without_its_derivation_decisions(end: str) -> None:
     assert {f: getattr(manager, f) for f in _DECISIONS} == {
         f: type(getattr(manager, f))() for f in _DECISIONS
     }
-    assert manager.outdated_reports == {"default"}
+    assert manager.outdated_reports == {"default": {"report-1"}}
+    assert manager.deleted_reports == {"default": {"report-2"}}
     assert manager._removed_record_keys == {"default": {"e1"}}
     # A discarded commit's note is not deleted (a retry finishes from it).
     assert manager._commit_note_suffixes == (
@@ -229,7 +232,12 @@ def test_a_run_starts_without_anything_an_earlier_run_left() -> None:
 
     manager.reset_run_state()
 
-    for field in (*_DECISIONS, "_commit_note_suffixes", "outdated_reports"):
+    for field in (
+        *_DECISIONS,
+        "_commit_note_suffixes",
+        "outdated_reports",
+        "deleted_reports",
+    ):
         assert not getattr(manager, field), field
     assert manager._removed_record_keys == {}
 

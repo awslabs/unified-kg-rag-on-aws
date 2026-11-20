@@ -358,6 +358,22 @@ def test_reduce_hands_the_ranked_points_to_the_answer_model() -> None:
     assert out[0].metadata["citable"] is False
 
 
+def test_a_point_drawn_from_an_outdated_report_is_flagged_outdated() -> None:
+    # B-2: a report a removal kept (it may state a deleted document's text)
+    # is flagged where it is read; a point the map drew from it is too.
+    strat = _strategy()
+    reports = _communities(2)
+    reports[1].metadata["outdated"] = True
+    points = [
+        _MapPoint("from the current one", 90, batch=0, report_ids=["1"]),
+        _MapPoint("from the outdated one", 80, batch=0, report_ids=["2"]),
+    ]
+    out = strat._reduce_from_points(points, reports, [reports])
+    first, second = _points(out)
+    assert "outdated" not in first.metadata
+    assert second.metadata["outdated"] is True
+
+
 def test_global_search_builds_no_reduce_chain() -> None:
     # The reduce LLM call is gone: the strategy builds the map chain only (it
     # built the reduce chain even with the reduce call off).
