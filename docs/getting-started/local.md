@@ -158,7 +158,7 @@ local stores. It needs the `console` extra and a build of its web client
 (Node.js 20.19 or later); `--backend local` works without a config file, as
 for the commands above:
 
-```bash
+```sh
 uv sync --no-dev --inexact --extra console
 (cd console/web && npm ci && npm run build)
 uv run --no-dev run-console --backend local --source-directory .

@@ -143,7 +143,7 @@ uv run --no-dev run-eval --backend local --data-path sample-eval.json --search-s
 웹 클라이언트 빌드(Node.js 20.19 이상)가 필요하며, 위 명령처럼 `--backend local`이면 설정
 파일 없이 동작합니다.
 
-```bash
+```sh
 uv sync --no-dev --inexact --extra console
 (cd console/web && npm ci && npm run build)
 uv run --no-dev run-console --backend local --source-directory .
