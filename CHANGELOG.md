@@ -256,9 +256,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   dashboard sums and prices the embedding role's and model's rows too, and names an embedding model without a price.
 - With tracing on, `run-eval` reports per-span latency (`stage_latency_seconds`: answers, mean, p50, p95) in the run
   summary and per comparison strategy, from each answer's `stage_seconds`.
-- `search.hybrid.lexical_fuzziness` (default `AUTO`, the fixed value before; `AUTO:<low>,<high>`, `1`, `2`, or `0` to
-  match exactly): the OpenSearch fuzziness of a short lexical query. A synthetic name-lookup A/B (dev and held-out
-  splits) found no value better on both exact and misspelled names, so the default is unchanged
+- `search.hybrid.lexical_fuzziness` (default `AUTO`, the fixed value before; `AUTO:<low>,<high>` with low <= high,
+  each at most 2^31-1, as OpenSearch parses it, `1`, `2`, or `0` to match exactly): the OpenSearch fuzziness of a
+  short lexical query; a value OpenSearch refuses is refused when the config loads. A synthetic name-lookup A/B (dev
+  and held-out splits) found no value better on both exact and misspelled names, so the default is unchanged
   ([Defaults and evidence](docs/concepts/defaults-and-evidence.md#lexical-fuzziness)).
 - A per-query audit record: every query (an answer or a search, failed, timed out, refused or a stream closed early
   included) writes one INFO record on the `unified_kg_rag.audit` logger from the chain, so every surface writes the

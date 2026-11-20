@@ -266,10 +266,33 @@ def test_build_lexical_query_fuzziness_zero_matches_exactly(retriever) -> None:
     assert "max_expansions" not in main
 
 
-@pytest.mark.parametrize("value", ["auto", "3", "AUTO:4", "AUTO:a,b", "", "-1"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "auto",
+        "3",
+        "AUTO:4",
+        "AUTO:a,b",
+        "",
+        "-1",
+        # OpenSearch 2.19.7 refuses these at query time (the pattern took
+        # them): low above high, and a bound past a Java int.
+        "AUTO:6,3",
+        "AUTO:2147483648,1",
+        "AUTO:1,2147483648",
+    ],
+)
 def test_lexical_fuzziness_must_be_an_opensearch_fuzziness(value: str) -> None:
     with pytest.raises(ValueError, match="lexical_fuzziness"):
         Config.model_validate({"search": {"hybrid": {"lexical_fuzziness": value}}})
+
+
+@pytest.mark.parametrize(
+    "value", ["AUTO", "0", "2", "AUTO:0,0", "AUTO:3,3", "AUTO:2147483647,2147483647"]
+)
+def test_every_fuzziness_opensearch_takes_loads(value: str) -> None:
+    config = Config.model_validate({"search": {"hybrid": {"lexical_fuzziness": value}}})
+    assert config.search.hybrid.lexical_fuzziness == value
 
 
 @pytest.mark.parametrize("text", ["가나다상사", "青空海運", "カタカナ", "가나다 Corp"])
