@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the 99-report cap steps it to the same cut, which `global_cut_depth` may name one lower); with
   `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
   coarser roots. Stored reports keep their depth until a reset (*Upgrading*).
+- The CLIs log to stderr in text mode too, so stdout holds only a run's output (`run-rag ... > answer.txt` keeps the
+  answer alone); `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
+  stderr (`2>&1` keeps both on one stream).
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.

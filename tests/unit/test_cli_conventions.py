@@ -243,7 +243,8 @@ def test_cli_logging_follows_the_flags(
         **(overrides or {}),
     }
     assert (effective["level"], effective["log_format"]) == (level, log_format)
-    assert (kwargs["stream"] is sys.stderr) is ("json" in flags)
+    # The logs go to stderr in either output format: stdout is the output's.
+    assert kwargs["stream"] is sys.stderr
 
 
 @pytest.mark.parametrize("cli", ALL_PARSERS)

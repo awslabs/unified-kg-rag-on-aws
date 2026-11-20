@@ -93,9 +93,10 @@ uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query 
 `--verbose` prints, after the answer, the query's extracted entities,
 every source it used (each numbered with its type, `entity`,
 `relationship` or `text`, its name or file, its score and a snippet) and
-the retrieval metrics. The commands log every step at `INFO`; prefix
-them with `UKR__LOGGING__LEVEL=WARNING` to keep only warnings and the
-result.
+the retrieval metrics. The commands log every step at `INFO` to stderr
+(stdout holds only the result, so `> answer.txt` keeps the answer alone);
+prefix them with `UKR__LOGGING__LEVEL=WARNING` or pass `--log-level WARNING`
+to see only warnings next to the result.
 
 With the `cross-encoder` extra, the first query downloads the default rerank
 model, the cross-encoder `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, from

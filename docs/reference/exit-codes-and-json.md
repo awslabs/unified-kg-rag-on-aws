@@ -118,6 +118,8 @@ are flushed first, and a process pool's workers are ended with it.
 
 ## JSON output
 
+In either output format the logs go to stderr, so stdout holds only the
+run's output: `run-rag --query ... > answer.txt` keeps the answer alone.
 `--output-format json` prints one JSON document to stdout and moves the
 banner, progress and logs to stderr, so the output pipes into `jq`; the EMF
 records of `--metrics-sink cloudwatch` go to stderr too. Every document

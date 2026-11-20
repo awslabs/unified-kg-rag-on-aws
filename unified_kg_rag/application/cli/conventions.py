@@ -681,17 +681,18 @@ def add_log_level_and_version_arguments(parser: argparse.ArgumentParser) -> None
 
 def setup_cli_logging(config: Any, args: argparse.Namespace) -> None:
     """``setup_logging`` for a CLI run: ``--log-level`` over
-    ``logging.level``; with ``--output-format json`` the logs go to stderr,
-    and in text mode, unless ``logging.log_format`` is set (a deployment
-    sets ``structured``), they are plain lines, not JSON records between
-    the CLI's own output."""
+    ``logging.level``; the logs go to stderr in either output format, so
+    stdout carries only the run's output (``> answer.txt`` keeps the
+    answer alone), and in text mode, unless ``logging.log_format`` is set
+    (a deployment sets ``structured``), they are plain lines, not JSON
+    records."""
     overrides: dict[str, Any] = {}
     if level := getattr(args, "log_level", None):
         overrides["level"] = level
     as_json = getattr(args, "output_format", "text") == "json"
     if not as_json and "log_format" not in config.logging.model_fields_set:
         overrides["log_format"] = "plain"
-    setup_logging(config, overrides or None, stream=sys.stderr if as_json else None)
+    setup_logging(config, overrides or None, stream=sys.stderr)
 
 
 def json_output(args: argparse.Namespace) -> bool:
