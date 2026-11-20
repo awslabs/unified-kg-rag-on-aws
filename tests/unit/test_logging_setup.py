@@ -63,6 +63,17 @@ def test_reinit_applies_config_level(stream: io.StringIO) -> None:
     assert [r["event"] for r in _records(stream)] == ["shown 1"]
 
 
+def test_without_a_stream_the_logs_go_to_stderr(
+    stream: io.StringIO, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # stdout is the CLI's output (an answer, a JSON result), never the logs'.
+    setup_logging(_config())
+    get_logger("unified_kg_rag.test_default_stream").warning("to stderr")
+    captured = capsys.readouterr()
+    assert "to stderr" in captured.err
+    assert "to stderr" not in captured.out
+
+
 def test_foreign_records_are_json_with_bound_context(stream: io.StringIO) -> None:
     setup_logging(_config(), stream=stream)
     with bound_contextvars(pipeline_id="p-1", stage="graph_extraction"):

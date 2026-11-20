@@ -86,8 +86,9 @@ uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query 
 
 `--verbose`는 답변 뒤에 질의에서 추출한 엔티티, 답변에 쓴 근거 전체(번호마다 유형인 `entity`,
 `relationship`, `text`와 이름 또는 파일, 점수, 발췌)와 검색 지표를 출력합니다. 명령은 모든 단계를
-`INFO`로 기록하므로, 경고와 결과만 보려면 명령 앞에 `UKR__LOGGING__LEVEL=WARNING`을
-붙이세요.
+`INFO`로 stderr에 기록합니다(stdout에는 결과만 있으므로 `> answer.txt`로 답변만 저장할 수
+있습니다). 결과 옆에 경고만 보려면 명령 앞에 `UKR__LOGGING__LEVEL=WARNING`을 붙이거나
+`--log-level WARNING`을 주세요.
 
 `cross-encoder` extra가 있으면 첫 질의는 기본 재순위화 모델인 크로스 인코더
 `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`을 Hugging Face에서 내려받으므로 한 번은 인터넷 연결이 필요하고 시간이 더 걸립니다. 이후

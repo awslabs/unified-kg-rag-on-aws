@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess  # nosec B404 - runs this environment's console scripts
 import sys
@@ -131,6 +132,19 @@ def _ok(result: subprocess.CompletedProcess[str]) -> subprocess.CompletedProcess
     return result
 
 
+# A line of the CLI's text-mode log (structlog's console renderer).
+LOG_LINE = re.compile(r"\[(debug|info|warning|error|critical) *\]")
+# run-ingestion's text-mode run (the workspace fixture's).
+_INGESTED: dict[str, subprocess.CompletedProcess[str]] = {}
+
+
+def _logs_on_stderr_only(result: subprocess.CompletedProcess[str]) -> None:
+    """Text mode: the logs go to stderr, stdout carries only the output."""
+    logged = [line for line in result.stdout.splitlines() if LOG_LINE.search(line)]
+    assert not logged, (result.args, logged[:5])
+    assert LOG_LINE.search(result.stderr), (result.args, result.stderr[-2000:])
+
+
 @pytest.fixture(scope="module")
 def workspace(tmp_path_factory: pytest.TempPathFactory, models: str) -> Path:
     """The demo workspace, ingested by run-ingestion (its real invocation)."""
@@ -155,6 +169,7 @@ def workspace(tmp_path_factory: pytest.TempPathFactory, models: str) -> Path:
     )
     # The run names the graph it exported for run-visualization.
     assert "Graph for run-visualization:" in ingested.stdout
+    _INGESTED["run-ingestion"] = ingested
     return root
 
 
@@ -446,6 +461,132 @@ def _console(workspace: Path) -> None:
             process.wait()
     stderr = process.stderr.read() if process.stderr else ""
     assert code in (0, 128 + signal.SIGTERM), (code, stderr[-4000:])
+
+
+def _console_text(workspace: Path) -> subprocess.CompletedProcess[str]:
+    """run-console in text mode until it prints its address, then stopped."""
+    process = subprocess.Popen(  # nosec B603 - this environment's console script
+        [
+            _executable("run-console"),
+            "--config-path",
+            "config.yaml",
+            "--source-directory",
+            ".",
+            "--port",
+            "0",
+            "--log-level",
+            "INFO",
+        ],
+        cwd=workspace,
+        env=_environment(workspace),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdout is not None
+    try:
+        lines: list[str] = []
+        while not (address := re.search(r"http://[^/\s]+", "".join(lines))):
+            line = process.stdout.readline()
+            assert line, "run-console closed stdout before serving"
+            lines.append(line)
+        _when_listening(f"{address.group(0)}/api/status", process)
+        process.send_signal(signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=60)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    return subprocess.CompletedProcess(
+        process.args, process.returncode, "".join(lines) + stdout, stderr
+    )
+
+
+# Each CLI's text-mode run whose stdout is its output (run-mcp-server's
+# stdout is the protocol's in any mode, which its invocation reads).
+TEXT_INVOCATIONS: dict[str, Any] = {
+    "run-ingestion": lambda workspace: _INGESTED["run-ingestion"],
+    "run-rag": lambda workspace: _ok(
+        _run(
+            workspace,
+            "run-rag",
+            "--config-path",
+            "config.yaml",
+            "--query",
+            "Who carries the lidar units to Kestrel Depot?",
+            "--search-strategy",
+            "local",
+        )
+    ),
+    "run-eval": lambda workspace: _ok(
+        _run(
+            workspace,
+            "run-eval",
+            "--config-path",
+            "config.yaml",
+            "--data-path",
+            "datasets/demo-eval.json",
+            "--search-strategy",
+            "local",
+        )
+    ),
+    "run-visualization": lambda workspace: _ok(
+        _run(
+            workspace,
+            "run-visualization",
+            "--config-path",
+            "config.yaml",
+            "--output-directory",
+            "viz-text",
+            "--renderers",
+            "static",
+            "--log-level",
+            "INFO",
+        )
+    ),
+    "run-prompt-tuning": lambda workspace: _ok(
+        _run(
+            workspace,
+            "run-prompt-tuning",
+            "--config-path",
+            "config.yaml",
+            "--source-directory",
+            "corpus",
+            "--output-path",
+            "tuned-text.yaml",
+            "--max-docs",
+            "3",
+        )
+    ),
+    "run-describe": lambda workspace: _ok(
+        _run(workspace, "run-describe", "--config-path", "config.yaml")
+    ),
+    "prepare-benchmark": lambda workspace: _ok(
+        _run(
+            workspace,
+            "prepare-benchmark",
+            "structural",
+            "--output-directory",
+            "bench-text",
+            "--log-level",
+            "INFO",
+        )
+    ),
+    "run-console": _console_text,
+}
+
+
+def test_every_text_mode_script_logs_to_stderr() -> None:
+    assert set(TEXT_INVOCATIONS) == set(_scripts()) - {"run-mcp-server"}
+
+
+@pytest.mark.parametrize("name", sorted(TEXT_INVOCATIONS))
+def test_text_mode_logs_go_to_stderr_and_output_to_stdout(
+    workspace: Path, name: str
+) -> None:
+    if name == "run-console" and not CONSOLE_INSTALLED:
+        pytest.skip("needs the console extra")
+    _logs_on_stderr_only(TEXT_INVOCATIONS[name](workspace))
 
 
 # Each console script's real invocation (run-ingestion's is the workspace

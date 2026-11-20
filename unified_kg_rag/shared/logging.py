@@ -358,7 +358,8 @@ class LoggingSetup:
 
         Called by the CLIs only (after loading ``--config-path``); importing the
         package never touches the root logger. A repeated call replaces only
-        the handlers a previous call added. ``stream`` defaults to stdout.
+        the handlers a previous call added. ``stream`` defaults to stderr, so
+        a CLI's stdout carries only its output (an answer, a JSON result).
         """
         log_config = config.logging
 
@@ -368,7 +369,7 @@ class LoggingSetup:
 
         log_level = getattr(logging, log_config.level.upper(), logging.INFO)
         structured = log_config.log_format == "structured"
-        stream = stream or sys.stdout
+        stream = stream or sys.stderr
 
         _configure_structlog()
 
