@@ -364,7 +364,7 @@ little higher (measured:
 arm answers the same dataset with the run's configuration under the
 overlay, a YAML mapping merged over it, as a chain of its own, with every
 `--search-strategy`, interleaved with the base runs. Repeat the flag for
-more arms; `,suffix=SUFFIX` queries another index namespace with the arm
+more arms; `,namespace=NAME` queries another index namespace with the arm
 (one ingested with other settings, say).
 
 ```bash

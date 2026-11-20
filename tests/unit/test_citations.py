@@ -809,7 +809,7 @@ async def test_the_answer_cites_numbered_sections_and_their_documents(
     config: Config,
 ) -> None:
     chain, store, prompts = _chain(config)
-    out = await chain.ainvoke(_query(suffix="tenant-a"))
+    out = await chain.ainvoke(_query(namespace="tenant-a"))
     system, human = prompts[-1]
     assert CITATION_INSTRUCTIONS in system
     assert "[1] Depot stores widgets for Vendor." in human

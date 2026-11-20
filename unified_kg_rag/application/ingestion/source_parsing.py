@@ -194,7 +194,7 @@ class SourceFileParser:
 
     @property
     def index_value(self) -> str | None:
-        return self.config.processing.document_parsing.index_value
+        return self.config.processing.document_parsing.namespace
 
     def source_digest(self, path: Path) -> str:
         """``path``'s source digest (its bytes and its extension's parser,

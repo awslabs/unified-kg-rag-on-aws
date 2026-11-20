@@ -503,7 +503,7 @@ class TestGraphSourceAttribution:
         )
         queries = [
             EvaluationQuery(
-                query_id="q1", question="Who ships?", metadata={"suffix": "v2"}
+                query_id="q1", question="Who ships?", metadata={"namespace": "v2"}
             )
         ]
         gts = [

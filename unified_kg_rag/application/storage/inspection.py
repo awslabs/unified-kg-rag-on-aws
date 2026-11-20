@@ -49,6 +49,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     SectionType,
 )
+from unified_kg_rag.domain.models.namespace import namespace_argument
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import TRANSLATED_TEXT_PREFIX
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -117,9 +118,12 @@ class RegistryDocument(BaseModel):
 class NamespaceDescription(NamespaceSummary):
     """What an index namespace holds (:func:`describe_namespace`)."""
 
-    suffix: str = Field(description="The index suffix (index_value)")
+    suffix: str = Field(
+        description="The namespace (processing.document_parsing.namespace, "
+        "--namespace); the key keeps its old name"
+    )
     namespace: str = Field(
-        description="The registry namespace: the suffix, indexing."
+        description="The registry namespace: the namespace, indexing."
         "additional_suffix and the store tag"
     )
     build: dict[str, Any] | None = Field(
@@ -221,22 +225,23 @@ class GraphExport(BaseModel):
 
 def describe_namespace(
     config: Config,
-    suffix: str | None = None,
+    namespace: str | None = None,
     *,
     providers: Providers | None = None,
     documents: Collection[DocStatus] = (),
+    suffix: str | None = None,
 ) -> NamespaceDescription:
-    """What the index namespace of ``suffix`` (default: the config's
-    ``index_value``, else ``default``) holds; see :class:`NamespaceDescription`.
+    """What ``namespace`` (default: the config's, else ``default``) holds;
+    see :class:`NamespaceDescription`. ``suffix`` is its deprecated alias.
     ``documents`` lists the registry's documents of those statuses
     (``failed``, ``quarantined``: what the runbook inspects).
 
     Raises:
-        ConfigurationError: ``suffix`` is not a safe name, or the vector
+        ConfigurationError: ``namespace`` is not a safe name, or the vector
             store keeps no index metadata.
         StoreConnectionError: A store cannot be reached.
     """
-    name = resolve_namespace(config, suffix)
+    name = resolve_namespace(config, namespace_argument(namespace, suffix))
     providers = providers or build_providers(config)
     vector = providers.build_vector_indexer()
     try:
@@ -469,16 +474,17 @@ def export_graph(
     config: Config,
     path: str | Path,
     *,
-    suffix: str | None = None,
+    namespace: str | None = None,
     format: ExportFormat = "jsonl",
     providers: Providers | None = None,
     page_size: int | None = None,
     max_items: int | None = None,
     include_text: bool = False,
     overwrite: bool = False,
+    suffix: str | None = None,
 ) -> GraphExport:
-    """Write the graph of ``suffix``'s namespace to ``path``, streamed from
-    the vector store a page at a time.
+    """Write the graph of ``namespace`` (``suffix``: its deprecated alias)
+    to ``path``, streamed from the vector store a page at a time.
 
     ``jsonl``: one JSON object per line, ``kind`` ``text``, ``entity``,
     ``relationship``, ``community`` (a community report: level, parent and
@@ -504,7 +510,7 @@ def export_graph(
     other item the text units it was extracted from.
 
     Raises:
-        ConfigurationError: An unknown ``format``, an unsafe ``suffix``, or
+        ConfigurationError: An unknown ``format``, an unsafe ``namespace``, or
             a vector store that cannot page its items.
         InvalidArgumentError: ``path`` exists and ``overwrite`` is not set.
         StoreConnectionError: The vector store cannot be reached.
@@ -521,7 +527,7 @@ def export_graph(
             f"'{target}' exists: pass overwrite=True to replace it, or name "
             "another file"
         )
-    name = resolve_namespace(config, suffix)
+    name = resolve_namespace(config, namespace_argument(namespace, suffix))
     providers = providers or build_providers(config)
     target.parent.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}

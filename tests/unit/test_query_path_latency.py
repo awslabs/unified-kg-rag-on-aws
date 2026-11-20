@@ -325,9 +325,9 @@ async def test_the_cache_is_keyed_by_the_namespace() -> None:
     # was asked the same question.
     factory = _Factory()
     chain = _chain(_config(), factory)
-    await _route(chain, "local", suffix="tenant-a")
-    await _route(chain, "local", suffix="tenant-b")
-    await _route(chain, "local", suffix="tenant-a")
+    await _route(chain, "local", namespace="tenant-a")
+    await _route(chain, "local", namespace="tenant-b")
+    await _route(chain, "local", namespace="tenant-a")
     assert factory.counts[EntityExtractionPrompt] == 2
     # Within an extraction scope (run-eval's), an arm on another namespace
     # shares the run's extraction: the pair compares the same keywords.
@@ -336,8 +336,8 @@ async def test_the_cache_is_keyed_by_the_namespace() -> None:
     )
 
     with extraction_cache_scope("run"):
-        await _route(chain, "local", suffix="tenant-a")
-        await _route(chain, "local", suffix="tenant-b")
+        await _route(chain, "local", namespace="tenant-a")
+        await _route(chain, "local", namespace="tenant-b")
     assert factory.counts[EntityExtractionPrompt] == 3
 
 
@@ -371,12 +371,12 @@ async def test_a_repeated_question_reuses_its_translation() -> None:
         extraction_cache_scope,
     )
 
-    await _route(chain, "naive", query=_JA_QUESTION, suffix="tenant-b")
+    await _route(chain, "naive", query=_JA_QUESTION, namespace="tenant-b")
     assert factory.counts[TranslationPrompt] == 2
     for repeat in ("r1", "r2"):
         with extraction_cache_scope(repeat):
-            await _route(chain, "naive", query=_JA_QUESTION, suffix="tenant-a")
-            await _route(chain, "naive", query=_JA_QUESTION, suffix="tenant-b")
+            await _route(chain, "naive", query=_JA_QUESTION, namespace="tenant-a")
+            await _route(chain, "naive", query=_JA_QUESTION, namespace="tenant-b")
     # One per repeat: a repeat samples the translation again.
     assert factory.counts[TranslationPrompt] == 4
 
@@ -391,8 +391,8 @@ async def test_concurrent_arms_share_one_translation_call() -> None:
     chain = _chain(_ja_on_en(), factory)
     with extraction_cache_scope("run"):
         states = await asyncio.gather(
-            _route(chain, "naive", query=_JA_QUESTION, suffix="a"),
-            _route(chain, "naive", query=_JA_QUESTION, suffix="b"),
+            _route(chain, "naive", query=_JA_QUESTION, namespace="a"),
+            _route(chain, "naive", query=_JA_QUESTION, namespace="b"),
         )
     assert factory.counts[TranslationPrompt] == 1
     assert {s["processed_query"].final_query for s in states} == {"translated"}

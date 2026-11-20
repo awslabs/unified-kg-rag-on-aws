@@ -179,7 +179,7 @@ def test_the_metrics_name_the_namespace_the_run_wrote() -> None:
     # Regression (rv24): only pipeline_id; the alarms could not be split
     # per namespace (tenant) in Logs Insights.
     pipe, sink = _stage_pipeline("indexing")
-    pipe.config.processing.document_parsing.index_value = "tenant-a"
+    pipe.config.processing.document_parsing.namespace = "tenant-a"
     pipe._emit_metrics(_metrics(), "pid")
     assert sink.dimensions == {"pipeline_id": "pid", "namespace": "tenant-a"}
 

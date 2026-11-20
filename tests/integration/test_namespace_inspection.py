@@ -492,12 +492,12 @@ def test_run_describe_names_a_wrong_suffix_on_stderr(
     captured = capsys.readouterr()
     err = " ".join(captured.err.split())
     assert "run-describe: error: The index namespace" in err
-    assert "holds no index: check --suffix" in err
+    assert "holds no index: check --namespace" in err
     # The namespaces ingested, as run-rag lists them (rv27).
     from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 
     held = resolve_namespace(config, None)
-    assert f"Suffixes ingested on this store: {held}" in err
+    assert f"Namespaces ingested on this store: {held}" in err
 
 
 def test_describing_where_nothing_was_ingested_creates_no_store(

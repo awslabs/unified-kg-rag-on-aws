@@ -108,6 +108,8 @@ MOVED_KEY_NOTES: dict[str, str] = {
 # validation (:func:`migrate_deprecated_keys`), with a WARNING naming it.
 DEPRECATED_KEYS: dict[str, str | tuple[str, ...]] = {
     "evaluation.prices": "models.prices",
+    # The namespace's one name (domain/models/namespace.py).
+    "processing.document_parsing.index_value": "processing.document_parsing.namespace",
     # The flat retry keys of 0.3.0, before the per-caller profiles: each
     # governed the callers whose profiles it maps to.
     "retry.max_attempts": (

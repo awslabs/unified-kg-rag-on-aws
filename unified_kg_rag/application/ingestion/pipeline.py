@@ -886,7 +886,7 @@ class DataIngestionPipeline:
         # Before the run takes the lease: the loading stage checks again
         # under it (detect_delta).
         namespace = config_registry_namespace(
-            self.config.indexing, self.config.processing.document_parsing.index_value
+            self.config.indexing, self.config.processing.document_parsing.namespace
         )
         registry = self._doc_status
         if registry is None:
@@ -1081,7 +1081,7 @@ class DataIngestionPipeline:
         indexer = self.providers.build_vector_indexer()
         try:
             record = indexer.read_build_record(
-                self.config.processing.document_parsing.index_value
+                self.config.processing.document_parsing.namespace
             )
         finally:
             indexer.close()
@@ -1103,8 +1103,8 @@ class DataIngestionPipeline:
             f"{source_scope!r}: it reuses the stored extractions, but deletes "
             "a document the run does not read (an id without a file "
             "extension the parser reads); or insert the documents into an "
-            "index namespace of their own (processing.document_parsing."
-            "index_value), which extracts them again."
+            "namespace of their own (processing.document_parsing."
+            "namespace), which extracts them again."
         )
 
     def _stage_document(self, given: InputDocument, root: Path, number: int) -> None:
@@ -1117,7 +1117,7 @@ class DataIngestionPipeline:
         if given.filters:
             metadata[Constants.FILTERS.value] = dict(given.filters)
         if (
-            index_value := self.config.processing.document_parsing.index_value
+            index_value := self.config.processing.document_parsing.namespace
         ) is not None:
             metadata[Constants.INDEX.value] = index_value
         Document(
@@ -1368,7 +1368,7 @@ class DataIngestionPipeline:
         indexer = self.providers.build_vector_indexer()
         try:
             record = indexer.read_build_record(
-                self.config.processing.document_parsing.index_value
+                self.config.processing.document_parsing.namespace
             )
         finally:
             indexer.close()
@@ -1386,7 +1386,7 @@ class DataIngestionPipeline:
                 "corpus would delete. Keep the methodologies the namespace "
                 "was built with (and the artifact switches it was built "
                 "with), give each corpus its own namespace "
-                "(processing.document_parsing.index_value), or rebuild it "
+                "(processing.document_parsing.namespace), or rebuild it "
                 "from this corpus with indexing.reset: true, deleting them."
             )
         logger.warning(
@@ -1491,7 +1491,7 @@ class DataIngestionPipeline:
                 else ""
             )
             + "); give each corpus its own namespace "
-            "(processing.document_parsing.index_value), which extracts it "
+            "(processing.document_parsing.namespace), which extracts it "
             "again; retire a scope that is this corpus before a move "
             "(indexing.retire_source_scopes); or rebuild the namespace from "
             "this corpus with indexing.reset: true, deleting the others."
@@ -1582,7 +1582,7 @@ class DataIngestionPipeline:
         if self._doc_status is None:
             return nullcontext()
         namespace = config_registry_namespace(
-            self.config.indexing, self.config.processing.document_parsing.index_value
+            self.config.indexing, self.config.processing.document_parsing.namespace
         )
         seconds = self.config.indexing.lease_seconds
         longest = longest_write_request_seconds()
@@ -1972,7 +1972,7 @@ class DataIngestionPipeline:
         retired_scope_groups(
             retired,
             parsing.source_scope or source_directory.as_posix(),
-            config_registry_namespace(self.config.indexing, parsing.index_value),
+            config_registry_namespace(self.config.indexing, parsing.namespace),
             retired_scope_readings,
         )
 
@@ -2278,7 +2278,7 @@ class DataIngestionPipeline:
                 f"). Set models.embedding.dimension (--embedding-dimension) to "
                 f"{got}, or use a model that returns {expected}; an index "
                 "already built with another dimension needs a new namespace "
-                "(--suffix) or a reset (--reset)."
+                "(--namespace) or a reset (--reset)."
             )
 
     def _check_index_creation(
@@ -2311,7 +2311,7 @@ class DataIngestionPipeline:
             incremental = (
                 context.incremental_delta is not None and not self.config.indexing.reset
             )
-            suffix = self.config.processing.document_parsing.index_value
+            suffix = self.config.processing.document_parsing.namespace
             indexer = self.providers.build_vector_indexer()
             try:
                 if incremental:
@@ -2739,7 +2739,7 @@ class DataIngestionPipeline:
             if is_incremental_build(context, self.config):
                 logger.info(
                     "An incremental run exports no visualization data: "
-                    "run-visualization --suffix %s builds it from the stores",
+                    "run-visualization --namespace %s builds it from the stores",
                     suffix,
                 )
                 return

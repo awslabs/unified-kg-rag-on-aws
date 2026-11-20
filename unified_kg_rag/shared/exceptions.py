@@ -205,9 +205,10 @@ class EmbeddingModelError(ModelError):
 
 
 class IndexNotFoundError(GraphRAGException):
-    """No store index exists for the queried suffix (not ingested, or a typo).
+    """No store index exists for the queried namespace (not ingested, or a
+    typo).
 
-    ``ingested`` lists the suffixes the store holds an index for (``None``:
+    ``ingested`` lists the namespaces the store holds an index for (``None``:
     it could not tell). They are data, not part of the message, which
     reaches logs, error answers and callers who may not read the other
     namespaces: a surface adds them (:meth:`described`), the MCP server
@@ -222,13 +223,13 @@ class IndexNotFoundError(GraphRAGException):
             return str(self)
         if namespaces is None:
             held = self.ingested
-            what = "Suffixes ingested on this store"
+            what = "Namespaces ingested on this store"
         else:
             held = [name for name in self.ingested if name in namespaces]
             what = "Namespaces served here that hold an index"
         if not held:
             nothing = (
-                "No suffix was ingested on this store"
+                "No namespace was ingested on this store"
                 if namespaces is None
                 else "No namespace served here holds an index"
             )

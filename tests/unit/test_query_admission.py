@@ -107,7 +107,7 @@ class _Retriever(FakeRetriever):
     async def arequire_namespace(self, suffix: str | None) -> None:
         self.checks.append(suffix)
         if suffix not in self.ingested:
-            raise IndexNotFoundError(f"No indices found for suffix '{suffix}'")
+            raise IndexNotFoundError(f"No indices found for namespace '{suffix}'")
 
 
 def _chain(retriever: _Retriever, factory: _Factory, config: Config) -> GraphRAGChain:
@@ -128,14 +128,14 @@ async def test_a_namespace_without_an_index_fails_before_any_model_call(
     factory = _Factory()
     retriever = _Retriever({"tenant-a"})
     config = Config()
-    config.processing.document_parsing.index_value = "tenant-a"
+    config.processing.document_parsing.namespace = "tenant-a"
     chain = _chain(retriever, factory, config)
     try:
         with pytest.raises(IndexNotFoundError, match="tenant-b"):
             await chain.ainvoke(
                 RAGInput(
                     query="Who supplies Buyer?",
-                    suffix="tenant-b",
+                    namespace="tenant-b",
                     search_strategy=strategy,
                 )
             )
@@ -163,7 +163,7 @@ async def test_a_missing_namespace_is_not_described_as_holding_the_configs() -> 
             await chain.acheck_methodology(SearchStrategy.TREE, "nosuch")
         with pytest.raises(IndexNotFoundError, match="nosuch"):
             await chain.ainvoke(
-                RAGInput(query="q", suffix="nosuch", search_strategy="tree")
+                RAGInput(query="q", namespace="nosuch", search_strategy="tree")
             )
     finally:
         await chain.aclose()

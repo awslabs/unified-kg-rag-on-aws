@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Describe an index namespace, and export its graph (``run-describe``).
 
-Prints what the namespace of ``--suffix`` holds: its methodologies and the
+Prints what the namespace of ``--namespace`` holds: its methodologies and the
 search strategies they serve, why it is due for a rebuild under the config
 (``rebuild_due``), each index with its item count and embedding model, the
 build record of the last ingestion run and the doc-status registry's
@@ -44,7 +44,10 @@ from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
 )
-from unified_kg_rag.application.cli.query_args import positive_int
+from unified_kg_rag.application.cli.query_args import (
+    add_namespace_argument,
+    positive_int,
+)
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.storage.inspection import (
     EXPORT_FORMATS,
@@ -72,15 +75,16 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
             "guides/inspect.md",
-            "run-describe --suffix tenant_a\n"
-            "  run-describe --suffix tenant_a --output-path graph.graphml "
+            "run-describe --namespace tenant_a\n"
+            "  run-describe --namespace tenant_a --output-path graph.graphml "
             "--export-format graphml",
         ),
     )
-    parser.add_argument(
-        "--suffix",
-        help="Index suffix to describe (default: the config's "
-        "processing.document_parsing.index_value, else 'default')",
+    add_namespace_argument(
+        parser,
+        "Namespace to describe (default: the config's "
+        "processing.document_parsing.namespace, else 'default'). --suffix is "
+        "its deprecated alias",
     )
     parser.add_argument(
         "--output-path",
@@ -151,10 +155,14 @@ def _statuses(value: str) -> tuple[DocStatus, ...]:
 
 
 def _print(description: NamespaceDescription) -> None:
-    console.print(
-        f"[bold]Index namespace[/bold] {description.namespace} "
-        f"(suffix {description.suffix})"
+    # The registry namespace adds indexing.additional_suffix and the
+    # store tag to the namespace's name; shown only when it does.
+    registry = (
+        ""
+        if description.namespace == description.suffix
+        else f" (registry namespace {description.namespace})"
     )
+    console.print(f"[bold]Namespace[/bold] {description.suffix}{registry}")
     build = description.build or {}
     if build:
         console.print(
@@ -243,7 +251,9 @@ def main() -> int:
                 "--documents lists the doc-status registry's documents: set "
                 "providers.doc_status.enabled"
             )
-        description = describe_namespace(config, args.suffix, documents=args.documents)
+        description = describe_namespace(
+            config, args.namespace, documents=args.documents
+        )
         # A namespace without an index is still described when the registry
         # holds records of it: a failed first build, whose documents
         # --documents lists. With neither, or to export, it is refused.
@@ -254,7 +264,7 @@ def main() -> int:
             usage_error(
                 IndexNotFoundError(
                     f"The index namespace '{description.namespace}' holds no "
-                    "index: check --suffix (or the config's index_value).",
+                    "index: check --namespace (or the config's namespace).",
                     ingested=ingested_namespaces(config),
                 )
             )
@@ -263,7 +273,7 @@ def main() -> int:
             exported = export_graph(
                 config,
                 args.output_path,
-                suffix=description.suffix,
+                namespace=description.suffix,
                 format=args.export_format,
                 max_items=args.max_items,
                 include_text=args.include_text,

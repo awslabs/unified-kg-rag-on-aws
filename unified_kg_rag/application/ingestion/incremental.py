@@ -1494,7 +1494,7 @@ def run_registry_scope(
 ) -> tuple[str, str, str, list[str]]:
     """The run's registry scope, namespace, source scope and failed files.
 
-    The scope is the index namespace the run writes (``index_value`` +
+    The scope is the index namespace the run writes (``namespace`` +
     ``indexing.additional_suffix``, tagged with the index and label prefixes
     when they are not the defaults, see ``store_namespace_tag``) and the
     corpus source
@@ -1506,7 +1506,7 @@ def run_registry_scope(
     been.
     """
     parsing = config.processing.document_parsing
-    namespace = config_registry_namespace(config.indexing, parsing.index_value)
+    namespace = config_registry_namespace(config.indexing, parsing.namespace)
     root = source_directory
     source_scope = parsing.source_scope or root.as_posix()
     failed_doc_ids = [
@@ -2937,7 +2937,7 @@ def reset_namespaces(
     The full build replaces the suffixes of the run's text units under
     ``indexing.additional_suffix`` (in the stores the configured prefixes
     name); the run's own namespace (its registry scope, else the configured
-    ``index_value``) is always included.
+    ``namespace``) is always included.
     """
     namespaces = {
         config_registry_namespace(config.indexing, BaseIndexer.get_suffix(unit))
@@ -2946,7 +2946,7 @@ def reset_namespaces(
     namespaces.add(
         scope_namespace(context.incremental_scope)
         or config_registry_namespace(
-            config.indexing, config.processing.document_parsing.index_value
+            config.indexing, config.processing.document_parsing.namespace
         )
     )
     return namespaces
@@ -3284,7 +3284,7 @@ def run_incremental_indexer(
     # Artifacts carry their own index suffix (multi-tenant/version aware);
     # derive the run's suffix from the text units the same way the indexers
     # do. A run that only deletes extracts none: its suffix is the one its
-    # documents would carry (document_parsing.index_value).
+    # documents would carry (document_parsing.namespace).
     suffix = (
         BaseIndexer.get_suffix(text_units[0])
         if text_units

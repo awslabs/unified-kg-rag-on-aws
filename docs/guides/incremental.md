@@ -6,7 +6,7 @@ Incremental (delta) indexing re-indexes only the documents that are **new or
 changed** since the last run and merges them into the live graph, instead of
 rebuilding everything; a deleted document takes along what only its text
 units stated. Which documents a run compares, and may delete, follows from its
-index suffix and source scope
+namespace and source scope
 ([Scopes and namespaces](../concepts/scopes-and-namespaces.md)). How it works
 inside: [Design §5](../design/incremental.md#5-incremental-indexing). Resuming a run,
 recovering an interrupted one and the write lease are in the
@@ -85,15 +85,15 @@ read stops it before anything is indexed
   their analyzers, so an incremental run stops before its first model call
   (exit 2); re-run once with `indexing.reset: true`. Dropping a language does
   not stop it.
-- **Index a suffix with the registry off** (as the `backend: local` preset
-  does): a later incremental run on that suffix stops before its first model
+- **Index a namespace with the registry off** (as the `backend: local` preset
+  does): a later incremental run on that namespace stops before its first model
   call. Re-run once with `indexing.reset: true` and the registry on, or keep
-  it off for that suffix.
+  it off for that namespace.
 
 ## Rebuild (`indexing.reset`)
 
 Set `indexing.reset: true` for one run to index the whole corpus again
-without taking the suffix offline. Quarantined documents are skipped and keep
+without taking the namespace offline. Quarantined documents are skipped and keep
 their records. A failed reset drops nothing, so it is safe to re-run. **Set
 `indexing.reset` back to `false` afterwards**, or every run rebuilds.
 
@@ -167,7 +167,7 @@ a full build clusters them, a delta run clusters only its delta.
 
 ### Community growth (across runs)
 
-Each suffix's build record (the `build` entry of its vector indices' `_meta`,
+Each namespace's build record (the `build` entry of its vector indices' `_meta`,
 which `run-eval` manifests copy) keeps community counters: `clustered_at` and
 `communities_at_clustering` from the last full build, then `communities_now`
 (each incremental commit adds the communities it appended and subtracts those
@@ -186,13 +186,13 @@ re-clustering: 24 incremental runs since the last full clustering
 ```
 
 The `community_growth_ratio` and `runs_since_clustering` metrics carry the
-same numbers (the largest over the run's suffixes; `0` for a run that
+same numbers (the largest over the run's namespaces; `0` for a run that
 recorded no counters). `null` turns a threshold off;
 `on_drift_recommendation: true` also gives this recommendation when the run's
 `community_rebuild_recommended` is 1. `communities_now` is an upper bound (a
 delta community written under a stored community's id counts again, and a run
 killed after its removal deleted communities does not subtract them). A
-suffix whose build record holds no counters gets none, and no
+namespace whose build record holds no counters gets none, and no
 recommendation, until its next full build.
 
 ### When to reset
@@ -228,7 +228,7 @@ cost (`remedy: next_run`).
 A run logs one WARNING per reason of the records it wrote
 (`Index namespace 'default' is due for a rebuild: ...`), the community
 counters' above among them, and its `--output-format json` result lists them
-by suffix (`rebuild_due`): the console's job card offers the rebuild on
+by namespace (`rebuild_due`): the console's job card offers the rebuild on
 that, not on a warning's text. A build record written by an earlier version names no
 report or summary settings, so it gets no `answer_settings` reason until its
 next full build.
@@ -236,7 +236,7 @@ next full build.
 ## Deletion scope
 
 A run only diffs, and treats as deleted, the documents of its own scope: its
-index suffix and its corpus source
+namespace and its corpus source
 ([Scopes and namespaces: Source scope](../concepts/scopes-and-namespaces.md#source-scope)).
 From Python, `DataIngestionPipeline.insert_documents` and `delete_documents`
 run documents given from memory as named changes instead: what a call
@@ -274,8 +274,8 @@ names them:
   indexed content until a run reads it again. On the CDK stack, keep the
   corpus out of the expiring `pipeline-runs/` prefix
   ([Caches and prefixes](../operations.md#caches-and-prefixes)).
-- **One index suffix and config file per tenant or corpus version**
-  ([Scopes and namespaces: Index suffix](../concepts/scopes-and-namespaces.md#index-suffix)).
+- **One namespace and config file per tenant or corpus version**
+  ([Scopes and namespaces: Namespace](../concepts/scopes-and-namespaces.md#namespace)).
 
 ### Mass deletions
 
@@ -322,7 +322,7 @@ corpus), so the old content stays indexed. Either:
 - run once from the new location with
   `--retire-source-scope <old source directory>` (or
   `indexing.retire_source_scopes`). That run treats every record of the old
-  scope in its suffix as deleted and indexes the new location as new
+  scope in its namespace as deleted and indexes the new location as new
   documents. Give the scope as the registry stores it: the absolute
   directory (trailing and repeated slashes ignored) or the former
   `source_scope`, `s3://` URIs included; a non-URI value is also tried as a
@@ -338,7 +338,7 @@ corpus), so the old content stays indexed. Either:
   `--config-path`). A scope without records logs a WARNING.
 
 A local run with the default scope and new documents logs a WARNING naming the
-other local source directories with records in its suffix (a document only a
+other local source directories with records in its namespace (a document only a
 refused or failed run recorded counts as new); it deletes nothing. Separate
 corpora (the console's folders) need nothing; a moved corpus needs one
 `--retire-source-scope` run. Set `source_scope` per corpus to silence it.
@@ -408,7 +408,7 @@ the other run and start again. With the local SQLite registry, the next run
 takes at once the lease of a run on the same host that was killed (`kill -9`)
 instead of waiting for it to expire (with every store embedded, its first
 write does not wait either). Without the registry nothing locks, so do not
-run two ingestions on one index suffix. The lease, its renewal and takeover
+run two ingestions on one namespace. The lease, its renewal and takeover
 after a crash: [Operator Runbook: Concurrent runs](../operations.md#concurrent-runs).
 
 ## Document size limit

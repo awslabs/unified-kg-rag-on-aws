@@ -415,8 +415,8 @@ def build_mcp_server(
     Args:
         chain: The chain to query (its config's ``mcp`` section bounds the
             tools), or tools already built over one.
-        namespace: The index suffix served (default: the config's
-            ``processing.document_parsing.index_value``, else ``default``).
+        namespace: The namespace served (default: the config's
+            ``processing.document_parsing.namespace``, else ``default``).
         settings: The ``mcp`` settings, if not the chain config's.
 
     Returns:

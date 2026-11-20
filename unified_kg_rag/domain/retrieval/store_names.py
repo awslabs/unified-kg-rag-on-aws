@@ -25,7 +25,7 @@ def namespace_suffix(suffix: str | None) -> str:
 
 def resolve_namespace(config: Config, suffix: str | None) -> str:
     """The index suffix a query or a run under ``config`` addresses:
-    ``suffix``, else ``processing.document_parsing.index_value`` (the
+    ``suffix``, else ``processing.document_parsing.namespace`` (the
     namespace ingestion with the same config writes), else
     ``Constants.DEFAULT_SUFFIX``. The one rule of every entry point (the
     chain, the CLIs, the MCP server, the console, ingestion), so a query
@@ -41,7 +41,7 @@ def resolve_namespace(config: Config, suffix: str | None) -> str:
             validate_safe_name(suffix, "index suffix")
         except ValueError as e:
             raise ConfigurationError(str(e)) from e
-    return namespace_suffix(suffix or config.processing.document_parsing.index_value)
+    return namespace_suffix(suffix or config.processing.document_parsing.namespace)
 
 
 def index_suffix(value: Any) -> str | None:

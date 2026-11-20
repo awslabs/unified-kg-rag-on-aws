@@ -560,7 +560,7 @@ Two boundaries are intentional:
   indexer and model-factory ports, are abstracted and injected; a
   backend-neutral query model would be a large, risky churn that only a
   backend unable to map named collections would justify.
-- **One physical OpenSearch index per index suffix and artifact type.** Fine
+- **One physical OpenSearch index per namespace and artifact type.** Fine
   for a handful of tenants; tens of thousands of suffixes multiply the shard
   count. The scale-out fix (one index per artifact type with an enforced
   tenant field and routing) changes the index, search and delete paths and is

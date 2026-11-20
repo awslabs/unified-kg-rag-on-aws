@@ -529,7 +529,7 @@ failed), reporting the leaves no level-1 node
 covers (`tree_uncovered_leaves`). `scope: document` rebuilds the trees of
 every document too, but reuse makes an unchanged document's tree free.
 
-**Filters, scopes and tenants.** One tree per index suffix, never across
+**Filters, scopes and tenants.** One tree per namespace, never across
 suffixes. A node stores a document filter key only when every one of its
 leaves has the same value for it (uniform-only, fail-closed); the
 retriever's existing rule, "an item without the attribute is excluded",

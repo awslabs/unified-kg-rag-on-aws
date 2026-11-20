@@ -1620,10 +1620,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return  # Cannot tell: keep skipping just the missing index.
         shown = namespace_suffix(suffix)
         raise IndexNotFoundError(
-            f"No indices found for suffix '{shown}' (the text units index "
+            f"No indices found for namespace '{shown}' (the text units index "
             f"'{alias}' does not exist). Did you run ingestion with "
-            f"processing.document_parsing.index_value '{shown}'? Query the "
-            f"namespace (suffix) the corpus was ingested under.",
+            f"processing.document_parsing.namespace '{shown}'? Query the "
+            f"namespace the corpus was ingested into (--namespace).",
             # Not in the message: a surface names those its caller may read.
             ingested=await self._ingested_suffixes(),
         ) from cause

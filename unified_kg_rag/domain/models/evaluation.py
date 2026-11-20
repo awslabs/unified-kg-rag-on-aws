@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .namespace import migrate_namespace_field
 from .retrieval import RerankStatus, SearchStrategy, SearchType
 from .usage import LLMUsage
 
@@ -107,6 +108,13 @@ class EvaluationQuery(BaseModel):
         default_factory=dict,
         description="Additional metadata and custom attributes for the query.",
     )
+
+    @field_validator("metadata")
+    @classmethod
+    def _deprecated_suffix(cls, metadata: dict[str, Any]) -> dict[str, Any]:
+        # A query setting under the namespace's old name (RAGInput.suffix).
+        migrated: dict[str, Any] = migrate_namespace_field(metadata, "suffix")
+        return migrated
 
 
 class EvaluationAssertion(BaseModel):

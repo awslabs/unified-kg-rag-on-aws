@@ -10,7 +10,7 @@ the same `--pipeline-id`. With the doc-status registry on it is incremental
 
 Every flag with its default: [CLI Reference](../reference/cli.md#run-ingestion).
 Which indexes a run writes, and which documents it may delete, follow from its
-index suffix and source scope ([Scopes and namespaces](../concepts/scopes-and-namespaces.md)).
+namespace and source scope ([Scopes and namespaces](../concepts/scopes-and-namespaces.md)).
 A Korean or mixed-language corpus: [Multilingual corpora](./multilingual.md).
 
 <a id="pipeline-stages"></a>
@@ -72,13 +72,13 @@ run-ingestion --source-directory ./documents --config-path config.yaml \
   --enabled-stages DOCUMENT_PARSING,TEXT_CHUNKING,GRAPH_EXTRACTION
 
 # Write the namespace tenant-a with LightRAG only, rebuilt from the whole
-# corpus once (query it with run-rag --suffix tenant-a)
+# corpus once (query it with run-rag --namespace tenant-a)
 run-ingestion --source-directory ./documents --config-path config.yaml \
-  --suffix tenant-a --methodologies lightrag --reset
+  --namespace tenant-a --methodologies lightrag --reset
 ```
 
-`--suffix`, `--methodologies` and `--reset` set
-`processing.document_parsing.index_value`, `indexing.methodologies` and
+`--namespace`, `--methodologies` and `--reset` set
+`processing.document_parsing.namespace`, `indexing.methodologies` and
 `indexing.reset` for that run only; the banner prints the run's
 **Index Namespace** as `run-rag` does.
 
@@ -237,7 +237,7 @@ requests count in neither.
   record).
 - **Multilingual:** see [Multilingual corpora](./multilingual.md).
 - **Heterogeneous domains:** tune `entity_types` to the union of the domains,
-  or give each its own [index suffix](../concepts/scopes-and-namespaces.md#index-suffix).
+  or give each its own [namespace](../concepts/scopes-and-namespaces.md#namespace).
 
 ## Methodology profiles
 
@@ -295,7 +295,7 @@ indexing:
   built again from every stored text unit on the next run that selects it,
   so the refusal says no rebuild is needed). Run with the namespace's
   methodologies, give the corpus a namespace of its own
-  (`processing.document_parsing.index_value`), or rebuild from one corpus
+  (`processing.document_parsing.namespace`), or rebuild from one corpus
   with `indexing.reset: true`, deleting the others. `insert_documents` and
   `delete_documents` are refused alike.
   Nothing is deleted. To delete them, run once with `indexing.reset: true`

@@ -9,15 +9,15 @@ model is called. From Python the same are `describe_namespace` and
 `export_graph`.
 
 ```bash
-# What the default namespace (or the config's index_value) holds
+# What the default namespace (or the config's namespace) holds
 run-describe --config-path config.yaml
 
 # Another suffix, as one JSON document
-run-describe --suffix tenant_a --output-format json
+run-describe --namespace tenant_a --output-format json
 
 # Export its graph as GraphML (Gephi, Cytoscape, networkx) or JSON Lines
-run-describe --suffix tenant_a --output-path graph.graphml --export-format graphml
-run-describe --suffix tenant_a --output-path graph.jsonl --max-items 10000
+run-describe --namespace tenant_a --output-path graph.graphml --export-format graphml
+run-describe --namespace tenant_a --output-path graph.jsonl --max-items 10000
 ```
 
 `--documents failed,quarantined` (any of `failed`, `quarantined`,
@@ -62,7 +62,7 @@ Every flag: [CLI Reference](../reference/cli.md#run-describe).
   (`registry_unavailable`), and the rest is still described.
 
 A namespace that holds no index exits 2 with the error on stderr (a
-mistyped `--suffix`, say), which lists the namespaces the store holds, as
+mistyped `--namespace`, say), which lists the namespaces the store holds, as
 `run-rag` does, unless the registry holds records of it: a
 first build that failed is still described (`exists: false`), so
 `--documents failed,pending` lists how far it got; exporting it exits 2.

@@ -31,7 +31,7 @@ SUFFIXES = pytest.mark.parametrize("suffix", [None, "tenant-a"])
 
 def _setup(tmp_path: Path, suffix: str | None):
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
-    config.processing.document_parsing.index_value = suffix
+    config.processing.document_parsing.namespace = suffix
     server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
     providers = e2e._providers(
         config, server, e2e.FakeCrossEncoder("synthetic-reranker")

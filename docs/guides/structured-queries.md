@@ -9,7 +9,7 @@ of a named buyer makes, how two named entities are connected, whether one
 supplies the other, or a property of a curated (seed) entity. A model writes
 the question as a small JSON *plan* over the graph's types, relationships and
 properties; code checks it, compiles it to a graph query scoped to the
-query's index suffix and runs it read-only on the graph store. The answer
+query's namespace and runs it read-only on the graph store. The answer
 model then reads the result table, the entities and paths it names and the
 passages they cite.
 
@@ -165,7 +165,7 @@ The planner's prompt is overridable (`custom_prompts.graph_query_system` /
 
 One planner call (about 3k to 4k input tokens of schema and examples, a few
 hundred output tokens), at most `repair_attempts` more, one profile read per
-suffix and `profile_ttl_seconds`, one entity search per name, one graph
+namespace and `profile_ttl_seconds`, one entity search per name, one graph
 query, one or two index fetches and one passage search, then the answer.
 Under `fallback` a failed plan adds the fallback's cost.
 
@@ -176,16 +176,16 @@ not supported: the plan is the contract.
 
 ## Safety
 
-The model writes only the plan: no field can name a vertex label, a suffix,
+The model writes only the plan: no field can name a vertex label, a namespace,
 an index or an id. The label is added by the compiler from the query's
-suffix, every vertex step of the compiled Gremlin is followed by that
+namespace, every vertex step of the compiled Gremlin is followed by that
 label, every table of the compiled SQL is bound to it, and a checker reads
 the compiled form before it is sent and refuses anything but read steps of
 that label. Values are bytecode arguments or bound parameters. The embedded
 graph runs the query on a read-only connection, Gremlin with a server-side
 time limit; the deployed query role has no Neptune write grant
 ([Operations](../operations.md#query-access-and-tenant-isolation)). Filters
-are not access control: the suffix still has to be set from the
+are not access control: the namespace still has to be set from the
 authenticated principal ([Scopes](../concepts/scopes-and-namespaces.md)).
 With the output guardrail on, the model-written plan text is screened as an
 answer is wherever it is returned: the search and answer metadata, the

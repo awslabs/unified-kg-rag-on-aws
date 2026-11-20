@@ -200,7 +200,7 @@ def start_query_inputs(
     coroutines: dict[str, Awaitable[Any]] = {}
     # The namespace the query reads keys its extractions: no namespace sees
     # by a cache hit that another was asked the same question.
-    namespace = inputs.get("suffix")
+    namespace = inputs.get("namespace")
     if entities:
         coroutines["entities"] = chain._extract_query_entities(
             question, extraction_language, config, namespace=namespace

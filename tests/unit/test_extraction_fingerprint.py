@@ -72,7 +72,7 @@ def test_changes_with_the_extraction_settings(
         # identity, not its extraction.
         _set("processing.document_parsing.source_directory", "/elsewhere"),
         _set("processing.document_parsing.source_scope", "s3://bucket/corpus"),
-        _set("processing.document_parsing.index_value", "tenant"),
+        _set("processing.document_parsing.namespace", "tenant"),
         _set("processing.ignore_errors", True),
         _set("processing.deduplicate", True),
         # A reset only loads the whole corpus instead of the delta.

@@ -8,7 +8,7 @@ default: [CLI Reference](../reference/cli.md#run-visualization).
 
 ```bash
 # Render the newest export of the default namespace (run-ingestion prints its path)
-run-visualization --suffix default --output-directory ./viz --config-path config.yaml
+run-visualization --namespace default --output-directory ./viz --config-path config.yaml
 
 # Render all renderers of one file
 run-visualization --data-path visualization_data.json --output-directory ./viz --config-path config.yaml
@@ -54,8 +54,8 @@ Ingestion itself renders nothing. Another renderer plugs in through
   ingestion writes them (a run under a new pipeline id prints that one).
   A full build writes an export of an earlier build, or one that is gone,
   again.
-- **Which file.** `--data-path`, else the namespace's (`--suffix`, else the
-  config's `index_value`) newest `visualization_data.json` under
+- **Which file.** `--data-path`, else the namespace's (`--namespace`, else the
+  config's) newest `visualization_data.json` under
   `graph.visualization.outputs_directory`, `outputs/visualization`,
   `--cache-directory` (default `cache`) and `--output-directory` when it
   names the build the stores hold, else one built from the stores into

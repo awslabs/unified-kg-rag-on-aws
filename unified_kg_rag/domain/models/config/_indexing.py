@@ -788,11 +788,11 @@ class IndexingConfig(ConfigSection):
         min_length=1,
         max_length=100,
         description=(
-            "Appended after the run's suffix in every OpenSearch index name "
-            "and Neptune label (<prefix>-<suffix>-<additional_suffix>; the "
-            "suffix is processing.document_parsing.index_value at ingestion "
-            "and --suffix at query time, else index_value too, all 'default' "
-            "when unset). Set it "
+            "Appended after the run's namespace in every OpenSearch index name "
+            "and Neptune label (<prefix>-<namespace>-<additional_suffix>; the "
+            "namespace is processing.document_parsing.namespace at ingestion "
+            "and --namespace at query time, else the config's too, all "
+            "'default' when unset). Set it "
             "identically for ingestion and queries, for versioned or "
             "multi-tenant separation. Lowercase letters, digits, '-' and '_'."
         ),

@@ -1354,7 +1354,7 @@ other run ended.
   after making sure its run is gone.
 - **Permissions.** A custom policy needs `dynamodb:PutItem`, `GetItem` and
   `DeleteItem` (and `UpdateTimeToLive` when the library creates the table).
-- **Namespace**: what one index suffix and its index prefixes name
+- **Namespace**: what one namespace and its index prefixes name
   ([Scopes and namespaces](./concepts/scopes-and-namespaces.md#namespace)).
   Different namespaces can run side by side.
 
@@ -1741,8 +1741,8 @@ moment an ingestion finishes may not yet see its last writes: wait a few
 seconds, or check `ReplicaLag` (Neptune metrics) before an evaluation that
 must read a just-finished build. OpenSearch is unaffected (one endpoint).
 
-**The index suffix is a naming separation, not an access-control boundary.**
-`RAGInput.suffix` / `--suffix` selects the indices and labels a query reads
+**The namespace is a naming separation, not an access-control boundary.**
+`RAGInput.namespace` / `--namespace` selects the indices and labels a query reads
 (validated so it cannot widen the target), but any holder of the query role
 can name any suffix. A multi-tenant serving layer must set it server-side
 from the authenticated principal (a tenant claim in the caller's token),

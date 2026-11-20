@@ -9,7 +9,7 @@
 증분으로 동작합니다([증분 인덱싱](./incremental.ko.md)).
 
 모든 플래그와 기본값은 [CLI 레퍼런스](../reference/cli.md#run-ingestion)(영문)에 있습니다.
-실행이 어떤 인덱스에 쓰고 어떤 문서를 삭제할 수 있는지는 인덱스 접미사와 소스 범위로
+실행이 어떤 인덱스에 쓰고 어떤 문서를 삭제할 수 있는지는 네임스페이스와 소스 범위로
 정해집니다([범위와 네임스페이스](../concepts/scopes-and-namespaces.ko.md)). 한국어나 여러 언어가
 섞인 코퍼스는 [다국어 코퍼스](./multilingual.ko.md)를 참고하세요.
 
@@ -68,13 +68,13 @@ run-ingestion --source-directory ./documents --config-path config.yaml \
   --enabled-stages DOCUMENT_PARSING,TEXT_CHUNKING,GRAPH_EXTRACTION
 
 # Write the namespace tenant-a with LightRAG only, rebuilt from the whole
-# corpus once (query it with run-rag --suffix tenant-a)
+# corpus once (query it with run-rag --namespace tenant-a)
 run-ingestion --source-directory ./documents --config-path config.yaml \
-  --suffix tenant-a --methodologies lightrag --reset
+  --namespace tenant-a --methodologies lightrag --reset
 ```
 
-`--suffix`, `--methodologies`, `--reset`은 그 실행에만
-`processing.document_parsing.index_value`, `indexing.methodologies`, `indexing.reset`을
+`--namespace`, `--methodologies`, `--reset`은 그 실행에만
+`processing.document_parsing.namespace`, `indexing.methodologies`, `indexing.reset`을
 지정합니다. 배너에는 `run-rag`와 같이 실행의 **Index Namespace**가 나옵니다.
 
 ## 재개와 강제 재구축
@@ -199,7 +199,7 @@ pipeline id(멈춤 메시지에 나옵니다. Python에서는 `pipeline.pipeline
   UTF-8이 아닌 파일만 다시 파싱합니다(UTF-8 파일은 기록을 그대로 둡니다).
 - **다국어:** [다국어 코퍼스](./multilingual.ko.md)를 참고하세요.
 - **이질적인 도메인:** `entity_types`를 여러 도메인의 합집합으로 맞추거나, 도메인마다
-  [인덱스 접미사](../concepts/scopes-and-namespaces.ko.md#인덱스-접미사)를 따로 두세요.
+  [네임스페이스](../concepts/scopes-and-namespaces.ko.md#네임스페이스)를 따로 두세요.
 
 ## 방법론 프로필
 
@@ -245,7 +245,7 @@ indexing:
   재구축이 필요하기 때문입니다(`raptor`는 예외입니다. 그 방법론을 고른 다음 실행이 저장된 모든
   텍스트 유닛으로 트리를 다시 만들므로, 거절 메시지도 재구축이 필요 없다고 알려 줍니다).
   네임스페이스의 방법론으로 실행하거나, 코퍼스에 별도
-  네임스페이스(`processing.document_parsing.index_value`)를 주거나, 한 코퍼스로
+  네임스페이스(`processing.document_parsing.namespace`)를 주거나, 한 코퍼스로
   `indexing.reset: true`를 실행해 다른 소스 범위를 지우고 다시 구축하세요. `insert_documents`와
   `delete_documents`도 같은 이유로 거절합니다. 아무것도 지우지 않습니다. 지우려면 남길 방법론으로 `indexing.reset: true`를 한 번
   실행하세요(추출 레코드는 남으므로 나중에 그 방법론을 다시 넣어도 다시 추출하지 않습니다). 재구축이 커뮤니티 리포트 인덱스를 빈 인덱스로 바꾸고 그래프의 커뮤니티 정점을

@@ -48,7 +48,7 @@ def _ingestion_runner(
 def test_ingestion_namespace_flags_override_the_config_for_the_run(
     mocker, tmp_path
 ) -> None:
-    config = Config(processing={"document_parsing": {"index_value": "from-file"}})
+    config = Config(processing={"document_parsing": {"namespace": "from-file"}})
     runner = _ingestion_runner(
         mocker,
         tmp_path,
@@ -59,7 +59,7 @@ def test_ingestion_namespace_flags_override_the_config_for_the_run(
         "lightrag, raptor",
         "--reset",
     )
-    assert runner.config.processing.document_parsing.index_value == "tenant-a"
+    assert runner.config.processing.document_parsing.namespace == "tenant-a"
     assert runner.config.indexing.methodologies == [
         Methodology.LIGHTRAG,
         Methodology.RAPTOR,
@@ -71,9 +71,9 @@ def test_ingestion_namespace_flags_override_the_config_for_the_run(
 
 
 def test_ingestion_without_namespace_flags_keeps_the_config(mocker, tmp_path) -> None:
-    config = Config(processing={"document_parsing": {"index_value": "from-file"}})
+    config = Config(processing={"document_parsing": {"namespace": "from-file"}})
     runner = _ingestion_runner(mocker, tmp_path, config)
-    assert runner.config.processing.document_parsing.index_value == "from-file"
+    assert runner.config.processing.document_parsing.namespace == "from-file"
     assert runner.config.indexing.reset is False
 
 
@@ -567,7 +567,7 @@ async def test_a_typod_suffix_names_the_ingested_ones(
     assert refused.value.ingested == expected.split(", ")
     assert "tenant-a" not in str(refused.value)
     assert refused.value.described() == (
-        f"{refused.value} Suffixes ingested on this store: {expected}."
+        f"{refused.value} Namespaces ingested on this store: {expected}."
     )
     # A surface serving some namespaces names only those.
     assert refused.value.described(["tenant-a", "other"]).endswith(
@@ -591,12 +591,12 @@ async def test_run_rag_exits_2_for_a_suffix_nothing_was_ingested_under(
     runner.metrics_sink = mocker.MagicMock()
     runner.rag_chain = mocker.MagicMock()
     runner.rag_chain.ainvoke = mocker.AsyncMock(
-        side_effect=IndexNotFoundError("No indices found for suffix 'tenant-b'")
+        side_effect=IndexNotFoundError("No indices found for namespace 'tenant-b'")
     )
     with pytest.raises(SystemExit) as exited:
         await runner._run_query(RAGInput(query="hi"))
     assert exited.value.code == 2
-    assert "No indices found for suffix 'tenant-b'" in capsys.readouterr().err
+    assert "No indices found for namespace 'tenant-b'" in capsys.readouterr().err
 
 
 async def test_run_rag_names_the_ingested_suffixes_of_a_typod_one(
@@ -616,7 +616,7 @@ async def test_run_rag_names_the_ingested_suffixes_of_a_typod_one(
     )
     with pytest.raises(SystemExit):
         await runner._run_query(RAGInput(query="hi"))
-    assert "Suffixes ingested on this store: tenant-a." in capsys.readouterr().err
+    assert "Namespaces ingested on this store: tenant-a." in capsys.readouterr().err
 
 
 # --- run-eval: tables -----------------------------------------------------

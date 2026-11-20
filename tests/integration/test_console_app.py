@@ -340,7 +340,7 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
     assert held["namespace"] == "default" and held["recorded"] is True
     assert set(status["methodologies"]) <= set(held["held"])
     fresh = client.get(
-        "/api/namespace/methodologies", params={"suffix": "never-built"}
+        "/api/namespace/methodologies", params={"namespace": "never-built"}
     ).json()
     # No build record: what the config builds stands in, as for a query
     # (the strategies it serves are the ones marked available).
@@ -360,13 +360,13 @@ def test_the_namespace_s_methodologies_come_from_its_build_record(
     assert narrowed["dropped"] == ["graphrag"]
     for unsafe in ("../x", "Docs", "acme*"):
         # The stores' name rule: the config and the stores refuse the others.
-        bad = client.get("/api/namespace/methodologies", params={"suffix": unsafe})
+        bad = client.get("/api/namespace/methodologies", params={"namespace": unsafe})
         assert bad.status_code == 400 and bad.json()["code"] == "invalid"
-        bad = client.get("/api/strategies", params={"suffix": unsafe})
+        bad = client.get("/api/strategies", params={"namespace": unsafe})
         assert bad.status_code == 400 and bad.json()["code"] == "invalid"
-    # A suffix nothing was ingested under serves no strategy (every one but
+    # A namespace nothing was ingested under serves no strategy (every one but
     # tree read as available: what the config builds).
-    missing = client.get("/api/strategies", params={"suffix": "nosuch"}).json()
+    missing = client.get("/api/strategies", params={"namespace": "nosuch"}).json()
     assert not any(s["available"] for s in missing["strategies"])
     assert all("nosuch" in s["reason"] for s in missing["strategies"])
 
@@ -395,15 +395,17 @@ def test_an_ingestion_that_narrows_the_namespace_is_refused_unconfirmed(
     )
 
 
-def test_a_question_with_an_unsafe_suffix_is_refused_with_a_message(
-    client: Any,
+@pytest.mark.parametrize("name", ["namespace", "suffix"])
+def test_a_question_with_an_unsafe_namespace_is_refused_with_a_message(
+    client: Any, name: str
 ) -> None:
+    # suffix, the namespace's deprecated name, is checked as namespace is.
     response = client.post(
-        "/api/ask", json={"query": "Who?", "suffix": "../etc"}, headers=HEADERS
+        "/api/ask", json={"query": "Who?", name: "../etc"}, headers=HEADERS
     )
     assert response.status_code == 422
     body = response.json()
-    assert body["code"] == "invalid" and "suffix" in body["error"]
+    assert body["code"] == "invalid" and "namespace" in body["error"]
 
 
 def test_changes_need_the_console_header_and_the_same_origin(client: Any) -> None:
@@ -900,7 +902,7 @@ def test_a_rebuild_runs_in_one_job_without_the_integrity_question(
 ) -> None:
     # Its own namespace: a reset empties the one it runs in, and the
     # module's other tests read the demo corpus from the default one.
-    corpus = {"corpus": "uploads:rebuilt", "index_value": "rebuilt"}
+    corpus = {"corpus": "uploads:rebuilt", "namespace": "rebuilt"}
     files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
     assert _upload(client, "rebuilt", files).status_code == 200
     first = _wait(
@@ -933,7 +935,7 @@ def test_a_rebuild_then_an_added_file_ingests_in_one_run(
 ) -> None:
     # Rebuild (--reset), then Start over a changed corpus: the run after a
     # reset asks no integrity question. Its own namespace, as above.
-    own = {"index_value": "rebuilt-then"}
+    own = {"namespace": "rebuilt-then"}
     files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
     assert _upload(client, "rebuilt-then", files).status_code == 200
     first = _ingest(client, "uploads:rebuilt-then", **own)

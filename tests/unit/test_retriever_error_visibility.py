@@ -1502,8 +1502,8 @@ async def test_query_against_a_never_ingested_suffix_is_fatal(
         await retriever.aretrieve(query)
 
     shown = suffix or Constants.DEFAULT_SUFFIX.value
-    assert f"suffix '{shown}'" in str(exc.value)
-    assert "index_value" in str(exc.value)
+    assert f"namespace '{shown}'" in str(exc.value)
+    assert "processing.document_parsing.namespace" in str(exc.value)
     assert is_fatal_retrieval_error(exc.value)
 
 

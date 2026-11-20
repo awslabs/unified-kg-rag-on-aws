@@ -34,7 +34,7 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from unified_kg_rag import __version__
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
@@ -81,6 +81,10 @@ from unified_kg_rag.domain.models import (
     Methodology,
     ModelRole,
     validate_safe_name,
+)
+from unified_kg_rag.domain.models.namespace import (
+    migrate_namespace_field,
+    namespace_argument,
 )
 from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
@@ -193,8 +197,14 @@ def _refuse_unknown_query(request: Request) -> None:
 
 class IngestBody(_Request):
     corpus: str = Field(min_length=1, max_length=1024)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _deprecated_index_value(cls, data: Any) -> Any:
+        return migrate_namespace_field(data, "index_value")
+
     methodologies: list[str] | None = None
-    index_value: str | None = Field(default=None, max_length=128)
+    namespace: str | None = Field(default=None, max_length=128)
     force_rebuild: bool = False
     reset: bool = False
     confirm_reset: bool = False
@@ -699,8 +709,10 @@ def create_app(
     # -- ask --------------------------------------------------------------
 
     @app.get("/api/strategies")
-    async def strategies(suffix: str | None = None) -> dict[str, Any]:
-        found = await state.ask.strategies(_suffix(suffix))
+    async def strategies(
+        namespace: str | None = None, suffix: str | None = None
+    ) -> dict[str, Any]:
+        found = await state.ask.strategies(_namespace(namespace, suffix))
         for item in found:
             guide = next(
                 (
@@ -889,7 +901,7 @@ def create_app(
             corpus=corpus,
             corpus_ref=body.corpus,
             methodologies=body.methodologies,
-            index_value=body.index_value,
+            namespace=body.namespace,
             force_rebuild=body.force_rebuild,
             reset=body.reset,
             confirm_reset=body.confirm_reset,
@@ -1040,9 +1052,12 @@ def create_app(
 
     @app.get("/api/namespace/methodologies")
     async def namespace_methodologies(
-        suffix: str | None = None, methodologies: str | None = None
+        namespace: str | None = None,
+        methodologies: str | None = None,
+        suffix: str | None = None,
     ) -> dict[str, Any]:
-        """What the index namespace of ``suffix`` (default: the config's)
+        """What ``namespace`` (default: the config's; ``suffix`` is its
+        deprecated alias)
         holds, as its build record names it, and which of those an
         ingestion of ``methodologies`` (comma-separated; default: the
         config's) would drop: the Ingest page starts from the first and
@@ -1052,7 +1067,9 @@ def create_app(
             [m for m in (methodologies or "").split(",") if m] or None,
         )
         # Why it is due for a rebuild, under the methodologies picked.
-        held = await state.ask.held_methodologies(_suffix(suffix), building=config)
+        held = await state.ask.held_methodologies(
+            _namespace(namespace, suffix), building=config
+        )
         # Without a build record nothing is dropped: the run writes the first.
         dropped = (
             dropped_methodologies(held["held"], config) if held["recorded"] else []
@@ -1076,16 +1093,16 @@ def create_app(
     return app
 
 
-def _suffix(value: str | None) -> str | None:
-    """``value`` if it is a safe index namespace name.
+def _namespace(namespace: str | None, suffix: str | None) -> str | None:
+    """The namespace a request names (``suffix``: its deprecated alias), if
+    it is a safe name.
 
     Raises:
-        InvalidArgumentError: It is not.
+        InvalidArgumentError: It is not, or the two name different ones.
     """
-    if value is None:
-        return None
     try:
-        return validate_safe_name(value, "suffix")
+        value = namespace_argument(namespace, suffix)
+        return None if value is None else validate_safe_name(value, "namespace")
     except ValueError as e:
         raise InvalidArgumentError(str(e)) from e
 

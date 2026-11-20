@@ -6,7 +6,7 @@
 전략은 `--search-strategy`로 고르며(기본값 `auto`, LLM 라우터), 모든 답변은 답변 모델이
 실제로 본 출처를 함께 돌려줍니다. 어떤 전략을 고를지와 답변 형식은
 [검색](../concepts/retrieval.ko.md)에, 질의가 읽는 인덱스는
-[인덱스 접미사](../concepts/scopes-and-namespaces.ko.md#인덱스-접미사)에 있습니다.
+[네임스페이스](../concepts/scopes-and-namespaces.ko.md#네임스페이스)에 있습니다.
 
 모든 플래그와 기본값은 [CLI 레퍼런스](../reference/cli.md#run-rag)(영문)에 있습니다.
 
@@ -334,7 +334,7 @@ async for event in chain.aquery_events(RAGInput(query="...")):
 `section_type`, `title`, 대표 문서의 `document_id` / `file_name` / `file_path`(코퍼스
 루트 기준 상대 경로) / `page`와 `page_end`, `chunk_id`(본문 조각), `text_unit_ids`, 모든
 문서를 담은 `documents`, 시드 그래프 `provenance`와 `iri`가 들어 있습니다. 그래프 항목은
-텍스트 단위 중 질의의 필터와 접미사를 통과한 최대 `search.citations.lineage_units`개의 문서를
+텍스트 단위 중 질의의 필터와 네임스페이스를 통과한 최대 `search.citations.lineage_units`개의 문서를
 밝힙니다. 이 정보는 묶어서 최대 네 번까지 읽으며, 필터가 제외한 문서는 드러나지 않고 그 자리는
 다음 텍스트 단위로 채웁니다. 컨텍스트에 없던 번호를 답변이 쓰면 인용이 아니라
 `metadata.unknown_citation_markers`에 남습니다. 저장소 읽기는 답변 호출과 동시에 진행합니다.
@@ -496,7 +496,7 @@ search:
 
 `--search-strategy structured`는 그래프 저장소가 실행한 질의로 개수, 순위, 목록,
 이름이 주어진 두 엔티티 사이의 경로, 시드 엔티티의 속성에 답합니다. 모델이 질문을
-JSON 계획으로 쓰고(질의 원문은 쓰지 않음), 코드가 계획을 검사해 질의의 접미사
+JSON 계획으로 쓰고(질의 원문은 쓰지 않음), 코드가 계획을 검사해 질의의 네임스페이스
 안에서 읽기 전용으로 실행하며, 답변은 결과 표와 결과가 가리키는 엔티티, 그 구절을
 읽습니다. 구조화된 답을 얻지 못하면 `search.structured.fallback_strategy`
 (`local`)를 실행하고, 무슨 일이 있었는지는 `metadata["structured"]`에 남습니다.
@@ -525,7 +525,7 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 
-- 세션 하나의 턴 사이에서, 또는 `use_memory=True`와 같은 `suffix`, `user_id`로
+- 세션 하나의 턴 사이에서, 또는 `use_memory=True`와 같은 `namespace`, `user_id`로
   `conversation_id`를 다시 쓰는 `GraphRAGChain` 하나의 호출 사이에서 이어집니다(다른
   테넌트나 사용자의 턴은 섞이지 않음). 체인끼리는 같은 `MemoryManager(config)`를
   `memory_manager=`로 넘겨야만 공유합니다.

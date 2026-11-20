@@ -66,6 +66,7 @@ from unified_kg_rag.domain.models import (
     SectionType,
     validate_safe_name,
 )
+from unified_kg_rag.domain.models.namespace import migrate_namespace_field
 from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
 from unified_kg_rag.domain.models.usage import LLMUsage
 from unified_kg_rag.domain.pricing import usage_cost_usd
@@ -127,13 +128,18 @@ class AskRequest(BaseModel):
     # The page's filter box as typed: one ``key: value`` per line, read as
     # ``run-rag --filters`` reads its pairs (:meth:`query_filters`).
     filter_text: str | None = Field(default=None, max_length=MAX_FILTER_TEXT_CHARACTERS)
-    suffix: str | None = Field(default=None, max_length=128)
+    namespace: str | None = Field(default=None, max_length=128)
 
-    @field_validator("suffix")
+    @model_validator(mode="before")
     @classmethod
-    def _safe_suffix(cls, value: str | None) -> str | None:
-        # An index namespace names store indexes and cache paths.
-        return None if value is None else validate_safe_name(value, "suffix")
+    def _deprecated_suffix(cls, data: Any) -> Any:
+        return migrate_namespace_field(data, "suffix")
+
+    @field_validator("namespace")
+    @classmethod
+    def _safe_namespace(cls, value: str | None) -> str | None:
+        # A namespace names store indexes and cache paths.
+        return None if value is None else validate_safe_name(value, "namespace")
 
     @model_validator(mode="after")
     def _one_filter_form(self) -> AskRequest:
@@ -444,7 +450,7 @@ class AskService:
             "created": time.time(),
             "question": request.query,
             "requested_strategy": request.search_strategy.value,
-            "suffix": request.suffix,
+            "suffix": request.namespace,
             "outcome": "failed",
         }
 
@@ -458,7 +464,7 @@ class AskService:
                 async with self._using() as (chain, config):
                     spent["config"] = config
                     # The namespace asked, resolved as the chain resolves it.
-                    record["suffix"] = resolve_namespace(config, request.suffix)
+                    record["suffix"] = resolve_namespace(config, request.namespace)
                     with usage_scope() as meter:
                         spent["meter"] = meter
                         output, trace_id = await self._invoke(
@@ -466,7 +472,7 @@ class AskService:
                         )
                 record["trace_id"] = trace_id
                 result = self._result(
-                    output, config, time.perf_counter() - started, request.suffix
+                    output, config, time.perf_counter() - started, request.namespace
                 )
                 # The ids the page shows to find the answer's log lines
                 # and trace.
@@ -573,7 +579,7 @@ class AskService:
                 {
                     "kg_rag.search_strategy": request.search_strategy.value,
                     "kg_rag.query_id": query_id,
-                    "kg_rag.namespace": resolve_namespace(config, request.suffix),
+                    "kg_rag.namespace": resolve_namespace(config, request.namespace),
                 },
             ),
             # The chain's log lines and its result's metadata carry the id
@@ -611,7 +617,7 @@ class AskService:
                         ]
                     ),
                     filters=request.query_filters(),
-                    suffix=request.suffix,
+                    namespace=request.namespace,
                     # The trusted identity header's (--trusted-identity-header).
                     user_id=caller_user_id(),
                 )

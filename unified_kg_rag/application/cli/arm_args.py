@@ -1,15 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX][,aa=true]``: a
+"""``run-eval --arm NAME=overlay.yaml[,namespace=NAME][,aa=true]``: a
 configuration arm.
 
 The overlay is a YAML mapping merged over the run's configuration (as the
 environment layer is over a config file), validated like a config file
 (unknown keys refused unless ``--allow-unknown-keys``), the relative paths
 it sets resolved against its own directory (the others stay the run's).
-``suffix=`` queries another index
-namespace with the arm (``--suffix``'s, which the overlay's index settings
-otherwise follow). The arm is scored exactly as the base runs are: its
+``namespace=`` (deprecated alias ``suffix=``) queries another
+namespace with the arm (``--namespace``'s, which the overlay's index
+settings otherwise follow). The arm is scored exactly as the base runs are: its
 ``evaluation`` section is the run's. ``aa=true`` declares it an A/A arm
 (``is_aa_arm``) whatever its overlay sets.
 """
@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,10 @@ from unified_kg_rag.domain.models.config import (
     unknown_key_note,
     unknown_keys,
     without_keys,
+)
+from unified_kg_rag.domain.models.namespace import (
+    DEPRECATED_NAMESPACE_NAMES,
+    deprecated_namespace_warning,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.utils.validation import format_validation_errors
@@ -47,13 +52,13 @@ _BOOLEANS = {"true": True, "false": False}
 
 
 def arm_spec(value: str) -> dict[str, Any]:
-    """argparse ``type`` of ``--arm``: ``{"name", "overlay", "suffix"}``,
+    """argparse ``type`` of ``--arm``: ``{"name", "overlay", "namespace"}``,
     and ``"aa"`` when ``aa=true|false`` is given."""
     name, sep, rest = value.partition("=")
     name = name.strip()
     if not sep or not rest.strip():
         raise argparse.ArgumentTypeError(
-            f"'{value}' is not NAME=overlay.yaml[,suffix=SUFFIX][,aa=true]"
+            f"'{value}' is not NAME=overlay.yaml[,namespace=NAME][,aa=true]"
         )
     if not _NAME.match(name) or name.lower() in _RESERVED:
         raise argparse.ArgumentTypeError(
@@ -61,23 +66,37 @@ def arm_spec(value: str) -> dict[str, Any]:
             f"{', '.join(sorted(_RESERVED))})"
         )
     path, *options = rest.split(",")
-    suffix: str | None = None
+    namespace: str | None = None
     aa: bool | None = None
     for option in options:
         key, eq, setting = (part.strip() for part in option.partition("="))
-        if key == "suffix" and eq and setting:
-            suffix = setting
+        if key in ("namespace", "suffix") and eq and setting:
+            if key in DEPRECATED_NAMESPACE_NAMES:
+                print(
+                    f"--arm: warning: {deprecated_namespace_warning(key)}",
+                    file=sys.stderr,
+                )
+            if namespace is not None and namespace != setting:
+                raise argparse.ArgumentTypeError(
+                    f"'{namespace}' and '{setting}' name different namespaces "
+                    f"in --arm '{value}'; give namespace= once"
+                )
+            namespace = setting
         elif key == "aa" and setting.lower() in _BOOLEANS:
             aa = _BOOLEANS[setting.lower()]
         else:
             raise argparse.ArgumentTypeError(
-                f"unknown --arm option '{option}' (only suffix=SUFFIX and "
+                f"unknown --arm option '{option}' (only namespace=NAME and "
                 "aa=true|false)"
             )
     overlay = Path(path.strip())
     if not overlay.is_file():
         raise argparse.ArgumentTypeError(f"overlay file not found: '{overlay}'")
-    spec: dict[str, Any] = {"name": name, "overlay": str(overlay), "suffix": suffix}
+    spec: dict[str, Any] = {
+        "name": name,
+        "overlay": str(overlay),
+        "namespace": namespace,
+    }
     if aa is not None:
         spec["aa"] = aa
     return spec
@@ -92,13 +111,15 @@ def is_aa_arm(base: Config, config: Config, spec: dict[str, Any]) -> bool:
     """Whether the arm (``spec``, its configuration ``config`` by
     ``arm_config``) runs the base configuration ``base`` unchanged: its
     ``aa=`` option when given, else whether it queries the run's own index
-    (no ``suffix=``) with the same resolved configuration, cache sizes
+    (no ``namespace=``) with the same resolved configuration, cache sizes
     (``CACHE_ONLY_SETTINGS``) aside. An overlay that sets only what
     ``arm_config`` ignores, or a value equal to the run's, counts. Such an
     A/A arm measures the noise floor."""
     if spec.get("aa") is not None:
         return bool(spec["aa"])
-    return not spec.get("suffix") and _without_caches(config) == _without_caches(base)
+    return not spec.get("namespace") and _without_caches(config) == _without_caches(
+        base
+    )
 
 
 # What arm_config sets to the run's own on every arm: the scoring models

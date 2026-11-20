@@ -5,7 +5,7 @@
 증분(delta) 인덱싱은 전체를 다시 구축하지 않고, 마지막 실행 이후 **새로 생겼거나
 바뀐** 문서만 다시 인덱싱해 운영 중인 그래프에 병합합니다. 삭제된 문서는 그 문서의
 텍스트 단위에서만 서술된 내용을 함께 지웁니다. 실행이 어떤 문서를 비교하고 삭제할 수
-있는지는 인덱스 접미사와 소스 범위로 정해집니다
+있는지는 네임스페이스와 소스 범위로 정해집니다
 ([범위와 네임스페이스](../concepts/scopes-and-namespaces.ko.md)). 내부 동작은
 [설계 §5](../design/incremental.md#5-incremental-indexing)(영문)에 있습니다. 실행 재개, 중단된 실행
 복구, 쓰기 임대는 [운영 런북](../operations.md#incremental-runs)(영문)에 있습니다.
@@ -70,13 +70,13 @@ SQLite 파일입니다(`providers.doc_status.kind: sqlite`. [로컬 모드](./lo
   `indexing.opensearch.language_analyzers`): 운영 중인 텍스트 필드는 만들 때의
   분석기를 그대로 쓰므로 증분 실행이 첫 모델 호출 전에 멈춥니다(종료 코드 2).
   `indexing.reset: true`로 한 번 다시 실행하세요. 언어를 뺄 때는 멈추지 않습니다.
-- **레지스트리를 끄고 접미사 인덱싱**(`backend: local` 프리셋처럼): 그 접미사의 다음
+- **레지스트리를 끄고 네임스페이스 인덱싱**(`backend: local` 프리셋처럼): 그 네임스페이스의 다음
   증분 실행은 첫 모델 호출 전에 멈춥니다. 레지스트리를 켜고 `indexing.reset: true`로
-  한 번 다시 실행하거나, 그 접미사는 레지스트리를 끈 채로 쓰세요.
+  한 번 다시 실행하거나, 그 네임스페이스는 레지스트리를 끈 채로 쓰세요.
 
 ## 재구축 (`indexing.reset`)
 
-한 번의 실행에 `indexing.reset: true`를 지정하면 접미사를 서비스에서 내리지 않고 코퍼스
+한 번의 실행에 `indexing.reset: true`를 지정하면 네임스페이스를 서비스에서 내리지 않고 코퍼스
 전체를 다시 인덱싱합니다. 격리된 문서는 건너뛰고 레코드를 그대로 둡니다. 실패한 재구축은
 아무것도 지우지 않으므로 다시 실행해도 안전합니다. **끝나면 `indexing.reset`을 `false`로
 되돌리세요.** 그러지 않으면 매번 재구축합니다.
@@ -138,7 +138,7 @@ ID는 전체 빌드와 같지만 순서는 다를 수 있습니다. 재구축할
 
 ### 커뮤니티 증가 (실행 누적)
 
-접미사마다 빌드 레코드(벡터 인덱스 `_meta`의 `build` 항목이며, `run-eval` 매니페스트가
+네임스페이스마다 빌드 레코드(벡터 인덱스 `_meta`의 `build` 항목이며, `run-eval` 매니페스트가
 복사함)에 커뮤니티 카운터가 있습니다. 마지막 전체 빌드의 `clustered_at`과
 `communities_at_clustering`, 그 뒤의 `communities_now`(증분 커밋마다 덧붙인 커뮤니티를
 더하고 제거로 지운 커뮤니티를 뺌)와 `runs_since`(그 뒤의 증분 커밋 수)입니다. 커밋은 한
@@ -155,11 +155,11 @@ re-clustering: 24 incremental runs since the last full clustering
 ```
 
 `community_growth_ratio`와 `runs_since_clustering` 지표에도 같은 수가 담깁니다(실행한
-접미사 중 가장 큰 값이며, 카운터를 기록하지 않은 실행은 `0`). `null`이면 그 임곗값을
+네임스페이스 중 가장 큰 값이며, 카운터를 기록하지 않은 실행은 `0`). `null`이면 그 임곗값을
 끕니다. `on_drift_recommendation: true`이면 실행의 `community_rebuild_recommended`가 1일
 때도 이 권고를 냅니다. `communities_now`는 상한값입니다(저장된 커뮤니티의 ID로 쓴 델타
 커뮤니티는 다시 세고, 제거로 커뮤니티를 지운 뒤 죽은 실행은 그 수를 빼지 못합니다).
-빌드 레코드에 카운터가 없는 접미사는 다음 전체 빌드 전까지 카운터도 권고도 없습니다.
+빌드 레코드에 카운터가 없는 네임스페이스는 다음 전체 빌드 전까지 카운터도 권고도 없습니다.
 
 ### 재구축 시점
 
@@ -190,14 +190,14 @@ re-clustering: 24 incremental runs since the last full clustering
 
 실행은 자신이 쓴 빌드 레코드의 이유마다 WARNING을 하나씩 남기고
 (`Index namespace 'default' is due for a rebuild: ...`, 위의 커뮤니티 카운터 경고도 그중
-하나), `--output-format json` 결과에 접미사별로 담습니다(`rebuild_due`). 콘솔의 작업
+하나), `--output-format json` 결과에 네임스페이스별로 담습니다(`rebuild_due`). 콘솔의 작업
 카드는 경고 문구가 아니라 이 값을 보고 다시 빌드를 제안합니다. 이전 버전이 쓴 빌드 레코드에는
 리포트와 요약의 설정이 없으므로, 다음 전체 빌드 전까지 `answer_settings` 이유가 나오지
 않습니다.
 
 ## 삭제 범위
 
-실행은 자기 범위, 즉 인덱스 접미사와 코퍼스 소스에 속한 문서만 비교하고 삭제 대상으로
+실행은 자기 범위, 즉 네임스페이스와 코퍼스 소스에 속한 문서만 비교하고 삭제 대상으로
 봅니다([범위와 네임스페이스: 소스 범위](../concepts/scopes-and-namespaces.ko.md#소스-범위)).
 Python에서 `DataIngestionPipeline.insert_documents`와 `delete_documents`는 메모리에 있는
 문서를 이름을 붙인 변경으로 실행합니다. 호출이 지정한 문서만 추가·갱신·삭제하고, 같은 범위의
@@ -227,8 +227,8 @@ Python에서 `DataIngestionPipeline.insert_documents`와 `delete_documents`는 �
   reads ...`, `total_files_skipped`)입니다. 이런 파일은 `failed`로 보고되며, 다음 실행에서
   다시 읽을 때까지 인덱싱된 내용을 유지합니다. CDK 스택에서는 코퍼스를 만료되는
   `pipeline-runs/` 접두사 밖에 두세요([캐시와 접두사](../operations.md#caches-and-prefixes)(영문)).
-- **테넌트나 코퍼스 버전마다 인덱스 접미사와 설정 파일을 하나씩 두세요**
-  ([범위와 네임스페이스: 인덱스 접미사](../concepts/scopes-and-namespaces.ko.md#인덱스-접미사)).
+- **테넌트나 코퍼스 버전마다 네임스페이스와 설정 파일을 하나씩 두세요**
+  ([범위와 네임스페이스: 네임스페이스](../concepts/scopes-and-namespaces.ko.md#네임스페이스)).
 
 ### 대량 삭제
 
@@ -270,7 +270,7 @@ deletes N of the M documents ...; continue?`). 일부만 동기화된 S3, 만료
 
 - 옮기기 전에 `document_parsing.source_scope`를 고정된 이름으로 지정합니다.
 - 새 위치에서 `--retire-source-scope <이전 소스 디렉터리>`(또는
-  `indexing.retire_source_scopes`)로 한 번 실행합니다. 이 실행은 접미사에서 이전 범위의
+  `indexing.retire_source_scopes`)로 한 번 실행합니다. 이 실행은 네임스페이스에서 이전 범위의
   레코드를 모두 삭제된 문서로 처리하고, 새 위치의 문서를 새 문서로 인덱싱합니다. 범위는
   레지스트리에 저장된 형태로 지정합니다. 절대 디렉터리(끝과 중복된 슬래시는 무시)나 이전
   `source_scope` 값이며 `s3://` URI도 됩니다. URI가 아닌 값은
@@ -283,7 +283,7 @@ deletes N of the M documents ...; continue?`). 일부만 동기화된 S3, 만료
   디렉터리에서 같은 설정(같은 저장소와 레지스트리. 예: 같은 `--config-path`)으로 지웁니다.
   레코드가 없는 범위는 WARNING으로 알립니다.
 
-범위가 기본값인 로컬 실행에 새 문서가 있으면, 같은 접미사에 레코드가 있는 다른 로컬
+범위가 기본값인 로컬 실행에 새 문서가 있으면, 같은 네임스페이스에 레코드가 있는 다른 로컬
 소스 디렉터리를 WARNING으로 알립니다(거부되거나 실패한 실행만 기록한 문서는 새 문서로
 셉니다). 아무것도 삭제하지 않습니다. 별도 코퍼스(콘솔의 폴더)라면 할 일이 없고, 코퍼스를
 옮겼다면 `--retire-source-scope`로 한 번 실행하세요. 코퍼스마다 `source_scope`를 지정하면
@@ -342,7 +342,7 @@ deletes N of the M documents ...; continue?`). 일부만 동기화된 S3, 만료
 레지스트리에서는 같은 호스트에서 강제 종료된(`kill -9`) 실행의 임대를 만료될 때까지
 기다리지 않고 다음 실행이 바로 가져갑니다(저장소가 모두 내장형이면 첫 쓰기도 기다리지
 않습니다). 레지스트리가 없으면
-아무것도 잠그지 않으므로 한 인덱스 접미사에 수집을 두 개 동시에 실행하지 마세요. 임대,
+아무것도 잠그지 않으므로 한 네임스페이스에 수집을 두 개 동시에 실행하지 마세요. 임대,
 갱신, 비정상 종료 뒤의 인계는 [운영 런북: 동시 실행](../operations.md#concurrent-runs)(영문)에
 있습니다.
 

@@ -68,7 +68,7 @@ from unified_kg_rag.application.cli.provider_args import (
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
     namespace_name,
-    query_suffix,
+    query_namespace,
 )
 from unified_kg_rag.application.config import env_var, load_cli_dotenv
 from unified_kg_rag.domain.models import Citation, SearchStrategy
@@ -594,10 +594,10 @@ class RAGChainRunner:
         }
 
     def _get_suffix_display(self) -> str:
-        """The namespace line: what the store names end in, the index suffix
+        """The namespace line: what the store names end in, the namespace
         queried plus ``indexing.additional_suffix`` (as run-ingestion names
         the namespace it writes)."""
-        chosen = query_suffix(self.args, self.config)
+        chosen = query_namespace(self.args, self.config)
         name = namespace_name(chosen, self.config)
         color = "gray" if chosen == namespace_suffix(None) else "orange3"
         return f"[dim]Index Namespace:[/dim] [{color}]{markup_safe(name)}[/{color}]"
@@ -703,7 +703,7 @@ class RAGChainRunner:
             try:
                 await self.rag_chain.acheck_methodology(
                     SearchStrategy(self.args.search_strategy),
-                    query_suffix(self.args, self.config),
+                    query_namespace(self.args, self.config),
                 )
             except MethodologyNotIndexedError as e:
                 usage_error(f"--search-strategy: {e}")
@@ -804,7 +804,7 @@ class RAGChainRunner:
         _load_chain()
         return RAGInput.checked(
             query=query,
-            suffix=query_suffix(self.args, self.config),
+            namespace=query_namespace(self.args, self.config),
             search_strategy=self.args.search_strategy,
             search_type=self.args.search_type,
             conversation_id=conversation_id,
@@ -877,7 +877,7 @@ class RAGChainRunner:
                 # A --filters key no index declares, a --search-strategy
                 # whose methodology the namespace does not hold, a setting
                 # the index cannot serve (an embedding dimension it does not
-                # hold) or a --suffix nothing was ingested under: the command
+                # hold) or a --namespace nothing was ingested under: the command
                 # line or the configuration is wrong (exit 2).
                 usage_error(e)
             # The one rule of every surface: an unexpected failure's type and

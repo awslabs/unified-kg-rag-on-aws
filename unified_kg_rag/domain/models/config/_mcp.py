@@ -34,8 +34,8 @@ MCP_TOOLS: tuple[McpToolName, ...] = (
 class McpServerConfig(ConfigSection):
     """The read-only MCP server of ``run-mcp-server`` (the ``mcp`` extra).
 
-    The namespace it serves is fixed when it starts (``--suffix``, else
-    ``processing.document_parsing.index_value``); these settings bound what a
+    The namespace it serves is fixed when it starts (``--namespace``, else
+    ``processing.document_parsing.namespace``); these settings bound what a
     tool call may ask. Guide: docs/guides/mcp.md
     """
 
@@ -52,7 +52,7 @@ class McpServerConfig(ConfigSection):
     allowed_namespaces: list[str] = Field(
         default_factory=list,
         description=(
-            "Further index namespaces (suffixes) a tool call may name in its "
+            "Further namespaces a tool call may name in its "
             "namespace argument. Empty (the default): the tools take no "
             "namespace argument and serve only the namespace the server "
             "started with"

@@ -426,7 +426,7 @@ def test_fewer_methodologies_beside_another_scope_are_refused(
         assert str(first.resolve()) in message
         for way_out in (
             "indexing.methodologies: graphrag, lightrag, hipporag",
-            "processing.document_parsing.index_value",
+            "processing.document_parsing.namespace",
             "indexing.reset: true",
         ):
             assert way_out in message

@@ -538,7 +538,7 @@ def interleaving_warnings(
 # query flags are not in retrieval_config_sha256 (a hash of the
 # configuration), so they are compared here.
 _POOLED_CLI_ARGS = (
-    "suffix",
+    "namespace",
     "top_k",
     "retrieval_multiplier",
     "effort",
@@ -555,6 +555,8 @@ def _pooled_settings(manifest: dict[str, Any]) -> dict[str, Any]:
     settings = manifest.get("answer_settings") or {}
     return {
         **{name: args.get(name) for name in _POOLED_CLI_ARGS},
+        # A run saved before --namespace recorded it as --suffix.
+        "namespace": args.get("namespace", args.get("suffix")),
         # The type the run searched with: the flag's, else the config's.
         "search_type": args.get("search_type")
         or settings.get("search.search_type")
