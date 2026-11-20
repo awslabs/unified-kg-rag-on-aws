@@ -107,10 +107,12 @@ class TextUnitRemoval:
 
         outdated = sorted(i for i, units in citing.reports.items() if not gone(units))
         if outdated:
-            logger.warning(
+            # The commit writes them again (IncrementalIndexer._refresh_reports),
+            # which warns of those it cannot.
+            logger.info(
                 "%d community reports in '%s' cite removed text units and other "
-                "ones: they are kept, flagged outdated, and may state the "
-                "removed text until indexing.reset: true rebuilds them",
+                "ones: flagged outdated until the run writes them again from "
+                "what remains",
                 len(outdated),
                 suffix,
             )
