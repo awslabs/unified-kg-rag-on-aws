@@ -36,6 +36,7 @@ from unified_kg_rag.application.cli.conventions import (
     interruptible,
     interruptible_turn,
     json_output,
+    plain_result,
     print_json,
     print_status,
     setup_cli_logging,
@@ -336,26 +337,36 @@ def _snippet(text: str) -> str:
     return line
 
 
-def _print_hits(views: list[SourceView], *, limit: int | None) -> None:
-    """Print search results, sources or written sections, numbered: type,
-    label, score and a snippet of the text (printed literally)."""
+def _hit_lines(views: list[SourceView], *, limit: int | None) -> list[tuple[str, bool]]:
+    """Search results, sources or written sections, numbered: type, label,
+    score and a snippet of the text, as lines (each with whether it is a
+    snippet, printed dim)."""
     shown = views if limit is None else views[:limit]
+    lines: list[tuple[str, bool]] = []
     for i, view in enumerate(shown, 1):
         score = view.score
         scored = f"  (score {score:.3f})" if isinstance(score, int | float) else ""
-        console.print(
-            f"{i:>3}. [{view.kind}] {terminal_safe(_hit_label(view))}{scored}",
-            markup=False,
-            highlight=False,
+        lines.append(
+            (f"{i:>3}. [{view.kind}] {terminal_safe(_hit_label(view))}{scored}", False)
         )
         if snippet := _snippet(terminal_safe(view.text)):
-            console.print(f"     {snippet}", markup=False, highlight=False, style="dim")
+            lines.append((f"     {snippet}", True))
     if len(views) > len(shown):
+        lines.append(
+            (
+                f"     ... and {len(views) - len(shown)} more (--verbose lists "
+                "them all; --output-format json prints every field)",
+                False,
+            )
+        )
+    return lines
+
+
+def _print_hits(views: list[SourceView], *, limit: int | None) -> None:
+    """Print :func:`_hit_lines` (literally, never as markup)."""
+    for line, snippet in _hit_lines(views, limit=limit):
         console.print(
-            f"     ... and {len(views) - len(shown)} more (--verbose lists them "
-            "all; --output-format json prints every field)",
-            markup=False,
-            highlight=False,
+            line, markup=False, highlight=False, style="dim" if snippet else None
         )
 
 
@@ -580,6 +591,13 @@ class RAGChainRunner:
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
+        # A single query's result alone on a stdout that is no terminal
+        # (> answer.txt), the rest on stderr.
+        self.plain = (
+            not self.json_output
+            and not getattr(args, "interactive", False)
+            and plain_result(args)
+        )
         setup_cli_logging(self.config, args)
         self.metrics_sink = build_metrics_sink(args.metrics_sink, query=True)
         self.rag_chain: GraphRAGChain | None = None
@@ -642,7 +660,7 @@ class RAGChainRunner:
                 if self.json_output:
                     print_json(self._json_document(result))
                 else:
-                    self._print_result(result, self.args.verbose)
+                    self._print_result(result, self.args.verbose, plain=self.plain)
 
                 if not result.get("success", False):
                     sys.exit(EXIT_FAILURE)
@@ -978,12 +996,18 @@ class RAGChainRunner:
         return CommandLineInterface._typed_filters(filter_args, filters_json)
 
     @staticmethod
-    def _print_result(result: dict[str, Any], verbose: bool = False) -> None:
+    def _print_result(
+        result: dict[str, Any], verbose: bool = False, *, plain: bool = False
+    ) -> None:
         """Print a query's JSON document (``_run_query``) for a person,
-        from its ``AnswerView`` (an answer) or its hits' ``SourceView``."""
+        from its ``AnswerView`` (an answer) or its hits' ``SourceView``;
+        ``plain``: as plain text on stdout (``_print_plain_result``)."""
         if not result.get("success", False):
             error = markup_safe(result.get("error", "Unknown error"))
             console.print(f"\n[red]Error: {error}[/red]")
+            return
+        if plain:
+            RAGChainRunner._print_plain_result(result, verbose)
             return
 
         view: AnswerView | None = None
@@ -1027,6 +1051,46 @@ class RAGChainRunner:
                     f"({len(view.written)})[/bold cyan]"
                 )
                 _print_hits(view.written, limit=None)
+            RAGChainRunner._print_metrics(result)
+
+    @staticmethod
+    def _print_plain_result(result: dict[str, Any], verbose: bool = False) -> None:
+        """Print a query's result alone, as plain unwrapped text on stdout
+        (``plain_result``: stdout is a file or a pipe): an answer and the
+        sections it cites, then its sources (each with ``verbose``), or a
+        search's hits (a success's: ``_print_result`` prints an error).
+        Its outcome lines and ``verbose``'s details go to the console, on
+        stderr."""
+        lines: list[str] = []
+        view: AnswerView | None = None
+        outcome: QueryOutcome
+        if "answer" in result:
+            view = outcome = _answer_view(result)
+            lines.append(terminal_safe(view.answer))
+            if cited := [c for c in view.citations if c.cited]:
+                lines += ["", f"Citations ({len(cited)}):"]
+                lines += [f"  {terminal_safe(_citation_line(c))}" for c in cited]
+            if view.sources:
+                lines.append("")
+                if verbose:
+                    lines.append(f"Reference Sources ({len(view.sources)}):")
+                    lines += [line for line, _ in _hit_lines(view.sources, limit=None)]
+                else:
+                    lines.append(_sources_line(view.sources))
+        else:
+            hits, outcome = _search_views(result)
+            lines.append(f"Search Results ({len(hits)}):")
+            lines += [
+                line
+                for line, _ in _hit_lines(hits, limit=None if verbose else _HITS_SHOWN)
+            ]
+        print("\n".join(lines), flush=True)
+        for line in _outcome_lines(
+            outcome, view.abstention_reason if view is not None else None
+        ):
+            console.print(line, markup=False, highlight=False, style="yellow")
+        if verbose:
+            RAGChainRunner._print_query_processing(result.get("processed_query"))
             RAGChainRunner._print_metrics(result)
 
     @staticmethod

@@ -55,8 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer alone); `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
   coarser roots. Stored reports keep their depth until a reset (*Upgrading*).
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
-  holds only a run's output (`run-rag ... > answer.txt` keeps the answer alone); `setup_logging` without a `stream`
-  logs to stderr. A script that read the logs from stdout reads
+  holds only a run's output; on a stdout that is no terminal no line is wrapped at 80 columns, and `run-rag --query
+  ... > answer.txt` keeps the answer, its citations and a sources line as plain text, its banner, settings panel and
+  progress lines on stderr; `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
   stderr (`2>&1` keeps both on one stream).
 - A filter on `attr_file` or `attr_folder` (*Added*: path filters) is refused on a namespace built before this
   release, a document's own `file` or `folder` filter included, until it is rebuilt (*Upgrading*).

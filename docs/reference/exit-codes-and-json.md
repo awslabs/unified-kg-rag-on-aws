@@ -119,7 +119,12 @@ are flushed first, and a process pool's workers are ended with it.
 ## JSON output
 
 In either output format the logs and the EMF records of `--metrics-sink
-cloudwatch` go to stderr, so stdout holds only the run's output.
+cloudwatch` go to stderr, so stdout holds only the run's output. In text
+mode on a stdout that is no terminal (a file, a pipe) no line is wrapped
+at 80 columns, and `run-rag --query` prints its result alone as plain
+text, the answer, its citations and a sources line (`--verbose`: every
+source), with the banner, settings, progress and warnings on stderr:
+`run-rag --query ... > answer.txt` keeps the answer.
 `--output-format json` prints one JSON document to stdout and moves the
 banner, progress and logs to stderr, so the output pipes into `jq`. Every document
 starts with `version`, the package version that wrote it, and has the run's

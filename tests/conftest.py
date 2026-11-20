@@ -189,6 +189,7 @@ def _restored_console(monkeypatch: pytest.MonkeyPatch) -> None:
     from unified_kg_rag.application.cli.display import console
 
     monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(console, "soft_wrap", console.soft_wrap)
 
 
 @pytest.fixture(autouse=True)

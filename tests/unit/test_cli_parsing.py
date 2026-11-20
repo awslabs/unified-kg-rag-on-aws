@@ -656,6 +656,66 @@ async def test_rag_runner_exits_non_zero_on_error_fallback(
     print_result.assert_called_once()  # exited on the result, not earlier
 
 
+async def test_a_piped_run_rag_prints_the_answer_alone_unwrapped(
+    store_config, mocker, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # RV4-5: `run-rag -q ... > answer.txt` held the banner, the settings
+    # panel, the progress lines and a citations panel, and Rich hard-wrapped
+    # the answer at 80 columns. On a stdout that is no terminal the answer
+    # and its citations are plain, whole lines; the rest is on stderr.
+    from tests.fixtures.run_rag import answer_document
+    from unified_kg_rag.domain.models import Citation
+
+    answer = "Vendor ships 120 units to Buyer each quarter, " * 4 + "[1]"
+    document = answer_document(
+        answer,
+        citations=[
+            Citation(
+                marker=1,
+                cited=True,
+                section_type="text",
+                source_id="s-1",
+                file_path="legal/a-long-folder-name/warranty-terms.html",
+            )
+        ],
+        sources=[{"source": "s-1", "file_name": "warranty-terms.html"}],
+    )
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=store_config)
+    patch_chain(mocker, return_value=mocker.AsyncMock())
+    mocker.patch.object(sys.stdout, "isatty", return_value=False)
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
+    mocker.patch.object(runner, "_run_query", return_value=document)
+    await runner.run()
+    out, err = capsys.readouterr()
+    assert out.splitlines()[:4] == [
+        answer,
+        "",
+        "Citations (1):",
+        "  [1] legal/a-long-folder-name/warranty-terms.html",
+    ]
+    assert "Sources (1)" in out
+    for decoration in ("RAG Configuration", "Initializing", "Built by", "╭"):
+        assert decoration not in out
+        assert decoration in err
+
+
+def test_a_piped_console_does_not_wrap_a_printed_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # RV4-5: prepare-benchmark's printed commands broke mid-path at 80
+    # columns when piped, so they could not be copied.
+    from unified_kg_rag.application.cli import prepare_benchmark
+
+    out_dir = tmp_path / ("a-rather-long-directory-name-" * 3) / "structural"
+    prepare_benchmark.main(["structural", "--output-directory", str(out_dir)])
+    lines = capsys.readouterr().out.splitlines()
+    (ingest,) = [line for line in lines if line.startswith("Ingest:")]
+    assert ingest == (
+        f"Ingest: run-ingestion --config-path {out_dir}/structural-config.yaml "
+        f"--source-directory {out_dir}/corpus"
+    )
+
+
 # --- run_rag_chain: _parse_filters --------------------------------------
 
 
