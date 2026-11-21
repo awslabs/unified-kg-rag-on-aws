@@ -207,17 +207,54 @@ def test_a_run_killed_in_the_report_refresh_resumes_to_the_unkilled_run(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     unkilled = _reports_state(providers)
     assert not any(outdated for _, outdated, _ in unkilled.values())
+    unkilled_records = _extraction_records(providers)
 
     # The same run, killed in the refresh's report call.
     config, providers, source = first_run("killed")
-    cache, marker = tmp_path / "killed" / "run-2", tmp_path / "report.marker"
+    cache = tmp_path / "killed" / "run-2"
+    _kill_in_refresh(tmp_path / "killed" / "stores", source, cache)
+    # Killed after the removal flagged the report and the deleted
+    # document's record went.
+    assert any(outdated for _, outdated, _ in _reports_state(providers).values())
+    assert "b.txt" not in e2e._registry(providers)
+
+    # The resume (the same pipeline id; the SQLite registry hands this
+    # host's killed run's lease on at once) writes the report again.
+    context = e2e._ingest(config, _providers_of(config), source, cache)
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert _reports_state(providers) == unkilled
+    # R2A-5: the deleted document's extraction records, whose keys the
+    # killed removal held in memory only, were left behind.
+    assert _extraction_records(providers) == unkilled_records
+    vectors = providers.build_vector_indexer()
+    try:
+        record = vectors.read_build_record("default")
+        assert record is not None and record["outdated_reports"] == []
+        # The notes that carried the reports and records across the kill
+        # are gone.
+        from unified_kg_rag.application.storage.stored_items import (
+            OUTDATED_REPORTS,
+            REMOVED_RECORDS,
+        )
+
+        assert not vectors.read_extraction_records(
+            [OUTDATED_REPORTS, REMOVED_RECORDS], suffix="default"
+        )
+    finally:
+        vectors.close()
+
+
+def _kill_in_refresh(stores: Path, source: Path, cache: Path) -> None:
+    """Run an ingestion of ``source`` on ``stores`` in a child process and
+    SIGKILL it in the refresh's first report call (after the removal)."""
+    marker = cache.parent / "report.marker"
     env = {**os.environ, "PYTHONPATH": str(ROOT), "AWS_EC2_METADATA_DISABLED": "true"}
     child = subprocess.Popen(  # nosec B603 - the test's own module
         [
             sys.executable,
             "-m",
             "tests.fixtures.killable_ingest",
-            str(tmp_path / "killed" / "stores"),
+            str(stores),
             str(source),
             str(cache),
             str(marker),
@@ -238,30 +275,150 @@ def test_a_run_killed_in_the_report_refresh_resumes_to_the_unkilled_run(
         child.send_signal(signal.SIGKILL)
         child.communicate()
     assert child.returncode == -signal.SIGKILL
-    # Killed after the removal flagged the report and the deleted
-    # document's record went.
-    assert any(outdated for _, outdated, _ in _reports_state(providers).values())
-    assert "b.txt" not in e2e._registry(providers)
+    marker.unlink()
 
-    # The resume (the same pipeline id; the SQLite registry hands this
-    # host's killed run's lease on at once) writes the report again.
-    context = e2e._ingest(config, _providers_of(config), source, cache)
-    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
-    assert _reports_state(providers) == unkilled
+
+def _extraction_records(providers: Any) -> set[str]:
+    """The keys of the stored extraction records (notes included)."""
+    vectors = providers.build_vector_indexer()
+    try:
+        keys = vectors.extraction_record_keys(
+            list("0123456789abcdefghijklmnopqrstuvwxyz"), "default"
+        )
+        assert keys is not None
+        return keys
+    finally:
+        vectors.close()
+
+
+def _outdated_note(providers: Any) -> dict[str, Any] | None:
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    vectors = providers.build_vector_indexer()
+    try:
+        return vectors.read_extraction_records(
+            [OUTDATED_REPORTS], suffix="default"
+        ).get(OUTDATED_REPORTS)
+    finally:
+        vectors.close()
+
+
+def _outdated_record(providers: Any) -> list[str]:
     vectors = providers.build_vector_indexer()
     try:
         record = vectors.read_build_record("default")
-        assert record is not None and record["outdated_reports"] == []
-        # The note that carried the reports across the kill is gone.
-        from unified_kg_rag.application.storage.stored_items import (
-            OUTDATED_REPORTS,
-        )
-
-        assert OUTDATED_REPORTS not in vectors.read_extraction_records(
-            [OUTDATED_REPORTS], suffix="default"
-        )
+        assert record is not None
+        return list(record["outdated_reports"])
     finally:
         vectors.close()
+
+
+# Two communities of the outdated-report suite's names, each from two
+# documents: a deletion in one leaves the other's report as it was.
+_TWO_GROUPS = {
+    "a.txt": "Vendor supplies widgets to Buyer. Depot stores widgets for Vendor.",
+    "b.txt": "Carrier moves widgets for Vendor and Buyer every week.",
+    "c.txt": "Alpha supplies gears to Beta. Gamma stores gears for Alpha.",
+    "d.txt": "Omega moves gears for Alpha and Beta every week.",
+}
+
+
+@pytest.mark.timeout(300)
+def test_a_crash_note_outlives_a_later_commit_that_writes_no_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws  # noqa: F811
+) -> None:
+    # R2A-2: a run killed in the refresh leaves its outdated report in its
+    # note only. A later run whose commit tolerated one failed write wrote
+    # no report again: its build record listed only its own, and it deleted
+    # the note, so the killed run's report kept the deleted text, flagged,
+    # listed nowhere, for good.
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+
+    stores, source = tmp_path / "stores", tmp_path / "corpus"
+    config = crash_config(stores)
+    providers = _providers_of(config)
+    _write(source, _TWO_GROUPS)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    _write(source, {"b.txt": None})
+    _kill_in_refresh(stores, source, tmp_path / "run-2")
+    note = _outdated_note(providers)
+    assert note is not None and len(note["report_ids"]) == 1
+    (killed,) = note["report_ids"]
+
+    # Another run deletes d.txt; one write of its commit fails, which the
+    # write gate tolerates (one in 31 text units), so no report is written.
+    _write(source, {"d.txt": None})
+    _write(source, {f"e{i}.txt": f"Gamma stores gears in bin {i}." for i in range(30)})
+    index_delta = IndexingManager.index_delta
+
+    def one_failed_write(self: Any, **items: Any) -> Any:
+        results = index_delta(self, **items)
+        stats = next(s for s in results.values() if s and s.total_items >= 20)
+        stats.failed_items += 1
+        return results
+
+    monkeypatch.setattr(IndexingManager, "index_delta", one_failed_write)
+    context = e2e._ingest(config, _providers_of(config), source, tmp_path / "run-3")
+    monkeypatch.undo()
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    # The record lists the killed run's report (a rebuild reason names it),
+    # and the note stays for the run that writes it again.
+    assert killed in _outdated_record(providers)
+    kept = _outdated_note(providers)
+    assert kept is not None and killed in kept["report_ids"]
+    assert set(note["candidates"]) <= set(kept["candidates"])
+
+    context = e2e._ingest(config, _providers_of(config), source, tmp_path / "run-4")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    reports = _reports_state(providers)
+    assert not any(outdated for _, outdated, _ in reports.values())
+    assert not any("Carrier" in summary for summary, _, _ in reports.values())
+    assert _outdated_record(providers) == []
+    assert _outdated_note(providers) is None
+
+
+@pytest.mark.timeout(300)
+def test_a_resume_reads_the_members_its_killed_removal_stripped(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # R2A-7: Carrier's only unit the report cites goes with b.txt; c.txt,
+    # added after the report was written, keeps Carrier. The report's
+    # refresh finds Carrier only among the entities the removal stripped
+    # (the member candidates), which a resume reads off the killed run's
+    # note.
+    corpus = {
+        "a.txt": "Vendor supplies widgets to Buyer. Depot stores widgets for Vendor.",
+        "b.txt": "Carrier moves widgets for Vendor and Buyer every week.",
+    }
+
+    def setup(name: str) -> tuple[Any, Any, Path]:
+        config = crash_config(tmp_path / name / "stores")
+        providers = _providers_of(config)
+        source = tmp_path / "corpus"
+        if source.exists():
+            for path in source.iterdir():
+                path.unlink()
+        _write(source, corpus)
+        for run, files in (("run-1", {}), ("run-2", {"c.txt": "Carrier owns trucks."})):
+            _write(source, files)
+            context = e2e._ingest(config, providers, source, tmp_path / name / run)
+            assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        _write(source, {"b.txt": None})
+        return config, providers, source
+
+    config, providers, source = setup("unkilled")
+    context = e2e._ingest(config, providers, source, tmp_path / "unkilled" / "run-3")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    unkilled = _reports_state(providers)
+    assert any("Carrier" in summary for summary, _, _ in unkilled.values())
+
+    config, providers, source = setup("killed")
+    cache = tmp_path / "killed" / "run-3"
+    _kill_in_refresh(tmp_path / "killed" / "stores", source, cache)
+    context = e2e._ingest(config, _providers_of(config), source, cache)
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert _reports_state(providers) == unkilled
 
 
 def _providers_of(config: Any) -> Any:

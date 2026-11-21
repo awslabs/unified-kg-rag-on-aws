@@ -50,7 +50,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 _KEPT = "Vendor supplies widgets to Buyer. Depot stores widgets for Vendor."
 # Carrier is named only here: what the deletion removes.
 _DELETED = "Carrier moves widgets for Vendor and Buyer every week."
-_NAMES = ("Vendor", "Buyer", "Depot", "Carrier")
+# The last four: a second group, for corpora of two communities
+# (test_ingestion_crash).
+_NAMES = ("Vendor", "Buyer", "Depot", "Carrier", "Alpha", "Beta", "Gamma", "Omega")
 
 
 @pytest.fixture(params=backends(RETRIEVERS))

@@ -9,7 +9,8 @@ cap, unparseable, a request rejected for its content), and is not counted
 toward ``indexing.max_document_failures``. As with claims
 (``test_optional_claims``), it is recorded FAILED once, under an
 ``error_info`` that says it is indexed, so the next run extracts and gleans
-those units again (their record, not final, was not stored); failing so
+those units again (the record stored for them is their ungleaned
+extraction, which a later deletion derives their items from); failing so
 again, it is recorded PROCESSED. It was recorded FAILED and counted: the
 ARCH baseline's registry held 35% of the corpus FAILED while 13% lacked an
 extraction.
@@ -110,7 +111,9 @@ def test_documents_are_indexed_without_the_failed_gleaning_and_retried_once(
         status, failures, retries, info = records[name]
         # FAILED once, uncounted, and saying what was indexed.
         assert (status, failures, retries) == (DocStatus.FAILED, 0, 0), records
-        assert info is not None and info.startswith("indexed without the gleaning")
+        assert info is not None and info.startswith(
+            "indexed with the ungleaned extraction"
+        )
     assert records["d0.txt"][0] is DocStatus.PROCESSED
     # Not among the run's failed documents (failed_documents).
     assert context.recorded_failed_doc_ids == []
@@ -122,7 +125,8 @@ def test_documents_are_indexed_without_the_failed_gleaning_and_retried_once(
     assert {"Depot", "Carrier"} <= _entity_names(config, providers)
 
     # Failing again: each failing unit extracted and gleaned once more (its
-    # record was not stored), then recorded PROCESSED with its extraction.
+    # stored record is not gleaned), then recorded PROCESSED with its
+    # extraction.
     caplog.clear()
     calls.clear()
     context = e2e._ingest(config, providers, source, tmp_path / "run1")
@@ -163,3 +167,29 @@ def test_a_reset_rebuild_indexes_without_the_failed_gleaning(tmp_path: Path) -> 
         assert context.recorded_failed_doc_ids == []
         seen.append(_records(providers)["z1.txt"][:3])
     assert seen == [(DocStatus.FAILED, 0, 0), (DocStatus.PROCESSED, 0, 0)], seen
+
+
+def test_a_deletion_derives_shared_entities_from_an_ungleaned_record(
+    tmp_path: Path,
+) -> None:
+    # R2A-3: a unit whose gleaning failed stored no record, so a later
+    # deletion of a document sharing its entities could not derive them
+    # again: Depot kept the deleted document's text and file filter.
+    mode = {"m": "cut"}
+    config, providers, source, calls = _setup(tmp_path, mode)
+    (source / "y.txt").write_text("Depot and Buyer store goods.")
+    for run in ("run0", "run1"):  # FAILED, then given up: PROCESSED
+        e2e._ingest(config, providers, source, tmp_path / run)
+    assert _records(providers)["z1.txt"][0] is DocStatus.PROCESSED
+
+    (source / "y.txt").unlink()
+    context = e2e._ingest(config, providers, source, tmp_path / "run2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    (depot,) = [
+        hit["_source"]
+        for hit in e2e._stored(
+            config, providers, config.indexing.opensearch.entities_index_prefix
+        )
+        if hit["_source"]["name"] == "Depot"
+    ]
+    assert depot["attr_file"] in ("z1.txt", ["z1.txt"])

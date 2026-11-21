@@ -621,3 +621,31 @@ def test_only_a_note_the_run_read_or_wrote_is_cleared(mocker) -> None:
     manager._outdated_notes.add("default")
     manager.reset_run_state()
     assert not manager._outdated_notes
+
+
+def test_a_note_merges_into_the_runs_outdated_reports(mocker) -> None:
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    _, manager, vector = _removal_stores()
+    vector.write_extraction_records(
+        {OUTDATED_REPORTS: {"report_ids": ["r1"], "candidates": ["e1"]}}
+    )
+    manager.outdated_reports["default"] = {"r0"}
+    assert manager.merge_outdated_note("default") == {"e1"}
+    assert manager.outdated_reports["default"] == {"r0", "r1"}
+
+    # A note this run read and a commit that wrote no report keeps.
+    manager.keep_outdated_notes()
+    manager.clear_outdated_note("default")
+    assert OUTDATED_REPORTS in vector.read_extraction_records([OUTDATED_REPORTS])
+
+    # A note that cannot be read is kept too, though this run wrote it.
+    manager.note_outdated_reports("default", ["r2"], [])
+    mocker.patch.object(
+        vector, "read_extraction_records", side_effect=RuntimeError("store down")
+    )
+    with pytest.raises(RuntimeError):
+        manager.merge_outdated_note("default")
+    delete = mocker.spy(vector, "delete_extraction_records")
+    manager.clear_outdated_note("default")
+    delete.assert_not_called()

@@ -333,7 +333,7 @@ def test_a_rerun_pipeline_id_does_not_record_a_stage_it_no_longer_runs(
         infos.append(record.error_info or "")
     # Gleaning alone failed: indexed, recorded FAILED once, uncounted.
     assert states == [("failed", 0), ("processed", 0)], states
-    assert infos[0].startswith("indexed without the gleaning"), infos
+    assert infos[0].startswith("indexed with the ungleaned extraction"), infos
 
 
 def test_an_explicit_resume_point_is_kept_past_a_failed_stage(

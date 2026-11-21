@@ -1220,6 +1220,32 @@ class IndexingManager:
             self._outdated_notes.add(suffix)
         return note_ids(note, "report_ids"), note_ids(note, "candidates")
 
+    def merge_outdated_note(self, suffix: str) -> set[str]:
+        """Add the report ids of the stored outdated-report note of
+        ``suffix`` to this run's :attr:`outdated_reports`, which the build
+        record lists, and return its member candidates. Every commit merges
+        it, whether it writes reports again or not: a note deleted unmerged
+        lists its reports nowhere. A failed read raises, and keeps the
+        note."""
+        try:
+            ids, candidates = self.read_outdated_note(suffix)
+        except BaseException:
+            self._outdated_notes.discard(suffix)
+            raise
+        if ids:
+            self.outdated_reports[suffix] = (
+                self.outdated_reports.get(suffix, set()) | ids
+            )
+        return candidates
+
+    def keep_outdated_notes(self) -> None:
+        """Keep the outdated-report notes this run read or wrote past its
+        build record (:meth:`clear_outdated_note` leaves them): its commit
+        wrote no report again, so no refresh read their member candidates,
+        which the run that writes their reports again reads. The record
+        lists their reports meanwhile (:meth:`merge_outdated_note`)."""
+        self._outdated_notes.clear()
+
     def clear_outdated_note(self, suffix: str) -> None:
         """Delete the outdated-report note of ``suffix`` this run read or
         wrote, once a build record lists the reports that stay flagged
@@ -1480,7 +1506,9 @@ class IndexingManager:
         reuses.
 
         Run after the delta is written: a changed document's unchanged chunk
-        names the same record as its removed copy. Best-effort: a failure
+        names the same record as its removed copy. The keys a removal of a
+        run killed before this noted (``REMOVED_RECORDS``) are collected
+        too, on the run's suffix and the removals'. Best-effort: a failure
         leaves records no text unit names, which cost space only.
         """
         return self._removal.collect_extraction_records()

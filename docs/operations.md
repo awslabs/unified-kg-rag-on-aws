@@ -330,7 +330,7 @@ Then deploy and start runs as usual:
 | Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume |
 | Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default `pipeline-runs`) | With `--s3-sync`: uploaded after every stage and on SIGTERM, so a fresh task resumes from it. A failed download or final upload fails the run with `CacheSyncError`; a failed per-stage or on-stop upload only warns (the next upload retries it), and a stop after a lost lease skips the upload. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
 | LLM response cache | `<stage checkpoint dir>/llm-cache/` | Reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
-| Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results and the intelligent chunker's per-pre-chunk boundary answers, reused by later runs while a stored text unit names them, the community report answers of full builds, kept while a stored report names them (a full build drops the others), the notes a removal (`pending-strip`, `stripped-summaries`, `outdated-reports`) or a commit (`pending-commit`) keeps until it finished, which a resumed run needs, and the item writes a store rejected (`pending-writes`), kept until a later run wrote them. `clear` and `--force-rebuild` keep it; to drop it, delete the index only after a run that succeeded and noted no failed writes (no `noted for the next run` WARNING), or run `indexing.reset: true` next |
+| Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results and the intelligent chunker's per-pre-chunk boundary answers, reused by later runs while a stored text unit names them, the community report answers of full builds, kept while a stored report names them (a full build drops the others), the notes a removal (`pending-strip`, `stripped-summaries`, `outdated-reports`, `removed-records`) or a commit (`pending-commit`) keeps until it finished, which a resumed run needs, and the item writes a store rejected (`pending-writes`), kept until a later run wrote them. `clear` and `--force-rebuild` keep it; to drop it, delete the index only after a run that succeeded and noted no failed writes (no `noted for the next run` WARNING), or run `indexing.reset: true` next |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only); rendered by [`run-visualization`](./guides/visualize.md) |
 
 The CDK bucket expires `pipeline-runs/` after 30 days: keep the corpus under another prefix (`corpus/`), since an expired file
@@ -1194,15 +1194,18 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
 - **Gleaning is optional too.** When only the gleaning of some of a
   document's units failed, for an error of their own (output cut off at the
   output cap, unparseable, a request rejected for its content), the
-  document is indexed with those units' extraction, without their gleaning
-  (and claims), and counted for none. It is recorded `FAILED` once
-  (`error_info`: `indexed without the gleaning (and claims) of some text
-  units ...`, not in `failed_documents`), so the next run extracts and
-  gleans those units again (a unit whose gleaning failed has no final record
-  to store); failing so again, it is recorded `PROCESSED` with their
-  extraction, and later runs do not try again until its content or the
-  extraction settings change. Both runs warn with the files. A gleaning
-  outage fails the document, uncounted, as in the other stages.
+  document is indexed with those units' extraction and the claims drawn
+  from it, without their gleaning, and counted for none. It is recorded
+  `FAILED` once (`error_info`: `indexed with the ungleaned extraction and
+  its claims of some text units ...`, not in `failed_documents`), so the
+  next run
+  extracts and gleans those units again (what is stored for such a unit is
+  its ungleaned extraction and its claims, which a later deletion derives
+  its items from, not the gleaned record a run looks for); failing so
+  again, it is recorded `PROCESSED` with their extraction, and later runs
+  do not try again until its content or the extraction settings change.
+  Both runs warn with the files. A gleaning outage fails the document,
+  uncounted, as in the other stages.
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of
   its own, output that failed alike on several documents included (see

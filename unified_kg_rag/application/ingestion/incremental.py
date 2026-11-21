@@ -205,17 +205,29 @@ _CLAIMS_MISSING = (
     "indexed without the claims of some text units, whose claim extraction "
     "failed; the next run extracts them again"
 )
-# Indexed with the extraction of some of its units but not their gleaning
-# (it failed for an error of their own: output cut off or unparseable), nor
-# so their claims: recorded FAILED once, like claims, so the next run
-# extracts and gleans those units again (``_record_processed``).
+# Indexed with the extraction of some of its units and the claims drawn
+# from it, but not their gleaning (it failed for an error of their own:
+# output cut off or unparseable): recorded FAILED once, like claims, so the
+# next run extracts and gleans those units again (``_record_processed``).
 _GLEANING_MISSING = (
+    "indexed with the ungleaned extraction and its claims of some text "
+    "units, whose gleaning failed; the next run extracts and gleans them again"
+)
+# The text unreleased builds before it wrote for the same record (it read
+# the claims as missing), still read as one by the registry's readers
+# (_PARTLY_INDEXED, _same_failure). Drop it in 0.5.0: no release wrote it.
+_GLEANING_MISSING_BEFORE = (
     "indexed without the gleaning (and claims) of some text units, whose "
     "gleaning failed; the next run extracts and gleans them again"
 )
+# Each partial record's texts as stored, the current one first.
+_STORED_INFOS: dict[str, frozenset[str]] = {
+    _CLAIMS_MISSING: frozenset({_CLAIMS_MISSING}),
+    _GLEANING_MISSING: frozenset({_GLEANING_MISSING, _GLEANING_MISSING_BEFORE}),
+}
 # The partial records: the document is indexed, uncounted; neither is a
 # failure of the run (recorded_failed_doc_ids).
-_PARTLY_INDEXED = frozenset({_CLAIMS_MISSING, _GLEANING_MISSING})
+_PARTLY_INDEXED = frozenset().union(*_STORED_INFOS.values())
 _WRITE_AHEAD_INFO = (
     "indexing in progress (write-ahead record); a run that ends with this "
     "record re-extracts the document, or removes its artifacts if it is gone"
@@ -791,13 +803,22 @@ class IncrementalIndexer:
         except BaseException:
             self.indexing_manager.discard_retired_ids()
             raise
+        # The reports a removal flagged and its run, killed before its build
+        # record, never listed (note_outdated_reports): the record this
+        # commit writes lists them, refreshed or not.
+        candidates = self._merge_outdated_notes()
         if refresh_reports is not None and not any(
             stats.failed_items for stats in results.values() if stats
         ):
             # From the stored state the commit left: what the strip derived
             # and the delta merged is written.
-            left = self._refresh_reports(refresh_reports, community_reports or [])
+            left = self._refresh_reports(
+                refresh_reports, community_reports or [], candidates
+            )
         else:
+            # No refresh read the notes' member candidates: they stay for
+            # the run that writes their reports again.
+            self.indexing_manager.keep_outdated_notes()
             left = {
                 suffix: ids
                 for suffix, ids in self.indexing_manager.outdated_reports.items()
@@ -833,17 +854,43 @@ class IncrementalIndexer:
             self.indexing_manager.collect_extraction_records()
         return results
 
+    def _merge_outdated_notes(self) -> dict[str, set[str]]:
+        """Merge, per suffix the run touches, the stored outdated-report
+        note into the run's outdated reports
+        (``IndexingManager.merge_outdated_note``); its member candidates by
+        suffix. A note that cannot be read is kept for a later run."""
+        m = self.indexing_manager
+        candidates: dict[str, set[str]] = {}
+        for suffix in sorted({*m.outdated_reports, self.suffix}):
+            try:
+                candidates[suffix] = m.merge_outdated_note(suffix)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the run's own still refresh
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Reading the outdated-report note of '%s' failed (%s): it "
+                    "is kept for the next run",
+                    suffix,
+                    error=e,
+                )
+        return candidates
+
     def _refresh_reports(
         self,
         refresh: ReportRefresh,
         written: Sequence[CommunityReport],
+        candidates: Mapping[str, set[str]],
     ) -> dict[str, set[str]]:
         """Write again, per suffix, the stored reports outdated by this
-        run's removals or listed outdated in the stored build record, but
-        the ones the run deleted or wrote (the delta's reports). Those
-        written again or deleted leave the run's outdated reports and are
-        taken out of the record's (``IndexingManager.refreshed_reports``);
-        the others stay, for the next run, and are returned by suffix."""
+        run's removals (the notes merged in) or listed outdated in the
+        stored build record, but the ones the run deleted or wrote (the
+        delta's reports); ``candidates``, by suffix, are the notes' member
+        candidates. Those written again or deleted leave the run's outdated
+        reports and are taken out of the record's
+        (``IndexingManager.refreshed_reports``); the others stay, for the
+        next run, and are returned by suffix."""
         left: dict[str, set[str]] = {}
         m = self.indexing_manager
         delta_reports: dict[str, set[str]] = defaultdict(set)
@@ -852,9 +899,6 @@ class IncrementalIndexer:
         for suffix in sorted({*m.outdated_reports, self.suffix}):
             try:
                 stored = m.vector_indexer.read_build_record(suffix) or {}
-                # The reports a removal flagged and its run, killed before
-                # its build record, never listed (note_outdated_reports).
-                noted, candidates = m.read_outdated_note(suffix)
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the run's own still refresh
@@ -866,13 +910,7 @@ class IncrementalIndexer:
                     suffix,
                     error=e,
                 )
-                stored, noted, candidates = {}, set(), set()
-            if noted:
-                # One the run does not settle stays listed in its build
-                # record, which takes the note over.
-                m.outdated_reports[suffix] = (
-                    m.outdated_reports.get(suffix, set()) | noted
-                )
+                stored = {}
             listed = stored.get("outdated_reports")
             ids = (
                 m.outdated_reports.get(suffix, set())
@@ -881,7 +919,9 @@ class IncrementalIndexer:
             if not ids:
                 continue
             done = refresh(
-                suffix, ids, m.stripped_entities.get(suffix, set()) | candidates
+                suffix,
+                ids,
+                m.stripped_entities.get(suffix, set()) | candidates.get(suffix, set()),
             )
             settled = done.written | done.deleted
             m.outdated_reports[suffix] = m.outdated_reports.get(suffix, set()) - settled
@@ -1794,7 +1834,10 @@ def _same_failure(
         existing is not None
         and existing.status is DocStatus.FAILED
         and existing.content_hash == content_hash
-        and (error_info is None or existing.error_info == error_info)
+        and (
+            error_info is None
+            or existing.error_info in _STORED_INFOS.get(error_info, {error_info})
+        )
         and not settings_changed(
             existing.extraction_fingerprint, extraction_fingerprint
         )
@@ -3139,8 +3182,8 @@ class RunFailures(NamedTuple):
     # of their own: indexed without those claims, counted for none.
     claims_missing: set[str]
     # Only the gleaning of some of their units failed, for an error of their
-    # own (and so their claims are missing too): indexed with those units'
-    # extraction, counted for none.
+    # own: indexed with those units' extraction and its claims, counted for
+    # none.
     gleaning_missing: set[str]
 
 

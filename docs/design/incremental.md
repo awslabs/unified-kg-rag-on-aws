@@ -280,8 +280,10 @@ unless noted.
    succeeded is indexed without those claims (or with the unit's extraction,
    without its gleaning) and recorded `FAILED` once under an `error_info`
    that says so, for the next run to extract the claims again from the
-   stored records (or to extract and glean the unit again: its record, not
-   final, was not stored), then `PROCESSED` without them
+   stored records (or to extract and glean the unit again: what is stored
+   for it is its ungleaned extraction, an earlier round's additions
+   dropped, and the claims drawn from it, which a later deletion derives
+   its items from), then `PROCESSED` without them
    (`incremental.run_failures`). A failure that counts for none
    adds one to the record's `retry_count` instead (new content, a success
    or an error of its own resets it; a stop or death during extraction

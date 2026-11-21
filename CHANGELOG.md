@@ -48,9 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cap (on planted graphs at the defaults: 132 reports at 6,000 entities, 120 at 9,000), so the default query maps a
   coarser cut there, not the 99 depth-2 reports most similar to the query. With
   `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
-  coarser roots. Stored reports keep their depth, and step down to depth 0 only, until a reset (*Upgrading*); a
-  namespace whose last full build an earlier release wrote gets a `community_depths` rebuild reason (remedy `reset`)
-  in `run-describe`, the console, MCP and the run's `rebuild_due`.
+  coarser roots. Stored reports keep their depth until a reset (*Upgrading*): a namespace whose last full build an
+  earlier release wrote steps down to depth 0 only, the reports its later incremental runs write included, and gets
+  a `community_depths` rebuild reason (remedy `reset`) in `run-describe`, the console, MCP and the run's
+  `rebuild_due`.
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
   holds only a run's output; on a stdout or stderr that is no terminal no line is wrapped or cropped at 80 columns (a
   panel or table is drawn as wide as its widest line: `run-ingestion`'s source and cache paths lost their ends), and
@@ -521,8 +522,13 @@ Bugs present in 0.3.0.
   `outdated_reports` rebuild reason (remedy `next_run`; the console words it apart from re-clustering) whatever
   `on_drift_recommendation` says, until a later run writes it. A note in the extraction store lists the flagged
   reports until the build record does: a run killed after the removal deleted the documents' registry records, before
-  its refresh, left them flagged and listed nowhere, and the next run now writes them again. A flagged report's text
+  its refresh, left them flagged and listed nowhere, and the next run now writes them again (a run that writes no
+  report again, after a write failure the run tolerates or under a profile without reports, lists them in its build
+  record and keeps the note, with the members the refresh reads, for the run that does). A flagged report's text
   units, documents and path filters no longer name what was removed, so a filter on a deleted file stops matching it.
+- A run killed after its removal and before its commit left the removed text units' extraction records in the
+  extraction store for good (the removal held their keys in memory only); a note now lists them, and the next commit
+  deletes those no stored text unit names, as the killed run's would have.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server
@@ -762,7 +768,10 @@ Bugs present in 0.3.0.
   held 35% of the corpus FAILED while 13% lacked an extraction. Gleaning is optional, as claims are: such a document is
   recorded FAILED once under an `error_info` that says it is indexed without that gleaning (not in
   `failed_documents`, counted for none), the next run extracts and gleans those units again, and failing so again it
-  is recorded PROCESSED. A gleaning outage still fails the document, uncounted.
+  is recorded PROCESSED. Such a unit is indexed with its extraction (an earlier gleaning round's additions dropped)
+  and the claims drawn from it, both stored as its ungleaned records, so a later deletion of a document sharing its
+  entities derives them again (they kept the deleted text and file filter: the unit stored no record). A gleaning
+  outage still fails the document, uncounted.
 - `answer_contains` (the headline `answer_match` metric) read the whole answer, so a wrong first-line answer whose
   support quoted the context scored 1 (11 of 72 hits on the 3B local baseline's answers). It reads the answer's first
   line that is no heading, the one-sentence answer the answer prompt asks for; number and set golds read as before.
@@ -775,8 +784,9 @@ Bugs present in 0.3.0.
   the 3B local baseline). A yes/no span is the span only for a yes/no gold; otherwise the first line is scored and
   the fallback counted.
 - The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
-  searched for as a focus entity. Local search now reads a focus that names no stored entity and no word of the query
-  (a placeholder such as "none" or "Empty", in any language) as no focus and searches by the query, and the prompt
+  searched for as a focus entity. Local search now reads a focus that names no stored entity, no word of the query
+  and nothing its own top hit's name covers or is covered by (a placeholder such as "none" or "Empty", in any
+  language; "Beatles" for the stored "The Beatles" is kept) as no focus and searches by the query, and the prompt
   asks for an empty answer without naming a placeholder: a wording that named "none" made a 3B model answer "none"
   for 8 of 30 MuSiQue questions that do name entities.
 - The embedded engine's `cjk` analyzer (the `ja` and `zh` default) did not fold width or drop stop words as
