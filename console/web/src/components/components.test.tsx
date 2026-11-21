@@ -199,6 +199,16 @@ describe("helpers", () => {
       unmount();
     }
   });
+  it("keeps the whitespace between two adjacent highlighted phrases", () => {
+    // Two matches of one phrase, a space or a line break apart: the runs
+    // put back the text as written, the space inside the highlight, the
+    // line break between two.
+    const spaced = highlightRuns("destination: Kestrel Depot Kestrel Depot will add a bay.", "kestrel depot");
+    expect(spaced.map((r) => r.text).join("")).toBe("destination: Kestrel Depot Kestrel Depot will add a bay.");
+    expect(spaced.filter((r) => r.marked).map((r) => r.text)).toEqual(["Kestrel Depot Kestrel Depot"]);
+    const broken = highlightRuns("destination: Kestrel Depot\nKestrel Depot will add a bay.", "kestrel depot");
+    expect(broken.map((r) => r.text)).toEqual(["destination: ", "Kestrel Depot", "\n", "Kestrel Depot", " will add a bay."]);
+  });
   it("calls a delta better or worse only outside zero, by direction", () => {
     const delta = { pairs: 5, mean_delta: 0.1, ci_low: 0.05, ci_high: 0.2, wins: 3, ties: 2, losses: 0 };
     expect(deltaVerdict("answer_match/token_f1", delta)).toBe("better");

@@ -1665,7 +1665,11 @@ button.cite-link:hover {
   overflow: hidden;
   white-space: pre-line;
 }
+/* Opened, the excerpt is a plain block: a -webkit-box without a clamp
+ * drops a line break that stands alone between two highlighted phrases
+ * ("Kestrel Depot\nKestrel Depot" read as one line). */
 .source.open .source-excerpt {
+  display: block;
   -webkit-line-clamp: unset;
 }
 .source-trail {

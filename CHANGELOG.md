@@ -428,6 +428,8 @@ Each name below warns and still works, and is removed in 0.5.0
 
 ### Fixed
 
+- The console's Ask page: an opened source keeps a line break that stands between two highlighted phrases (it read
+  "Kestrel DepotKestrel Depot will add...").
 - The console's Dashboard: the day labels under "Questions per day" and "Median time per day" no longer overlap
   ("11-2111-22") when adjacent days have bars; they thin out, counted back from the latest day.
 - The console's Graph page: an entity's relationship types (`RELATED_TO`, `DELIVERS_TO`) no longer shrink to one or

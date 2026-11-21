@@ -235,6 +235,39 @@ for (const locale of ["en", "de", "fr", "ru", "es", "it", "pt", "ko", "ja", "zh"
   }
 }
 
+// Regression: an opened source's excerpt was a -webkit-box without a clamp,
+// which dropped a line break standing alone between two highlighted
+// phrases: "destination: Kestrel Depot\nKestrel Depot will add..." read
+// "Kestrel DepotKestrel Depot". Each line of the excerpt keeps its own line.
+test("an opened source keeps the line break between two highlights", async ({ page, baseURL }) => {
+  const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+  await page.getByLabel("Question").fill("Who carries the lidar units to Kestrel Depot, and how fast?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".answer-meta").first()).toBeVisible({ timeout: 60_000 });
+  const excerpts = page.locator('.source[data-kind="entity"] .source-excerpt');
+  await expect(excerpts.first()).toBeVisible();
+  // The first entity whose excerpt has two highlights a line break apart.
+  const index = await excerpts.evaluateAll((elements) =>
+    elements.findIndex((element) =>
+      [...element.childNodes].some(
+        (node, i, nodes) => node.nodeType === Node.TEXT_NODE && node.textContent === "\n" && nodes[i - 1]?.nodeName === "MARK" && nodes[i + 1]?.nodeName === "MARK",
+      ),
+    ),
+  );
+  expect(index, "no entity excerpt with two highlights a line break apart").toBeGreaterThanOrEqual(0);
+  await page.locator('.source[data-kind="entity"] > button').nth(index).click();
+  const tops = await page.locator(".source.open .source-excerpt").evaluate((element) => {
+    const nodes = [...element.childNodes];
+    const i = nodes.findIndex((node, k) => node.nodeType === Node.TEXT_NODE && node.textContent === "\n" && nodes[k - 1]?.nodeName === "MARK" && nodes[k + 1]?.nodeName === "MARK");
+    return [nodes[i - 1], nodes[i + 1]].map((node) => Math.round((node as Element).getBoundingClientRect().top));
+  });
+  expect(tops[1]!).toBeGreaterThan(tops[0]!);
+});
+
 // Regression: the Entity panel's relationship types (RELATED_TO,
 // DELIVERS_TO) shrank to one or two letters per line beside a long
 // description at 1440 px. Each type now keeps one line.
