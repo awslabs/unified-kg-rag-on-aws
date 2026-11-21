@@ -451,15 +451,43 @@ async def _cancelled_once_throttled(
     return list(await asyncio.gather(*(cancel(i, t) for i, t in enumerate(tasks))))
 
 
+def _sender() -> tuple[int, int]:
+    """The thread and the task (0: none) a check or a send runs in: a
+    request's last stop check runs where the request is then sent (a
+    botocore worker thread's ``before-send``, an httpx client's ``request``
+    hook in the task that sends)."""
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return threading.get_ident(), id(task) if task is not None else 0
+
+
+def _query_of(stop: object) -> object:
+    """The query stop ``stop`` follows (its reader's), or ``stop``."""
+    while isinstance(stop, query_stop.FollowingStop):
+        stop = stop._leader
+    return stop
+
+
 class _StopOrder:
-    """The order, in the client, of each stop (``QueryStop.set``) and each
+    """The order, in the client, of each stop (``QueryStop.set``), each
     stop check a request passed (``raise_if_stopped``, in every
-    module that gates a model request on it), under one lock, so no wall
-    clock decides which came first: a request that passed its check before
-    the stop and is sent after it is one in flight, not one sent after the
-    stop."""
+    module that gates a model request on it) and each request the clients
+    put on the wire (botocore's ``URLLib3Session.send``, httpx's
+    transports), under one lock, so no wall clock decides which came
+    first: a request that passed its check before the stop and is sent
+    after it is one in flight, not one sent after the stop.
+
+    It also counts the requests on the wire and the botocore calls (their
+    attempts and botocore's backoffs between them) not yet returned:
+    :meth:`settled` waits until none is, as the requests in flight end
+    (a send returns once the server read the request and answered it)."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import botocore.endpoint
+        import httpx
+
         from unified_kg_rag.adapters.aws import bedrock
         from unified_kg_rag.adapters.llm import chain_factory, retry
         from unified_kg_rag.adapters.local import models
@@ -467,8 +495,16 @@ class _StopOrder:
         # Reentrant: a stop sets its followers (a deadline window's) under
         # its own set.
         self.lock = threading.RLock()
+        self.changed = threading.Condition(self.lock)
         self.recording = True
         self.events: list[tuple[str, object]] = []
+        # The senders whose last check passed and who sent nothing since.
+        self.checked: set[tuple[int, int]] = set()
+        # Each request sent with no check passed in its sender since its
+        # last one (its query's stop, or None).
+        self.unchecked: list[object] = []
+        self.sending = 0
+        self.calling = 0
         check = query_stop.raise_if_stopped
         set_stop = query_stop.QueryStop.set
 
@@ -477,6 +513,7 @@ class _StopOrder:
                 check()
                 if self.recording:
                     self.events.append(("passed", query_stop._QUERY_STOP.get()))
+                    self.checked.add(_sender())
 
         def stopped(stop: Any, *cause: Any) -> None:
             with self.lock:
@@ -488,6 +525,76 @@ class _StopOrder:
         for module in (query_stop, retry, chain_factory, bedrock, models):
             monkeypatch.setattr(module, "raise_if_stopped", checked)
 
+        def sent() -> None:
+            with self.lock:
+                self.sending += 1
+                if self.recording:
+                    stop = query_stop._QUERY_STOP.get()
+                    self.events.append(("sent", stop))
+                    if _sender() not in self.checked:
+                        self.unchecked.append(stop)
+                    self.checked.discard(_sender())
+
+        def answered(ok: bool) -> None:
+            with self.lock:
+                self.sending -= 1
+                if self.recording:
+                    self.events.append(
+                        ("answered" if ok else "lost", query_stop._QUERY_STOP.get())
+                    )
+                # A check the transport ran for this request (httpx's,
+                # once connected) is not the next request's.
+                self.checked.discard(_sender())
+                self.changed.notify_all()
+
+        def on_the_wire(send: Any) -> Any:
+            def sending(owner: Any, request: Any) -> Any:
+                sent()
+                ok = False
+                try:
+                    response = send(owner, request)
+                    ok = True
+                    return response
+                finally:
+                    answered(ok)
+
+            return sending
+
+        async_send = httpx.AsyncHTTPTransport.handle_async_request
+
+        async def async_sending(transport: Any, request: Any) -> Any:
+            sent()
+            ok = False
+            try:
+                response = await async_send(transport, request)
+                ok = True
+                return response
+            finally:
+                answered(ok)
+
+        botocore_call = botocore.endpoint.Endpoint._send_request  # type: ignore[attr-defined]
+
+        def calling(endpoint: Any, *args: Any, **kwargs: Any) -> Any:
+            with self.lock:
+                self.calling += 1
+            try:
+                return botocore_call(endpoint, *args, **kwargs)
+            finally:
+                with self.lock:
+                    self.calling -= 1
+                    self.changed.notify_all()
+
+        monkeypatch.setattr(URLLib3Session, "send", on_the_wire(URLLib3Session.send))
+        monkeypatch.setattr(
+            httpx.HTTPTransport,
+            "handle_request",
+            on_the_wire(httpx.HTTPTransport.handle_request),
+        )
+        monkeypatch.setattr(
+            httpx.AsyncHTTPTransport, "handle_async_request", async_sending
+        )
+        monkeypatch.setattr(botocore.endpoint.Endpoint, "_send_request", calling)
+
     def passed_after_a_stop(self) -> list[object]:
         """The checks passed with no stop bound, or after their query's
         stop: each would let a request out after it."""
@@ -496,13 +603,70 @@ class _StopOrder:
         for kind, stop in self.events:
             if kind == "stop":
                 stops.add(id(stop))
-            elif stop is None or id(stop) in stops:
+            elif kind == "passed" and (stop is None or id(stop) in stops):
                 late.append(stop)
         return late
 
+    def in_flight_at_the_stop(self) -> dict[int, int]:
+        """For each stopped query, its requests on the wire when its stop
+        came (its reader's, or a deadline window's of it, whichever was
+        first) or put on it after: each passed its check before the stop
+        (:meth:`passed_after_a_stop`)."""
+        stops: set[int] = set()
+        on_wire: dict[int, int] = {}
+        in_flight: dict[int, int] = {}
+        for kind, stop in self.events:
+            query = id(_query_of(stop))
+            if kind == "stop":
+                if query not in stops:
+                    stops.add(query)
+                    in_flight[query] = on_wire.get(query, 0)
+            elif kind == "sent":
+                on_wire[query] = on_wire.get(query, 0) + 1
+                if query in stops:
+                    in_flight[query] += 1
+            elif kind in ("answered", "lost"):
+                on_wire[query] -= 1
+        return in_flight
+
+    def count(self, *kinds: str) -> int:
+        return sum(kind in kinds for kind, _ in self.events)
+
+    def settled(self, timeout: float) -> bool:
+        """Whether, within ``timeout`` s, no request is on the wire and no
+        botocore call is left to make one."""
+        with self.changed:
+            return self.changed.wait_for(
+                lambda: not self.sending and not self.calling, timeout
+            )
+
+
+def _hold_a_send_past_its_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold the first request botocore puts on the wire for a query until
+    that query stops, as a connect does that outlasts the stop (one the
+    server's full accept queue refused, retried after 1 s): the request is
+    written after the stop, its check passed before it."""
+    send = URLLib3Session.send
+    lock = threading.Lock()
+    held = False
+
+    def holding(session: URLLib3Session, request: Any) -> Any:
+        nonlocal held
+        stop = query_stop._QUERY_STOP.get()
+        with lock:
+            hold = stop is not None and not held
+            held = held or hold
+        if hold:
+            assert stop is not None
+            stop._wait(BACKSTOP)
+        return send(session, request)
+
+    monkeypatch.setattr(URLLib3Session, "send", holding)
+
 
 @pytest.mark.parametrize(
-    "provider", ["ollama", "openai", "bedrock", "bedrock-adaptive"]
+    "provider",
+    ["ollama", "openai", "bedrock", "bedrock-adaptive", "bedrock-in-flight"],
 )
 async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
     wire: tuple[int, stream_models.StreamModels],
@@ -519,7 +683,7 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
     from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
 
     port, models = wire
-    if provider == "bedrock":
+    if provider != "bedrock-adaptive":
         # botocore's adaptive mode (the default) also waits in its
         # client-side rate limiter, which no stop interrupts.
         monkeypatch.setattr(BaseBedrockModelFactory, "BOTO_RETRY_MODE", "standard")
@@ -542,16 +706,25 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
             return record(*args, **kwargs)
 
         monkeypatch.setattr(chain, "_record_query_metrics", recording)
-        models.knobs = stream_models.StreamKnobs(throttled=True)
+        if provider == "bedrock-in-flight":
+            _hold_a_send_past_its_stop(monkeypatch)
         order = _StopOrder(monkeypatch)
+        received = models.received
+        models.knobs = stream_models.StreamKnobs(throttled=True)
         # The waits the clients run themselves (the OpenAI client's backoff,
         # botocore's and its adaptive rate limiter) still end, unsent.
         async with asyncio.timeout(BACKSTOP):
             await _cancelled_once_throttled(chain, models)
-        # Every reader's stop came, and no request passed its stop check
-        # after its query's stop (the botocore, OpenAI and Ollama clients'
-        # requests, their own resends included): one that passed it before
-        # is in flight ...
+        # Every reader's stop came. Once no task, no request on the wire
+        # and no botocore call (its backoffs included) is left, nothing
+        # can send a request of these queries: their requests in flight
+        # have been answered, so the server's count is final.
+        current = asyncio.current_task()
+        async with asyncio.timeout(BACKSTOP):
+            others = [t for t in asyncio.all_tasks() if t is not current]
+            if others:
+                await asyncio.wait(others)
+            assert await asyncio.to_thread(order.settled, BACKSTOP)
         assert (
             sum(
                 kind == "stop" and not isinstance(stop, query_stop.FollowingStop)
@@ -559,18 +732,29 @@ async def test_a_reader_cancelled_in_retry_backoff_stops_the_query(
             )
             == THROTTLED_READERS
         )
+        # No request passed its stop check after its query's stop (the
+        # botocore, OpenAI and Ollama clients' requests, their own resends
+        # included), and none was sent without passing one ...
         assert any(kind == "passed" for kind, _ in order.events)
         assert order.passed_after_a_stop() == []
-        # ... and none reached the model after those in flight: a reader is
-        # released at once, before a worker thread's request that passed
-        # its check before the stop reaches the model.
-        async with asyncio.timeout(BACKSTOP):
-            calls = -1
-            while models.throttled != calls:
-                calls = models.throttled
-                await asyncio.sleep(0.5)
-        await asyncio.sleep(2.5)
-        assert models.throttled == calls
+        assert order.unchecked == []
+        # ... so a request on the wire at its query's stop, or put on it
+        # after, passed its check before the stop and is in flight: at most
+        # one of each query. botocore's last hook (``before-send``) runs
+        # before its worker thread connects and writes the request in one
+        # blocking send that no stop interrupts (a connect the server's
+        # full accept queue refused retries after the kernel's 1 s SYN
+        # timeout), and the attempt after it is refused (``needs-retry``,
+        # ``before-send``).
+        in_flight = order.in_flight_at_the_stop()
+        assert len(in_flight) == THROTTLED_READERS
+        assert max(in_flight.values()) <= 1
+        if provider == "bedrock-in-flight":
+            assert 1 in in_flight.values()
+        # The model read no request but those the clients sent: each one
+        # answered, and perhaps one whose connection failed.
+        read = models.received - received
+        assert order.count("answered") <= read <= order.count("sent")
         assert recorded == [None] * THROTTLED_READERS
         order.recording = False
         models.knobs = stream_models.StreamKnobs()
