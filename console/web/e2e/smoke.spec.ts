@@ -165,6 +165,13 @@ for (const locale of ["en", "ko", "de", "ja"]) {
       const statusRead = page.waitForResponse((response) => response.url().includes("/api/status"));
       await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
       await statusRead;
+      // A Japanese page imports Pretendard JP's stylesheet once it turns
+      // Japanese (lib/scriptFonts.ts), which can be after fonts.ready first
+      // resolves: until its faces load, the labels are set in a fallback and
+      // the row measures a step too wide.
+      if (locale === "ja") {
+        await page.waitForFunction(() => [...document.fonts].some((face) => face.family === "Pretendard JP Variable" && face.status === "loaded"));
+      }
       await page.evaluate(() => document.fonts.ready.then(() => undefined));
       await page.waitForTimeout(100);
       return { context, page };
@@ -243,28 +250,52 @@ test("an opened source keeps the line break between two highlights", async ({ pa
   const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+  // The answer's sources are one fixed entity whose description holds the
+  // question's phrase twice, a line break apart: the layout is tested, not
+  // what the demo's corpus happens to say.
+  const source = {
+    rank: 1,
+    kind: "entity",
+    id: "e2e-kestrel-depot",
+    title: "Kestrel Depot",
+    score: 1,
+    excerpt: "Entity: Kestrel Depot\nType: location\nDescription: destination: Kestrel Depot\nKestrel Depot will add a second storage bay.",
+    truncated: false,
+    document_ids: [],
+    file_name: null,
+    chunk_id: null,
+    text_unit_ids: [],
+    source_kinds: [],
+    iri: null,
+    provenance: null,
+    entity_type: "location",
+  };
+  await page.route(
+    (url) => url.pathname === "/api/ask",
+    async (route) => {
+      const response = await route.fetch();
+      const events = (await response.text()).split("\n\n").map((block) => {
+        const data = block.startsWith("data:") ? JSON.parse(block.slice(5)) : null;
+        if (data?.kind !== "result") return block;
+        return `data: ${JSON.stringify({ ...data, sources: [source], citations: [] })}`;
+      });
+      await route.fulfill({ status: response.status(), headers: response.headers(), body: events.join("\n\n") });
+    },
+  );
   const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
   await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
-  await page.getByLabel("Question").fill("Who carries the lidar units to Kestrel Depot, and how fast?");
+  await page.getByLabel("Question").fill("Where does Kestrel Depot store the units?");
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(page.locator(".answer-meta").first()).toBeVisible({ timeout: 60_000 });
-  const excerpts = page.locator('.source[data-kind="entity"] .source-excerpt');
-  await expect(excerpts.first()).toBeVisible();
-  // The first entity whose excerpt has two highlights a line break apart.
-  const index = await excerpts.evaluateAll((elements) =>
-    elements.findIndex((element) =>
-      [...element.childNodes].some(
-        (node, i, nodes) => node.nodeType === Node.TEXT_NODE && node.textContent === "\n" && nodes[i - 1]?.nodeName === "MARK" && nodes[i + 1]?.nodeName === "MARK",
-      ),
-    ),
-  );
-  expect(index, "no entity excerpt with two highlights a line break apart").toBeGreaterThanOrEqual(0);
-  await page.locator('.source[data-kind="entity"] > button').nth(index).click();
-  const tops = await page.locator(".source.open .source-excerpt").evaluate((element) => {
+  await page.locator('.source[data-kind="entity"] > button').first().click();
+  const excerpt = page.locator(".source.open .source-excerpt");
+  await expect(excerpt.locator("mark")).toHaveCount(2);
+  const tops = await excerpt.evaluate((element) => {
     const nodes = [...element.childNodes];
     const i = nodes.findIndex((node, k) => node.nodeType === Node.TEXT_NODE && node.textContent === "\n" && nodes[k - 1]?.nodeName === "MARK" && nodes[k + 1]?.nodeName === "MARK");
-    return [nodes[i - 1], nodes[i + 1]].map((node) => Math.round((node as Element).getBoundingClientRect().top));
+    return i < 0 ? [] : [nodes[i - 1], nodes[i + 1]].map((node) => Math.round((node as Element).getBoundingClientRect().top));
   });
+  expect(tops, "the excerpt has two highlights a line break apart").toHaveLength(2);
   expect(tops[1]!).toBeGreaterThan(tops[0]!);
 });
 
@@ -275,6 +306,23 @@ test("the entity panel's relationship types keep one line at 1440 px", async ({ 
   const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+  // Every relationship gets a long description and a type of its own
+  // length, so the panel's rows are the ones the bug showed up in whatever
+  // the demo's graph says.
+  await page.route(
+    (url) => url.pathname === "/api/graphs/data",
+    async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { edges: { type?: string; description?: string | null }[] };
+      const types = ["RELATED_TO", "CONTRACTS_WITH", "DELIVERS_TO"];
+      body.edges = body.edges.map((edge, i) => ({
+        ...edge,
+        type: types[i % types.length],
+        description: "A relationship stated at length, long enough to fill two lines of the panel beside its type label.",
+      }));
+      await route.fulfill({ response, json: body });
+    },
+  );
   const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
   await page.goto(token ? `/graph?token=${encodeURIComponent(token)}` : "/graph");
   await expect(page.locator(".graph-canvas canvas").first()).toBeVisible({ timeout: 60_000 });
