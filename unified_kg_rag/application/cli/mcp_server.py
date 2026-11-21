@@ -480,6 +480,14 @@ def build_mcp_server(
         if len(tools.namespaces) > 1
         else []
     )
+
+    def top_k_parameter(text: str) -> inspect.Parameter:
+        return _parameter(
+            "top_k",
+            Annotated[int, Field(ge=1, le=limits.max_top_k, description=text)],
+            min(10, limits.max_top_k),
+        )
+
     query_parameters = [
         _parameter(
             "query",
@@ -521,13 +529,9 @@ def build_mcp_server(
             ],
             None,
         ),
-        _parameter(
-            "top_k",
-            Annotated[
-                int,
-                Field(ge=1, le=limits.max_top_k, description="Results to return"),
-            ],
-            min(10, limits.max_top_k),
+        top_k_parameter(
+            "The most records returned, each kind keeping its share of the "
+            "strategy's results"
         ),
         _parameter(
             "filters",
@@ -579,8 +583,12 @@ def build_mcp_server(
             description="The message text (an earlier answer as returned)",
         )
 
+    answer_top_k = top_k_parameter(
+        "The strategy's base retrieval width; the answer's context is wider "
+        "(records: all lists it)"
+    )
     answer_parameters = [
-        *query_parameters,
+        *(answer_top_k if p.name == "top_k" else p for p in query_parameters),
         _parameter(
             "history",
             Annotated[

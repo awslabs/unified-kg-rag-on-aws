@@ -201,6 +201,36 @@ def test_the_tool_schemas_an_agent_reads_hold_no_docstring_markup() -> None:
 
 
 @requires_mcp
+def test_top_k_tells_an_agent_what_it_bounds_in_each_tool() -> None:
+    """Both tools said "Results to return", while kg_answer's top_k bounds
+    nothing an agent gets back: the answer's context is wider (R2B-7)."""
+    import asyncio
+
+    from mcp import Client
+
+    server = build_mcp_server(SimpleNamespace(config=Config()))  # type: ignore[arg-type]
+
+    async def top_k() -> dict[str, dict]:
+        async with Client(server) as client:
+            tools = (await client.list_tools()).tools
+            return {
+                t.name: t.input_schema["properties"]["top_k"]
+                for t in tools
+                if t.name in ("kg_search", "kg_answer")
+            }
+
+    schemas = asyncio.run(top_k())
+    search, answer = schemas["kg_search"], schemas["kg_answer"]
+    assert search["description"].startswith("The most records returned")
+    assert "context is wider" in answer["description"]
+    assert "records returned" not in answer["description"]
+    # The bound and the default are the same in both.
+    assert {k: v for k, v in search.items() if k != "description"} == {
+        k: v for k, v in answer.items() if k != "description"
+    }
+
+
+@requires_mcp
 def test_kg_answer_takes_a_bounded_history_over_the_protocol(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
