@@ -9,6 +9,7 @@ HTML to a ``tmp_path``. pyvis is a pure-Python dependency (no AWS).
 
 from __future__ import annotations
 
+import html
 import json
 import re
 from pathlib import Path
@@ -114,6 +115,38 @@ class TestNetworkVisualization:
         add_nodes = mocker.spy(renderer, "_add_nodes")
         renderer.create_network_visualization(_graph(), {}, str(tmp_path / "g.html"))
         assert add_nodes.call_args.args[1].number_of_nodes() == 3
+
+    def test_a_capped_page_says_what_it_drew_and_the_run_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """R2C-4: a page that drew 600 of 732 nodes and 3,000 of 27,712
+        links said nothing of either cap (an INFO line only), where the
+        console's Graph page states both."""
+        graph = nx.complete_graph(6)
+        graph.add_node(6)
+        out = tmp_path / "g.html"
+        renderer = InteractiveRenderer({"max_nodes": 5, "max_edges": 4})
+        with caplog.at_level("WARNING"):
+            renderer.create_network_visualization(graph, {}, str(out))
+        page = out.read_text(encoding="utf-8")
+        notice = re.search(r'<p class="kg-rag-cap-notice"[^>]*>([^<]*)</p>', page)
+        assert notice is not None
+        text = html.unescape(notice.group(1))
+        assert "The 5 best-connected of 7 entities are drawn." in text
+        assert "Of the 10 relationships between the drawn entities, the 4" in text
+        # In the body, before the graph.
+        assert page.index("<body>") < notice.start() < page.index('id="mynetwork"')
+        (warned,) = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert text in warned.getMessage()
+
+    def test_a_whole_graph_page_has_no_notice(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        out = tmp_path / "g.html"
+        with caplog.at_level("WARNING"):
+            InteractiveRenderer({}).create_network_visualization(_graph(), {}, str(out))
+        assert "kg-rag-cap-notice" not in out.read_text(encoding="utf-8")
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
     def test_empty_graph_writes_nothing(self, tmp_path: Path) -> None:
         out = tmp_path / "graph.html"

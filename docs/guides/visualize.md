@@ -90,7 +90,9 @@ Ingestion itself renders nothing. Another renderer plugs in through
   ([measured](../concepts/defaults-and-evidence.md#graph-page-size)). It
   lays out only those, each connected component on its own, packed in rows
   largest first: the console's Graph page draws the same nodes and links at
-  the same positions.
+  the same positions. A page that drew part of the graph says at its top how
+  many of the entities and of their relationships it drew, as the Graph page
+  does, and the run logs the same at WARNING.
 - Edge width and opacity are log-scaled to the graph's own weight range.
 - Only files a renderer wrote are reported (an earlier file of the same name
   is removed first); when nothing is rendered (an empty graph), or a

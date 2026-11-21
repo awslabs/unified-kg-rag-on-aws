@@ -3,6 +3,7 @@
 import html
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, ClassVar
 
 import networkx as nx
@@ -13,6 +14,7 @@ from unified_kg_rag.domain.ingestion.visualization_data import displayed_graph
 from unified_kg_rag.domain.models import HierarchicalCommunity
 from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
 
@@ -49,18 +51,14 @@ class InteractiveRenderer:
             logger.warning("Cannot create visualization for an empty or invalid graph.")
             return
 
-        drawn = displayed_graph(graph, self.max_nodes, self.max_edges)
-        if drawn is not graph:
-            logger.info(
-                "Interactive graph capped to %s of %s nodes (the top by degree) "
-                "and %s of %s links (graph.visualization.interactive.max_nodes, "
-                "max_edges)",
-                drawn.number_of_nodes(),
-                graph.number_of_nodes(),
-                drawn.number_of_edges(),
-                graph.number_of_edges(),
-            )
-            graph = drawn
+        # The node cap, then the link cap between the nodes kept (one
+        # displayed_graph), so the page can say what each cut.
+        kept = displayed_graph(graph, self.max_nodes)
+        drawn = displayed_graph(kept, None, self.max_edges)
+        notice = self._cap_notice(graph, kept, drawn)
+        if notice:
+            logger.warning("Interactive graph drew a part of the graph: %s", notice)
+        graph = drawn
 
         logger.info(
             "Creating interactive visualization for %s nodes...",
@@ -79,7 +77,48 @@ class InteractiveRenderer:
         self._escape_titles_for_html_popup(net)
 
         net.save_graph(outputs_path)
+        if notice:
+            self._add_notice(outputs_path, notice)
         logger.info("Interactive visualization saved to %s", outputs_path)
+
+    @staticmethod
+    def _cap_notice(graph: nx.Graph, kept: nx.Graph, drawn: nx.Graph) -> str:
+        """What the page says of the part of ``graph`` it draws: ``kept``
+        (its nodes past ``max_nodes`` cut) and ``drawn`` (of those nodes'
+        links, the ones ``max_edges`` keeps); the console's Graph page says
+        the same. Empty when the page draws the whole graph."""
+        sentences = []
+        if kept.number_of_nodes() < graph.number_of_nodes():
+            sentences.append(
+                f"The {kept.number_of_nodes():,} best-connected of "
+                f"{graph.number_of_nodes():,} entities are drawn."
+            )
+        if drawn.number_of_edges() < kept.number_of_edges():
+            sentences.append(
+                f"Of the {kept.number_of_edges():,} relationships between the "
+                f"drawn entities, the {drawn.number_of_edges():,} strongest are "
+                "drawn, each entity's own strongest first."
+            )
+        if sentences:
+            sentences.append(
+                "Set graph.visualization.interactive.max_nodes and max_edges "
+                "to 0 to draw them all."
+            )
+        return " ".join(sentences)
+
+    @staticmethod
+    def _add_notice(outputs_path: str, notice: str) -> None:
+        """Put ``notice`` at the top of the page pyvis wrote."""
+        path = Path(outputs_path)
+        page = path.read_text(encoding="utf-8")
+        caption = (
+            '<p class="kg-rag-cap-notice" style="font-family: sans-serif; '
+            f'margin: 8px;">{html.escape(notice)}</p>'
+        )
+        head, body, rest = page.partition("<body>")
+        atomic_write_text(
+            path, f"{head}{body}\n{caption}{rest}" if body else caption + page
+        )
 
     def _init_network(self, directed: bool = False) -> Network:
         return Network(
