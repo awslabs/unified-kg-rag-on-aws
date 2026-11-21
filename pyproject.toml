@@ -370,6 +370,9 @@ markers = [
 # TinkerPop line; numba: transitive via unstructured; ragas: the
 # metric imports and LangchainLLMWrapper are deprecated in the pinned 0.x line.
 filterwarnings = [
+    # The package never reads its own deprecated names; a test that uses one
+    # on purpose says so (pytest.warns / pytest.deprecated_call).
+    "error::unified_kg_rag.shared.utils.deprecation.PackageDeprecationWarning",
     "ignore::DeprecationWarning:gremlin_python",
     "ignore::DeprecationWarning:numba",
     "ignore:Importing .* from 'ragas.metrics' is deprecated:DeprecationWarning",

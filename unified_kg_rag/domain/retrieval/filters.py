@@ -37,12 +37,16 @@ from __future__ import annotations
 import itertools
 import json
 import math
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from typing import Any
 
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
+from unified_kg_rag.domain.ingestion.document_identity import (
+    PATH_FILTER_KEYS,
+    path_filter_value,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_SOURCE_KIND,
@@ -549,23 +553,32 @@ def _source_kind(value: Any) -> Any:
     return kind
 
 
-def _lowercased(value: Any) -> Any:
-    """``value`` with the lowercase form of each string beside it (a scalar
-    becomes a list when the forms differ); a range is left as given."""
+def _with_form(value: Any, form: Callable[[str], str]) -> Any:
+    """``value`` with the ``form`` of each string beside it (a scalar
+    becomes a list when the two differ); a range is left as given."""
     if isinstance(value, str):
-        return value if value == value.lower() else [value, value.lower()]
+        return value if value == form(value) else [value, form(value)]
     if isinstance(value, list):
         if any(isinstance(v, list | dict) for v in value):
             # Nested: left for check_filter_values to refuse, not a crash.
             return value
         return list(
             dict.fromkeys(
-                form
+                shown
                 for v in value
-                for form in ((v, v.lower()) if isinstance(v, str) else (v,))
+                for shown in ((v, form(v)) if isinstance(v, str) else (v,))
             )
         )
     return value
+
+
+# The path filter keys of a query: ``attr_<key>`` and
+# ``attributes.filters.<key>`` of each key ingestion stamps.
+_PATH_FILTER_QUERY_KEYS = frozenset(
+    prefix + key
+    for prefix in (ATTRIBUTE_KEY_PREFIX, DOCUMENT_FILTERS_PREFIX)
+    for key in PATH_FILTER_KEYS
+)
 
 
 def source_kinds_values(value: Any) -> list[str]:
@@ -619,8 +632,9 @@ def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None
     an integer one no fractional number (``2.0`` becomes ``2``). A
     ``source_kinds`` value (or each value of a list) is a source kind, in
     lower case, and a string of a field ingestion stores lowercase
-    (``_LOWERCASE_FIELDS``) matches its lowercase form too. Values of other
-    fields are unchanged.
+    (``_LOWERCASE_FIELDS``) matches its lowercase form too, and a path
+    filter's (``attr_file``, ``attr_folder``) the NFC form ingestion stamps
+    (``path_filter_value``). Values of other fields are unchanged.
 
     Raises:
         InvalidFilterError: A value is not a value of its field's type.
@@ -637,7 +651,9 @@ def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None
                 else _source_kind(value)
             )
         elif key in _LOWERCASE_FIELDS:
-            typed[key] = _lowercased(value)
+            typed[key] = _with_form(value, str.lower)
+        elif key in _PATH_FILTER_QUERY_KEYS:
+            typed[key] = _with_form(value, path_filter_value)
         elif kind not in _TYPED:
             typed[key] = value
         elif isinstance(value, list):

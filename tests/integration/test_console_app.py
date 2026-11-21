@@ -12,6 +12,7 @@ outside its directories and edits the config file.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -399,10 +400,17 @@ def test_an_ingestion_that_narrows_the_namespace_is_refused_unconfirmed(
 def test_a_question_with_an_unsafe_namespace_is_refused_with_a_message(
     client: Any, name: str
 ) -> None:
-    # suffix, the namespace's deprecated name, is checked as namespace is.
-    response = client.post(
-        "/api/ask", json={"query": "Who?", name: "../etc"}, headers=HEADERS
+    # suffix, the namespace's deprecated name, is checked as namespace is
+    # (with its warning, which the suite turns into an error otherwise).
+    deprecated = (
+        pytest.warns(DeprecationWarning, match="suffix is deprecated")
+        if name == "suffix"
+        else contextlib.nullcontext()
     )
+    with deprecated:
+        response = client.post(
+            "/api/ask", json={"query": "Who?", name: "../etc"}, headers=HEADERS
+        )
     assert response.status_code == 422
     body = response.json()
     assert body["code"] == "invalid" and "namespace" in body["error"]

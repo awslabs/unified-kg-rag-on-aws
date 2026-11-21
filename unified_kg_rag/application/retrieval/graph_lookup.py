@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.retrieval import methodology_check
 from unified_kg_rag.application.retrieval.filter_validation import (
+    check_path_filter_keys,
     validate_filter_keys,
 )
 from unified_kg_rag.application.retrieval.text_units import fetch_text_units
@@ -355,7 +356,9 @@ async def text_units(
     Raises:
         IndexNotFoundError: Nothing was ingested under ``suffix``.
         InvalidFilterError: A filter key the text-units index does not
-            declare (it would be dropped, the lookup unfiltered).
+            declare (it would be dropped, the lookup unfiltered), or a path
+            filter key the namespace's documents may not all carry
+            (``check_path_filter_keys``, as a query refuses it).
     """
     suffix = resolve_namespace(chain.config, suffix)
     await require_namespace(chain, suffix)
@@ -363,6 +366,10 @@ async def text_units(
     validate_filter_keys(
         filters, [retriever], [chain.config.indexing.opensearch.text_units_index_prefix]
     )
+    if filters:
+        check_path_filter_keys(
+            filters, await methodology_check.read_holdings(chain, suffix), suffix
+        )
     fetched = await fetch_text_units(
         retriever,
         chain.config,

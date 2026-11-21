@@ -46,6 +46,7 @@ import codecs
 import hashlib
 import json
 import re
+import unicodedata
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
@@ -164,12 +165,21 @@ def is_unparsed(document: Document) -> bool:
     return isinstance(document.metadata.get(UNPARSED_CONTENT_HASH_KEY), str)
 
 
+def path_filter_value(value: str) -> str:
+    """A path filter's value in the one form ingestion stamps it and a query
+    compares it in: NFC. A file system may give a name decomposed (NFD
+    Hangul from macOS or an archive tool) while a user types it composed,
+    and the stores compare values as written."""
+    return unicodedata.normalize("NFC", value)
+
+
 def path_filters(relative_path: str) -> dict[str, str | list[str]]:
     """The path filters of a document at ``relative_path`` (POSIX): ``file``
     is the path itself, ``folder`` each folder that holds it, outermost
     first (``a/b/c.txt``: ``["a", "a/b"]``), so ``attr_folder: a`` matches
     every document below ``a``. A document at the corpus root has no
-    ``folder``.
+    ``folder``. Both are NFC (:func:`path_filter_value`); the relative path
+    the document's identity derives from is kept as given.
 
     Example:
         >>> path_filters("contracts/2024/acme.txt")
@@ -177,9 +187,10 @@ def path_filters(relative_path: str) -> dict[str, str | list[str]]:
         >>> path_filters("notes.txt")
         {'file': 'notes.txt'}
     """
-    parts = PurePosixPath(relative_path).parts[:-1]
+    path = path_filter_value(relative_path)
+    parts = PurePosixPath(path).parts[:-1]
     folders = ["/".join(parts[: i + 1]) for i in range(len(parts))]
-    filters: dict[str, str | list[str]] = {FILE_FILTER_KEY: relative_path}
+    filters: dict[str, str | list[str]] = {FILE_FILTER_KEY: path}
     if folders:
         filters[FOLDER_FILTER_KEY] = folders
     return filters

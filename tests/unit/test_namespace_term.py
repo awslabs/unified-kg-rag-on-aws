@@ -29,6 +29,7 @@ from unified_kg_rag.application.retrieval.rag_chain import RAGInput
 from unified_kg_rag.domain.models import Config, EvaluationQuery
 from unified_kg_rag.domain.models.config import _root
 from unified_kg_rag.domain.models.namespace import DEPRECATED_NAMESPACE_NAMES
+from unified_kg_rag.shared.utils.deprecation import PackageDeprecationWarning
 
 pytestmark = pytest.mark.unit
 
@@ -127,6 +128,15 @@ def test_rag_input_takes_namespace_and_the_deprecated_suffix() -> None:
     assert "name different namespaces" in str(exc.value)
     with pytest.raises(ValidationError):
         RAGInput(query="q", namespace="../etc")
+
+
+def test_a_deprecated_name_read_outside_pytest_warns_fails_the_suite() -> None:
+    # The suite's filterwarnings turn the package's deprecations into
+    # errors, so an internal read of a deprecated name (a filtered query
+    # read RAGInput.suffix) fails whichever test reaches it.
+    with pytest.raises(PackageDeprecationWarning, match="suffix is deprecated"):
+        _ = RAGInput(query="q", namespace="tenant-a").suffix
+    assert issubclass(PackageDeprecationWarning, DeprecationWarning)
 
 
 def test_the_inspection_functions_take_namespace_and_the_deprecated_suffix() -> None:

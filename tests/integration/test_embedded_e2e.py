@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,7 @@ from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.cli import run_visualization
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.retrieval import graph_lookup
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
@@ -1168,11 +1170,15 @@ def test_concurrent_same_text_queries_each_name_their_own_failure(
 
 
 # A corpus in folders: each document's path filters (file, folder) scope a
-# question to a file or a folder at any depth.
+# question to a file or a folder at any depth. One folder is named in
+# decomposed Hangul (NFD, as macOS gives it), one file holds a ':'.
+_NFD_FOLDER = unicodedata.normalize("NFD", "서류")
 _FOLDERED = {
     "contracts/2024/acme.txt": "Vendor supplies widgets to Buyer.",
     "contracts/globex.txt": "Buyer pays Vendor for gadgets.",
     "logistics/depot.txt": "Depot stores widgets for Vendor.",
+    f"{_NFD_FOLDER}/ledger.txt": "Clerk stores widgets for Vendor.",
+    "logistics/notes 10:30.txt": "Porter stores widgets for Vendor.",
     "notes.txt": "Carrier moves gadgets for Depot.",
 }
 
@@ -1213,10 +1219,13 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
         row["attributes"]["filters"]["file"]: row["attributes"]["filters"].get("folder")
         for row in rows
     }
+    # Stamped NFC, whatever form the file system gave.
     assert stamped == {
         "contracts/2024/acme.txt": ["contracts", "contracts/2024"],
         "contracts/globex.txt": ["contracts"],
         "logistics/depot.txt": ["logistics"],
+        "서류/ledger.txt": ["서류"],
+        "logistics/notes 10:30.txt": ["logistics"],
         "notes.txt": None,
     }
 
@@ -1232,6 +1241,18 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
         "attr_file": (
             {"attr_file": "logistics/depot.txt"},
             {"logistics/depot.txt"},
+        ),
+        "attr_folder NFC over an NFD name": (
+            {"attr_folder": "서류"},
+            {f"{_NFD_FOLDER}/ledger.txt"},
+        ),
+        "attr_folder NFD": (
+            {"attr_folder": _NFD_FOLDER},
+            {f"{_NFD_FOLDER}/ledger.txt"},
+        ),
+        "attr_file with ':'": (
+            {"attr_file": "logistics/notes 10:30.txt"},
+            {"logistics/notes 10:30.txt"},
         ),
     }
     chain = GraphRAGChain(config, providers=providers)
@@ -1296,6 +1317,23 @@ def test_a_path_filter_on_a_namespace_built_without_them_is_refused(
                 )
         # Refused before any model call; another document key still runs.
         assert len(server.chat_models) == calls
+        # kg_get_chunks' lookup refuses it alike (it answered from the
+        # stamped chunks alone, listing the others as missing).
+        vectors = providers.build_vector_indexer()
+        try:
+            units = stored_text_units(vectors, None, fields=["id"])
+        finally:
+            vectors.close()
+        assert units
+        with pytest.raises(InvalidFilterError, match="indexing.reset: true"):
+            asyncio.run(
+                graph_lookup.text_units(
+                    chain,
+                    None,
+                    [row["id"] for row in units],
+                    filters={"attr_folder": "logistics"},
+                )
+            )
         out = chain.invoke(
             RAGInput(
                 query="Who stores the gadgets?",

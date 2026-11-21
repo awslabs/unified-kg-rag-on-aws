@@ -102,6 +102,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.document_identity import (
+    FILE_FILTER_KEY,
     PATH_FILTER_KEYS,
     RELATIVE_PATH_KEY,
     config_registry_namespace,
@@ -240,6 +241,23 @@ def _completed_stages(context: PipelineContext) -> set[PipelineStageType]:
         for result in context.stage_results
         if result.status == PipelineStageStatus.COMPLETED and result.stage_name in known
     }
+
+
+def _stamped_filter_keys(text_units: Iterable[TextUnit]) -> list[str]:
+    """The path filter keys every document of ``text_units`` (a seed
+    graph's aside) carries: all of ``PATH_FILTER_KEYS`` when each one was
+    stamped (its ``file``; a document at the corpus root has no
+    ``folder``), none when one was not (a path outside the corpus root),
+    so a query on them is refused instead of answering from part of the
+    corpus."""
+    key = Constants.FILTERS.value
+    for unit in text_units:
+        filters = (unit.attributes or {}).get(key)
+        if not is_seed_unit(unit.id) and not (
+            isinstance(filters, dict) and FILE_FILTER_KEY in filters
+        ):
+            return []
+    return list(PATH_FILTER_KEYS)
 
 
 def _tree_pruned(results: Mapping[str, IndexingStats]) -> bool:
@@ -3371,9 +3389,11 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=__version__,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
-            # Every document this run indexed carries the path filters; a
+            # The path filters every document this run indexed carries; a
             # rewritten record does not know what the stored ones carry.
-            document_filter_keys=None if rewritten else list(PATH_FILTER_KEYS),
+            document_filter_keys=(
+                None if rewritten else _stamped_filter_keys(text_units)
+            ),
             # A full build wrote every report and summary under this config;
             # an incremental record keeps the stored ones (over()), and a
             # rewritten record does not know them.

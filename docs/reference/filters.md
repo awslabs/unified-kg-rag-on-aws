@@ -57,11 +57,21 @@ document's own filters give (`InputDocument.filters`, or a pre-parsed
 document's `filters` metadata) keeps its value. A seed graph's items carry
 their seed graph's filters instead, so a path filter leaves them out.
 
+The stamped values are NFC, and a query's `attr_file` and `attr_folder`
+values match their NFC form too, so a folder name the file system gave
+decomposed (NFD Hangul from macOS or an archive tool) matches the name as
+typed. A `:` in a name is kept (`notes 10:30.txt`); a path that starts
+with a drive (`C:`) or a URL scheme (`s3://`) is not under the corpus root
+and gets no path filters.
+
 A namespace built before ingestion stamped them (its build record names no
-`document_filter_keys`), or indexed incrementally since such a build, holds
-documents without them: a query with `attr_file` or `attr_folder` (or their
-`attributes.filters.<key>` form) is refused there (`InvalidFilterError`,
-exit 2) until a run with `indexing.reset: true` rebuilds it.
+`document_filter_keys`), indexed incrementally since such a build, or
+holding a document whose path is not under the corpus root (a pre-parsed
+document that names where it lived) holds documents without them: a query
+with `attr_file` or `attr_folder` (or their `attributes.filters.<key>`
+form), and `kg_get_chunks` with one, is refused there
+(`InvalidFilterError`, exit 2) until a run with `indexing.reset: true`
+rebuilds it.
 
 ## Values, case and dates
 
