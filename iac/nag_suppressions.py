@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aws_cdk import custom_resources as cr
 from cdk_nag import NagSuppressions
 from constructs import IConstruct
 
@@ -18,6 +19,8 @@ from iac.config import DeploymentConfig
 
 # Fixed construct id of the singleton Lambda behind CDK's AwsCustomResource.
 _AWS_CUSTOM_RESOURCE_ID = "AWS679f53fac002430cb0da5b7982bd2287"
+# Construct-id prefix of the functions a custom_resources.Provider creates.
+_PROVIDER_FRAMEWORK_PREFIX = "framework-"
 
 
 def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
@@ -25,6 +28,8 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
     storage = stacks["storage"]
     compute = stacks["compute"]
     orchestration = stacks["orchestration"]
+
+    _suppress_cdk_owned_runtimes(storage.node.root)
 
     # --- Networking ---
     if not config.vpc_flow_logs:
@@ -341,6 +346,46 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
         "kms:GenerateDataKey* is the SNS-documented publisher permission, on "
         "the alarm topic key only.",
     )
+
+
+def cdk_owned_functions(root: IConstruct) -> list[IConstruct]:
+    """The Lambda functions aws-cdk-lib creates and picks the runtime of: the
+    AwsCustomResource singleton and every Provider's ``framework-*``
+    functions, in any stack under ``root``."""
+    owned: list[IConstruct] = []
+    for construct in root.node.find_all():
+        if construct.node.id == _AWS_CUSTOM_RESOURCE_ID:
+            owned.append(construct)
+        elif isinstance(construct, cr.Provider):
+            owned += [
+                child
+                for child in construct.node.children
+                if child.node.id.startswith(_PROVIDER_FRAMEWORK_PREFIX)
+            ]
+    return owned
+
+
+def _suppress_cdk_owned_runtimes(root: IConstruct) -> None:
+    """AwsSolutions-L1 wants the newest runtime of a function's family, read
+    from the locked aws-cdk-lib's Runtime class. A CDK release that adds a
+    Node.js runtime does not move its own functions to it (2.277 added
+    nodejs26.x and kept them on nodejs24.x), and the stack cannot set their
+    runtime. Suppressed on those functions alone and for any runtime, so the
+    next such release passes too; L1 stays live on the stack's own handlers
+    (storage_custom_resources._HANDLER_RUNTIME), which still have to move to
+    each new Python runtime."""
+    for function in cdk_owned_functions(root):
+        NagSuppressions.add_resource_suppressions(
+            function,
+            [
+                {
+                    "id": "AwsSolutions-L1",
+                    "reason": "Runtime chosen by aws-cdk-lib, not settable by "
+                    "the stack; it moves with the aws-cdk-lib release.",
+                }
+            ],
+            apply_to_children=True,
+        )
 
 
 def _suppress_provider(handlers: IConstruct) -> None:

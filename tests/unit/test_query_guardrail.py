@@ -19,6 +19,7 @@ from typing import Any
 
 import boto3
 import pytest
+from botocore.awsrequest import AWSResponse
 from botocore.stub import Stubber
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
@@ -324,6 +325,36 @@ async def test_api_error_raises_guardrail_error(runtime) -> None:  # noqa: ANN00
 
     with pytest.raises(GuardrailError, match="could not screen the input"):
         await guard.acheck(_QUERY, GuardSource.INPUT)
+
+
+async def test_the_client_makes_three_requests_per_call(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    # total_max_attempts counts the first request; botocore's max_attempts
+    # would count retries only and send one request more.
+    monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _delay: None)
+    session = boto3.Session(
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+        region_name="us-east-1",
+    )
+    guard = BedrockGuardrail(_guarded_config(), boto_session=session)
+    client = guard._client
+    assert client.meta.config.retries == {"mode": "standard", "total_max_attempts": 3}
+    sent: list[str] = []
+
+    class _EmptyBody:
+        def stream(self, **_: Any) -> Iterator[bytes]:
+            yield b""
+
+    def unavailable(request: Any, **_: Any) -> AWSResponse:
+        sent.append(request.url)
+        return AWSResponse(request.url, 503, {}, _EmptyBody())
+
+    client.meta.events.register("before-send.bedrock-runtime", unavailable)
+    with pytest.raises(GuardrailError):
+        await guard.acheck(_QUERY, GuardSource.INPUT)
+    assert len(sent) == BedrockGuardrail.BOTO_TOTAL_MAX_ATTEMPTS == 3
 
 
 def test_adapter_requires_an_identifier() -> None:

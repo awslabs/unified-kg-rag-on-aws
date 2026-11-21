@@ -304,16 +304,23 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   them a code change rather than the operator's call.
 - `Ctrl-C` while `run-rag --interactive` answers stops that question and returns to the prompt; it ended the session
   with exit code 130. `Ctrl-C` at the prompt, or a second one while the question stops, ends the session as before.
-- Dependencies: pypdf 7.0.1, langchain-core 1.8.1, langchain-aws 1.9.3, pydantic 2.14.3, boto3 1.44 (also in the CDK
-  lock), aws-cdk-lib 2.276, the `ollama/ollama` 0.40.16 image in `docker/compose.local.yaml`. botocore 1.44 makes
-  `standard` the default retry mode, so the clients the package leaves at botocore's defaults (S3, STS, the Bedrock
-  control plane) make 3 attempts, not 5, and retry an unmodeled HTTP 429 as throttling; the Bedrock runtime, guardrail
-  and DynamoDB clients set their own. The IaC's Nori package handlers run on Python 3.15, the newest Lambda runtime
-  aws-cdk-lib 2.276 knows (cdk-nag AwsSolutions-L1). pypdf and langchain-core versions are part of the parser
-  fingerprint, so the first ingestion after upgrading parses every file again once. pypdf 7 gives the same page text,
-  labels and offsets as 6.21.4 on the repo's PDF fixtures, but separates words a line shifts between baselines
-  (`AlphaBeta Gamma` for `AlphaBetaGamma`): such a document's text changes, so that first run also extracts and indexes
-  it again once (model calls).
+- Dependencies: pypdf 7.1.0, langchain-core 1.8.1, langchain-aws 1.9.3, langchain-openai 1.8.0, pydantic 2.14.3, fastapi
+  0.162.7, boto3 1.44 (also in the CDK lock), aws-cdk-lib 2.277, the `ollama/ollama` 0.40.16 image in
+  `docker/compose.local.yaml`. botocore 1.44 makes `standard` the default retry mode, so the clients the package leaves
+  at botocore's defaults (the Bedrock control plane client that resolves inference profiles, and STS: the role check of
+  `aws.bedrock.assumed_role_arn` and credential refresh) make 3 attempts, not 5. Every client in standard or adaptive
+  mode now also retries an unmodeled HTTP 429 as throttling. The Bedrock runtime, guardrail, DynamoDB and S3 clients set
+  their own attempts (S3: 5 requests, see below). The IaC's Nori package handlers run on Python 3.15, the newest Python
+  Lambda runtime aws-cdk-lib 2.277 knows (cdk-nag AwsSolutions-L1). aws-cdk-lib 2.277 adds nodejs26.x but keeps the
+  functions it creates itself (the AwsCustomResource singleton, a custom-resource provider's `framework-*` functions) on
+  nodejs24.x, and the stack cannot set their runtime, so L1 failed the synth on them: L1 is suppressed on those
+  functions only, whatever their runtime ("runtime chosen by aws-cdk-lib"), and the stack's own handlers keep it. pypdf
+  and langchain-core versions are part of the parser fingerprint, so the first ingestion after upgrading parses every
+  file again once. pypdf 7 gives the same page text, labels and offsets as 6.21.4 on the repo's PDF fixtures, but
+  separates words a line shifts between baselines (`AlphaBeta Gamma` for `AlphaBetaGamma`): such a document's text
+  changes, so that first run also extracts and indexes it again once (model calls). pypdf 7.1 also no longer reads a
+  positive (kerning) offset in a `TJ` array as a word gap, and counts character spacing (`Tc`) in one: a PDF set that
+  way reads `AlphaBeta` where 7.0 read `Alpha Beta`, and is extracted and indexed again once too.
 - Graph extraction builds each unit's record as its call completes, while the other calls are in flight, not all
   after the last call (500 units: 9 s after the last call to 0.01 s), and `entity_key` is cached (bounded LRU; record
   building takes 25-33% less CPU). Outputs are unchanged.
@@ -364,6 +371,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 ### Fixed
 Bugs present in 0.3.0.
 
+- The guardrail's client made 4 requests per screening call, not 3: it set botocore's `max_attempts`, which counts
+  retries only, where every other client of the package sets `total_max_attempts`. A stalled guardrail held a query for
+  up to about 160 s (10 s connect + 30 s read per request); it is now about 120 s.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
   out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items

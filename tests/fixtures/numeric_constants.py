@@ -196,6 +196,7 @@ ALLOWED: dict[str, str] = {
         "adapters/aws/opensearch.py:OpenSearchClient.BULK_CHUNK_SIZE",
         "adapters/guardrail/bedrock.py:BedrockGuardrail.BOTO_CONNECT_TIMEOUT",
         "adapters/guardrail/bedrock.py:BedrockGuardrail.BOTO_READ_TIMEOUT",
+        "adapters/guardrail/bedrock.py:BedrockGuardrail.BOTO_TOTAL_MAX_ATTEMPTS",
         "adapters/aws/s3_transfer.py:S3_CONNECT_TIMEOUT_SECONDS",
         "adapters/aws/s3_transfer.py:S3_READ_TIMEOUT_SECONDS",
         "adapters/aws/s3_transfer.py:S3_TOTAL_MAX_ATTEMPTS",

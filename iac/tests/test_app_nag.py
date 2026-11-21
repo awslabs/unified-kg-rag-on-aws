@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 
+from iac.nag_suppressions import _AWS_CUSTOM_RESOURCE_ID
+
 _IAC = Path(__file__).resolve().parent.parent
 _ACCOUNT = "111111111111"
 _REGION = "us-west-2"
@@ -186,3 +188,47 @@ def test_the_app_refuses_an_env_name_too_long_for_its_names(tmp_path: Path) -> N
     with pytest.raises(subprocess.CalledProcessError) as raised:
         _synth_errors({"env_name": "x" * 30}, tmp_path)
     assert b"is too long for the cache bucket name" in raised.value.stderr
+
+
+def _l1_suppressed(outdir: Path) -> dict[str, bool]:
+    """Each Lambda function's construct path -> whether AwsSolutions-L1 is
+    suppressed on it."""
+    functions = {}
+    for template in outdir.glob("*.template.json"):
+        resources = json.loads(template.read_text())["Resources"]
+        for resource in resources.values():
+            if resource["Type"] != "AWS::Lambda::Function":
+                continue
+            metadata = resource.get("Metadata", {})
+            rules = metadata.get("cdk_nag", {}).get("rules_to_suppress", [])
+            functions[metadata["aws:cdk:path"]] = any(
+                rule["id"] == "AwsSolutions-L1" for rule in rules
+            )
+    return functions
+
+
+def test_l1_is_suppressed_only_on_the_functions_aws_cdk_lib_owns(
+    tmp_path: Path,
+) -> None:
+    # aws-cdk-lib picks the runtime of the AwsCustomResource singleton and of
+    # a Provider's framework functions, and keeps them on an older Node.js
+    # than the newest it declares (2.277: nodejs24.x vs nodejs26.x). Every
+    # function the stacks define themselves keeps L1, so it still fails on
+    # an old runtime.
+    # The cdk CLI turns path metadata on; a plain app run needs it asked for.
+    context = {**_NORI, "aws:cdk:enable-path-metadata": True}
+    assert _synth_errors(context, tmp_path) == []
+    functions = _l1_suppressed(tmp_path)
+    owned = {
+        f"GraphRagStorage/{_AWS_CUSTOM_RESOURCE_ID}/Resource",
+        *(
+            f"GraphRagStorage/NoriPackage/Handlers/Provider/framework-{name}/Resource"
+            for name in ("onEvent", "isComplete", "onTimeout")
+        ),
+    }
+    assert {path for path, suppressed in functions.items() if suppressed} == owned
+    for handler in ("OnEvent", "IsComplete"):
+        assert (
+            functions[f"GraphRagStorage/NoriPackage/Handlers/{handler}/Resource"]
+            is False
+        )
