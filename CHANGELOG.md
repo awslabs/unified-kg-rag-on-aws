@@ -117,6 +117,17 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `answer_scoring.answer_contains_reads` and is refused as `--baseline-results` (or in a rebuilt comparison) beside a
    run of now. Score its saved answers again, with no new answer: `run-eval --from-results <old results> --rescore`
    (an `extracted` `answer_span` calls only the answer-span model), then compare against the re-scored run.
+   run of now. Re-run the baseline.
+11. A script that reads the CLIs' log lines, or the EMF records of `--metrics-sink cloudwatch`, from stdout reads
+    them from stderr now, in text mode too (*Breaking changes*): stdout holds only the run's output (`2>&1` keeps both
+    on one stream).
+12. A custom vector store that implements `VectorIndexer.scan_text_units` and not `scan_text_unit_pages` builds no
+    summary tree (*Breaking changes*): the method is gone and nothing calls it. Implement
+    `SummaryTreeStore.scan_text_unit_pages`, which yields the text units in id order, one page at a time.
+13. Python code that reads `RAGInput.search_type` gets `None` where the caller set none (the query runs the config's
+    `search.search_type`), and code that reads `EvaluationConfig.retrieval_k` gets a list of cutoffs (*Breaking
+    changes*): read `config.search.search_type` for the type a query runs, and `retrieval_k[0]` for the cutoff that
+    scores `hit_at_k`, `recall_at_k` and `ndcg_at_k`.
 
 ### Added
 
