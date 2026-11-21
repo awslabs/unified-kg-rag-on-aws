@@ -171,9 +171,12 @@ so an inline `# gitleaks:allow` added later does not clear it. A test that needs
 `userinfo_url` (`tests/fixtures/url_credentials.py`); a document writes the password as a placeholder (`<password>`).
 `tests/unit/test_no_literal_url_credentials.py` fails on a literal in any tracked file.
 
-gitleaks (default rules) finds no secret in the tree or the history: its false positives are listed by fingerprint in
-[`.gitleaksignore`](./.gitleaksignore), each with what it matched. Scan a clone, not the work tree (`gitleaks dir`
-also reads untracked files such as `__pycache__/`), with the image pinned by digest:
+gitleaks (default rules) finds no secret in the tree or the history. Its false positives are allowed in
+[`.gitleaks.toml`](./.gitleaks.toml), which gitleaks loads from the scanned directory: each entry names the rule and
+a pattern of the line's text, with what it matched, so it holds for the tree and every commit and no edit elsewhere
+in a file moves it. The `gitleaks` job of [`security.yml`](./.github/workflows/security.yml) scans the tree and a
+pull request's commits (the whole branch on a push). Scan a clone locally, not the work tree (`gitleaks dir` also
+reads untracked files such as `__pycache__/`), with the image pinned by digest:
 
 ```bash
 git clone --quiet . /tmp/gitleaks-scan
@@ -182,11 +185,11 @@ docker run --rm -v /tmp/gitleaks-scan:/repo:ro -w /repo \
   git . --log-opts=HEAD --redact --no-banner   # the history; then `dir .` for the tree
 ```
 
-(`--log-opts=HEAD` reads the checked-out branch's commits; without it gitleaks reads every ref the clone has.)
+(`--log-opts=HEAD` reads the checked-out branch's commits; without it gitleaks reads every ref the clone has. Run
+it from the clone's root, `-w /repo` and `.`: gitleaks loads `.gitleaks.toml` from the scanned directory.)
 
-A new finding that is not a secret gets its fingerprint (from `--report-format json`) and a comment in
-`.gitleaksignore`. A tree fingerprint holds the line number, so an edit above a listed line moves it: replace the
-entry.
+A new finding that is not a secret gets an entry in `.gitleaks.toml`: scope it to the rule (`targetRules`) and match
+the shortest text that identifies the line, so a real key on any other line is still found.
 
 ### Pins Dependabot does not move
 
@@ -210,6 +213,8 @@ hand, together where they must match:
 - The AWS CDK CLI, `npm install -g aws-cdk@…` in the `iac` job of `quality.yml`, and that job's `node-version`.
 - The ADOT collector sidecar, `COLLECTOR_VERSION` and `COLLECTOR_DIGEST` in `iac/stacks/compute_stack.py`.
 - The Trivy image the `docker` jobs scan with (`aquasec/trivy`, tag and digest, in `quality.yml`).
+- The gitleaks image, `zricethezav/gitleaks@sha256:…` in the `gitleaks` job of `security.yml` and in the command
+  above (the same digest in both).
 
 The weekly [`pin-freshness`](./.github/workflows/pin-freshness.yml) workflow runs `scripts/check_pins.py`, which
 compares the base image, uv, apt, ADOT, CDK CLI and Trivy pins with upstream (a base index whose amd64 and arm64
