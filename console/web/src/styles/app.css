@@ -1861,7 +1861,16 @@ button.cite-link:hover {
 }
 .list-plain .neighbour {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
+}
+/* A relationship's type keeps its own width (up to 40% of the row) rather
+ * than shrinking to one letter per line beside a long description. */
+.list-plain button > .id {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  max-width: 40%;
+  text-align: right;
 }
 .edge-dir {
   margin-right: 6px;

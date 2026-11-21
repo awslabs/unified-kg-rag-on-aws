@@ -419,6 +419,9 @@ Each name below warns and still works, and is removed in 0.5.0
   `from unified_kg_rag import ...` too (it named a frame of the import machinery).
 
 ### Fixed
+
+- The console's Graph page: an entity's relationship types (`RELATED_TO`, `DELIVERS_TO`) no longer shrink to one or
+  two letters per line beside a long description in the Entity panel.
 Bugs present in 0.3.0.
 
 - The guardrail's client made 4 requests per screening call, not 3: it set botocore's `max_attempts`, which counts

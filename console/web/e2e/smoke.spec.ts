@@ -235,6 +235,33 @@ for (const locale of ["en", "de", "fr", "ru", "es", "it", "pt", "ko", "ja", "zh"
   }
 }
 
+// Regression: the Entity panel's relationship types (RELATED_TO,
+// DELIVERS_TO) shrank to one or two letters per line beside a long
+// description at 1440 px. Each type now keeps one line.
+test("the entity panel's relationship types keep one line at 1440 px", async ({ page, baseURL }) => {
+  const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  await page.goto(token ? `/graph?token=${encodeURIComponent(token)}` : "/graph");
+  await expect(page.locator(".graph-canvas canvas").first()).toBeVisible({ timeout: 60_000 });
+  await page.locator('[role="tabpanel"] .list-plain button').first().click();
+  const types = page.locator('[role="tabpanel"] .list-plain .neighbour + .id');
+  await expect(types.first()).toBeVisible();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  const lines = await types.evaluateAll((elements) =>
+    elements.map((element) => {
+      // The line boxes the text lays out in, not the element's height.
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const tops = new Set([...range.getClientRects()].map((rect) => Math.round(rect.top)));
+      return { type: element.textContent, lines: tops.size };
+    }),
+  );
+  expect(lines.length).toBeGreaterThanOrEqual(2);
+  expect(lines.filter((entry) => entry.lines > 1), JSON.stringify(lines)).toEqual([]);
+});
+
 // Regression (arch E1): with a second namespace ingested, the Graph page
 // opened that namespace's newer export and an answer's "Show in the graph"
 // drew another namespace's graph. Both open the config namespace's.
