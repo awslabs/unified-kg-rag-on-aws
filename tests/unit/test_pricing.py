@@ -220,6 +220,26 @@ def test_an_embedding_price_adds_the_embedding_tokens() -> None:
     )
 
 
+def test_a_query_s_cost_names_the_embedding_model_it_leaves_out() -> None:
+    # RV4-9: a query's metadata and audit record (snapshot_cost_usd) priced
+    # the rest and named no embedding model left out, as the dashboard does.
+    from unified_kg_rag.domain.pricing import snapshot_cost_usd
+
+    snapshot = {
+        "by_model": {
+            "m": {"llm_calls": 1, "input_tokens": 1000, "output_tokens": 100},
+            "embedder": {"embedding_calls": 3, "embedding_input_tokens": 5000},
+        }
+    }
+    usd, unpriced = snapshot_cost_usd(snapshot, {"m": SONNET})
+    assert usd == pytest.approx((1000 * 2.0 + 100 * 10.0) / 1e6)
+    assert unpriced == ["embedder"]
+    embedding = ModelPrice(embedding_per_million_tokens=0.02)
+    assert snapshot_cost_usd(snapshot, {"m": SONNET, "embedder": embedding})[1] == []
+    # A language model without a price: no USD, both named.
+    assert snapshot_cost_usd(snapshot, {}) == (None, ["embedder", "m"])
+
+
 def test_a_price_names_at_least_one_rate() -> None:
     assert (
         ModelPrice(embedding_per_million_tokens=0.02).input_per_million_tokens is None

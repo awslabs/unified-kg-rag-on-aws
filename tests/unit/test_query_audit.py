@@ -125,7 +125,11 @@ async def test_an_answer_writes_one_record_naming_its_build_settings_and_evidenc
     finally:
         await chain.aclose()
     record = _one(audit)
-    assert record.record_version == 1
+    assert record.record_version == 2
+    # RV4-12: the query's own search settings (the config's search type when
+    # it names none), its filters by key only.
+    assert (record.search_type, record.top_k) == ("hybrid", query.top_k)
+    assert record.filter_keys == []
     assert record.query_id == output.metadata["query_id"]
     assert (record.mode, record.namespace) == ("rag", "default")
     assert (record.user_id, record.conversation_id) == ("user-42", "c-1")
@@ -148,6 +152,49 @@ async def test_an_answer_writes_one_record_naming_its_build_settings_and_evidenc
     assert record.models == [_MODEL]
     assert record.cost_usd is not None and record.cost_usd > 0
     assert record.unpriced_models == []
+
+
+async def test_the_record_names_the_query_s_search_settings_not_its_filter_values(
+    audit: _Captured,
+) -> None:
+    chain = _simple_chain()
+    query = _SIMPLE_QUERY.model_copy(update={"search_type": "lexical", "top_k": 3})
+    try:
+        await chain.asearch(query)
+        with pytest.raises(InvalidArgumentError):
+            await chain.ainvoke(
+                {"query": "q", "search_strategy": "no-such", "search_type": "x y"}
+            )
+    finally:
+        await chain.aclose()
+    searched, refused = (QueryAuditRecord.model_validate(f) for f in audit.fields())
+    assert (searched.search_type, searched.top_k) == ("lexical", 3)
+    # A refused input's search type that names none is not recorded.
+    assert refused.search_type is None
+    # A filter by its keys, never its values.
+    filtered = query_audit.query_record(
+        Config(),
+        query_id="q-1",
+        trace_id=None,
+        started=0.0,
+        mode="rag",
+        fields={
+            "query": "q",
+            "filters": {"attr_folder": "secret-folder", "attr_file": "plan.txt"},
+        },
+        namespace="default",
+        strategy=None,
+        outcome=AuditOutcome.ANSWERED,
+        error_class=None,
+        degraded=False,
+        query_limited=False,
+        build=None,
+        output=None,
+        usage=None,
+    )
+    assert filtered.filter_keys == ["attr_file", "attr_folder"]
+    rendered = filtered.model_dump_json()
+    assert "secret-folder" not in rendered and "plan.txt" not in rendered
 
 
 async def test_the_record_holds_no_text_of_the_question_answer_or_sources(
@@ -286,9 +333,15 @@ async def test_a_query_a_host_gave_up_on_writes_one_record(audit: _Captured) -> 
     assert record.namespace == "default" and record.question is None
 
 
-async def test_a_cancelled_ainvoke_writes_none(audit: _Captured) -> None:
-    # As its metrics: the host that cancels it records it.
+async def test_a_cancelled_ainvoke_writes_one_stopped_record(
+    audit: _Captured,
+) -> None:
+    # RV4-1: a cancelled ainvoke (an MCP client that disconnected) wrote no
+    # record and no metric, where a console reader's stop writes `stopped`
+    # (ADR 0007: a cancelled caller is a stopped reader).
     chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
     started = asyncio.Event()
     real_screen = GraphRAGChain._screen_input
 
@@ -306,7 +359,44 @@ async def test_a_cancelled_ainvoke_writes_none(audit: _Captured) -> None:
             await task
     finally:
         await chain.aclose()
-    assert audit.fields() == []
+    record = _one(audit)
+    assert record.outcome is AuditOutcome.STOPPED
+    assert record.error_class is None and record.answer is None
+    assert record.requested_strategy == "simple"
+    assert record.question is not None
+    # Its metrics: one query, no failure.
+    ((_namespace, metrics, _properties),) = sink.emitted
+    assert metrics["query_failed"] == 0.0
+
+
+async def test_an_ainvoke_cancelled_past_its_deadline_is_one_timeout(
+    audit: _Captured, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A host's backstop (the MCP server's) cancels a query its deadline did
+    # not end (work that does not watch it): a timeout, not a stop.
+    chain = _simple_chain()
+    chain.config.search.query_timeout_seconds = 0.05
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    real_admit = GraphRAGChain._admit_query
+
+    async def unwatched(self: GraphRAGChain, *args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(10)
+        return await real_admit(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphRAGChain, "_admit_query", unwatched)
+    try:
+        task = asyncio.create_task(chain.ainvoke(_SIMPLE_QUERY))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        await chain.aclose()
+    record = _one(audit)
+    assert (record.outcome, record.error_class) == (AuditOutcome.FAILED, "timeout")
+    ((_namespace, metrics, properties),) = sink.emitted
+    assert metrics["query_failed"] == 1.0 and properties["error_class"] == "timeout"
 
 
 async def test_no_record_is_built_while_the_audit_logger_is_off(

@@ -1514,11 +1514,13 @@ limit cut short included), for an `auto` query routed past the strategies
 that did not fit (`routing.over_limits`) and for a call the limits refused
 (`limit_exceeded`), and the query span carries it as
 `kg_rag.query_limited`: watch it on the "Query outcomes" widget, and raise
-the limit when it grows. A cancelled `ainvoke` (an MCP client that disconnects
-over streamable HTTP mid-call, a task cancelled by its host) records nothing; a streamed query whose reader
-stops or is cancelled (a console client that disconnects, a caller's timeout
-around `astream`) is recorded as a stream closed early: its latency and
-usage up to there, no failure. `query_throttled_requests` counts
+the limit when it grows. A query its caller leaves is recorded as stopped:
+its latency and usage up to there, no failure. That holds for a streamed
+query whose reader stops or is cancelled (a console client that
+disconnects, a caller's timeout around `astream`) and for a cancelled
+`ainvoke` (an MCP client that disconnects over streamable HTTP mid-call, a
+task cancelled by its host); one cancelled after its deadline passed (the
+MCP server's backstop) is a timeout. `query_throttled_requests` counts
 the requests Bedrock throttled for the query, which tells a query slowed by
 throttling apart. `query_input_tokens` and `query_output_tokens` are its
 usage's language-model tokens, and `query_cost_usd` its USD

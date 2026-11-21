@@ -790,13 +790,16 @@ async def test_a_graph_call_past_the_deadline_times_out(
         await tools.get_entity(name="Depot")
 
 
-@pytest.mark.parametrize(("stalls", "recorded"), [("chain", 1), ("shaping", 0)])
+@pytest.mark.parametrize(
+    ("stalls", "recorded"), [("slot", 1), ("chain", 0), ("shaping", 0)]
+)
 async def test_a_backstop_timeout_counts_a_query_the_chain_did_not_record_once(
     monkeypatch: pytest.MonkeyPatch, stalls: str, recorded: int
 ) -> None:
-    """``kg_answer`` records a timed-out query as a failed one only when the
-    chain never returned: past the chain's answer its own metrics stand, and
-    a second record would count the query twice."""
+    """``kg_answer`` records a timed-out query as a failed one only when it
+    never reached the chain: once the chain took it, the chain records it
+    however it ends (cancelled at the backstop too, RV4-1), and a second
+    record would count the query twice."""
     unrun: list[Any] = []
     stalled: list[bool] = []
 
@@ -818,6 +821,11 @@ async def test_a_backstop_timeout_counts_a_query_the_chain_did_not_record_once(
     tools = KnowledgeGraphTools(StallingChain(config))  # type: ignore[arg-type]
     if stalls == "shaping":
         monkeypatch.setattr(tools, "_shaped", stall)
+    if stalls == "slot":
+        # Before the chain: every call slot is taken.
+        for _ in range(tools.settings.max_concurrent_calls):
+            await tools._slots.acquire()
+        stalled.append(True)
     # The backstop fires once the stalled step is in flight, not on a short
     # wall-clock deadline the steps before it could outlast on a slow runner.
     timeouts = HeldTimeouts(monkeypatch)

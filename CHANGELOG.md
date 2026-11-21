@@ -272,10 +272,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   included) writes one INFO record on the `unified_kg_rag.audit` logger from the chain, so every surface writes the
   same one: who asked (`user_id`), the index build its admission read, the answer settings' fingerprint (the
   `run-eval` manifest's `retrieval_config_sha256`), the strategy, the ids it rests on and cites, its models, usage,
-  `cost_usd` and outcome, with the question and the answer as SHA-256 digests, never their text
-  (`QueryAuditRecord`, `record_version` 1; [fields](docs/reference/telemetry.md#audit-record)).
+  `cost_usd` and outcome, the search type, `top_k` and filter keys (never the values) in force, with the question and
+  the answer as SHA-256 digests, never their text (for verification, not anonymization: a guessed question can be
+  confirmed) (`QueryAuditRecord`, `record_version` 2; [fields](docs/reference/telemetry.md#audit-record)).
   `logging.library_levels: {unified_kg_rag.audit: WARNING}` turns it off.
-- A query's spend and evidence in its trace and metrics: `metadata["cost_usd"]` (with `metadata["unpriced_models"]`)
+- A query's spend and evidence in its trace and metrics: `metadata["cost_usd"]` (with `metadata["unpriced_models"]`,
+  which names an unpriced embedding model too, left out of the USD)
   prices its usage by `models.prices`, also on the query span (`kg_rag.cost_usd`) and as the `query_cost_usd`,
   `query_input_tokens` and `query_output_tokens` query metrics; the query span names its `kg_rag.query_id` and the
   ids the answer cites (`kg_rag.cited_source_ids`); the retrieval and fusion spans the first 50 results' ids with
@@ -284,8 +286,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - `--trusted-identity-header NAME` on `run-mcp-server --transport streamable-http` and `run-console`
   (`build_mcp_app(trusted_identity_header=...)`): off by default; on, each request's queries take that header (an
   authenticating proxy's, such as an Application Load Balancer's `x-amzn-oidc-identity`) as their `user_id`, and a
-  request without exactly one valid value is refused (401). Only behind a proxy that removes or overwrites any copy
-  a client sends.
+  request without exactly one valid value (UTF-8, no comma: a comma is a second copy folded into one line) is
+  refused (401, saying whether it was missing, sent more than once or malformed). Only behind a proxy that replaces
+  (removes or overwrites, never appends to) any copy a client sends.
 - A `golden-metrics` CI job: every strategy and search type answers the synthetic structural and bridge datasets on
   fake models, and the LLM-free scores of the held-out `test` half must equal `tests/fixtures/golden_metrics.json`,
   which `scripts/gen_golden_metrics.py` regenerates
@@ -498,7 +501,10 @@ Bugs present in 0.3.0.
   one of the `mcp.max_concurrent_calls` slots (128 callers that left after 0.3 s kept the next call waiting 8 s);
   the disconnect now cancels the call and frees its slot, logged as cancelled, not failed, and its span marked
   `kg_rag.cancelled` without the error status (a failure of the call still reaches a host application as raised,
-  not in an `ExceptionGroup`; a `CancelledError` the call raised while its task was not cancelled is a failure).
+  not in an `ExceptionGroup`; a `CancelledError` the call raised while its task was not cancelled is a failure). The
+  chain records a cancelled `ainvoke` as a stopped query, as it records a console reader's stop: its query metrics
+  and its audit record, its usage up to there; one cancelled after its deadline passed, at the server's backstop, is
+  one timed-out query, not two.
   uvicorn's start line keeps the address the server listens on, which the logging setup digested (`Uvicorn running
   on len=4 sha=...`); a record that matches it keeps no traceback, and only the text and numbers it formats.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit

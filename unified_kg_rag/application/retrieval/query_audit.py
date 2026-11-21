@@ -6,10 +6,11 @@
 place every query ends (``GraphRAGChain._record_query``): ``invoke``,
 ``ainvoke``, ``search``, ``asearch``, the streams and ``aquery_events``, so
 ``run-rag``, ``run-eval``, the MCP server and the console each get it with
-no code of their own. A query that failed, timed out, was refused or whose
-stream was closed early gets one too; a cancelled ``ainvoke`` gets none
-from the chain, as its metrics (the host that cancels it records it:
-``GraphRAGChain.record_unrun_query``).
+no code of their own. A query that failed, timed out, was refused, whose
+stream was closed early or whose caller cancelled it gets one too (a
+cancelled one is ``stopped``, or ``failed`` with ``timeout`` when its
+deadline had passed); a host that gives up on a query before the chain ran
+it records it (``GraphRAGChain.record_unrun_query``).
 
 It is an INFO record of the ``unified_kg_rag.audit`` logger, its fields the
 record's own keys (``logging.log_format: structured`` writes them as one
@@ -37,6 +38,7 @@ from unified_kg_rag.domain.models.audit import (
     AuditText,
     QueryAuditRecord,
 )
+from unified_kg_rag.domain.models.retrieval import SearchType
 from unified_kg_rag.domain.models.usage import LLMUsage
 from unified_kg_rag.domain.pricing import snapshot_cost_usd
 from unified_kg_rag.shared.exceptions import ErrorClass
@@ -127,6 +129,9 @@ def query_record(
     spent = _usage(usage)
     cost, unpriced = snapshot_cost_usd(usage, config.models.prices)
     requested = fields.get("search_strategy")
+    search_type = fields.get("search_type") or config.search.search_type
+    top_k = fields.get("top_k")
+    filters = fields.get("filters")
     return QueryAuditRecord(
         query_id=query_id,
         trace_id=trace_id,
@@ -140,6 +145,15 @@ def query_record(
             None if requested is None else str(getattr(requested, "value", requested))
         ),
         strategy=strategy,
+        search_type=_search_type(search_type),
+        top_k=top_k if isinstance(top_k, int) and not isinstance(top_k, bool) else None,
+        # A filter's keys name what it scoped the query by; its values (a
+        # folder, a file name) stay out, as the question's text does.
+        filter_keys=(
+            _bounded(sorted(str(k) for k in filters))[0]
+            if isinstance(filters, Mapping)
+            else []
+        ),
         outcome=outcome,
         error_class=None if error_class is None else error_class.value,
         degraded=degraded,
@@ -155,6 +169,15 @@ def query_record(
         cost_usd=cost,
         unpriced_models=unpriced,
     )
+
+
+def _search_type(value: Any) -> str | None:
+    """The :class:`SearchType` value ``value`` names; ``None`` for one that
+    names none (a refused input's: its text is not recorded)."""
+    try:
+        return SearchType(getattr(value, "value", value)).value
+    except ValueError:
+        return None
 
 
 def _text_field(value: Any) -> str | None:

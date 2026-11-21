@@ -8,7 +8,9 @@ answer rests on, which models it called at what cost, and how it ended. It
 holds ids, counts and digests only, never the question's, the answer's or a
 source's text: the question and the answer are a SHA-256 digest and a
 length, so a stored answer can be checked against its record without the
-record keeping either.
+record keeping either. The digests are for verification, not
+anonymization: unsalted, a guessed short question is confirmed by hashing
+it.
 """
 
 from datetime import datetime
@@ -21,7 +23,7 @@ from .usage import LLMUsage
 
 # The version of the record's fields: raised when one is renamed, removed or
 # changes meaning (a new optional field keeps it).
-AUDIT_RECORD_VERSION: Final = 1
+AUDIT_RECORD_VERSION: Final = 2
 
 
 class AuditOutcome(StrEnum):
@@ -36,7 +38,8 @@ class AuditOutcome(StrEnum):
     FAILED = "failed"
     # Raised or answered with a caller's error (ErrorClass.is_caller_error).
     REFUSED = "refused"
-    # Its events' reader stopped before the end (a stream closed early).
+    # Its reader stopped before the end (a stream closed early, a caller
+    # that cancelled it).
     STOPPED = "stopped"
 
 
@@ -103,7 +106,7 @@ class AuditEvidence(_Record):
 class QueryAuditRecord(_Record):
     """One query's audit record (module docstring)."""
 
-    record_version: Literal[1] = Field(
+    record_version: Literal[2] = Field(
         default=AUDIT_RECORD_VERSION, description="The version of these fields"
     )
     query_id: str = Field(description="The query's id (its log lines carry it)")
@@ -129,6 +132,18 @@ class QueryAuditRecord(_Record):
     )
     strategy: str | None = Field(
         default=None, description="The strategy that ran, when one did"
+    )
+    search_type: str | None = Field(
+        default=None,
+        description=(
+            "The search type in force: RAGInput.search_type, else the "
+            "config's search.search_type"
+        ),
+    )
+    top_k: int | None = Field(default=None, description="RAGInput.top_k")
+    filter_keys: list[str] = Field(
+        default_factory=list,
+        description="The keys of RAGInput.filters, sorted; never their values",
     )
     outcome: AuditOutcome = Field(description="How it ended")
     error_class: str | None = Field(
@@ -170,5 +185,10 @@ class QueryAuditRecord(_Record):
         description="Its USD cost by models.prices (None: a model is unpriced)",
     )
     unpriced_models: list[str] = Field(
-        default_factory=list, description="The models models.prices cannot price"
+        default_factory=list,
+        description=(
+            "The models models.prices cannot price: a language model or "
+            "reranker (cost_usd is then None), or an embedding model without "
+            "embedding_per_million_tokens (its requests left out of cost_usd)"
+        ),
     )

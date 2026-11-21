@@ -145,7 +145,9 @@ def snapshot_cost_usd(
 ) -> tuple[float | None, list[str]]:
     """:func:`usage_cost_usd` of a usage snapshot (``metadata["usage"]``, a
     ``UsageMeter.snapshot()``): its USD (``None`` with a model unpriced, or
-    no readable snapshot) and the unpriced models, sorted."""
+    no readable snapshot) and the models it could not price, sorted: those
+    that make it ``None`` and the embedding models whose requests it leaves
+    out (:func:`unpriced_embedding_models`)."""
     from unified_kg_rag.domain.models.usage import LLMUsage
 
     if not usage:
@@ -155,4 +157,4 @@ def snapshot_cost_usd(
     except ValidationError:
         return None, []
     usd, unpriced = usage_cost_usd(spent, prices)
-    return usd, sorted(unpriced)
+    return usd, sorted(unpriced | unpriced_embedding_models(spent, prices))

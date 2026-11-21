@@ -365,7 +365,9 @@ async for event in chain.aquery_events(RAGInput(query="...")):
   and stops only once each of their readers stopped. Nothing is written to
   memory, and the query metrics record its latency and usage up to there as
   no failure, whatever the query raised past the stop. A cancelled `ainvoke`
-  records nothing.
+  (its task cancelled, a caller's `asyncio.timeout` around it) is recorded
+  the same way; one cancelled after its deadline passed (a host's backstop)
+  is recorded as timed out.
 - Its query metrics, the `query_id` and namespace of its log lines and
   errors, and its trace are `ainvoke`'s.
 - `astream` / `stream` yield the answer text alone: each chunk, or, when

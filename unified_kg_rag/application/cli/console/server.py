@@ -550,12 +550,7 @@ def create_app(
         app.add_middleware(
             TrustedIdentity,
             header=options.trusted_identity_header,
-            refuse=_error(
-                401,
-                "unauthorized",
-                f"the {options.trusted_identity_header} header (the trusted "
-                "identity header) is missing",
-            ),
+            refuse=lambda why: _error(401, "unauthorized", why),
         )
 
     @app.middleware("http")

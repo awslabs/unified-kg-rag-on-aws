@@ -2817,6 +2817,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 started, input, search=search, query_id=query_id, error=e
             )
             raise
+        except asyncio.CancelledError:
+            # Its caller left during the admission (or cut it off at its
+            # deadline): recorded as below, then the cancellation goes on.
+            self._record_cancelled(started, input, deadline, search, query_id)
+            raise
         finally:
             reset_contextvars(**admission_tokens)
         # The build its audit record names (not a step's input).
@@ -2918,10 +2923,25 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 build=build,
             )
             raise
+        except asyncio.CancelledError:
+            # Its caller cancelled it (a client that disconnected, a
+            # caller's asyncio.timeout): a stopped reader, as below, unless
+            # its deadline had passed (a host's backstop past it).
+            self._record_cancelled(
+                started,
+                rag_input,
+                deadline,
+                search,
+                query_id,
+                trace_ids=ids,
+                usage=meter.snapshot() if meter is not None else None,
+                build=build,
+            )
+            raise
         except _ReaderStopped:
             # Its events' reader stopped (a stream closed early, or its
             # reader cancelled): no failure, its latency and usage up to
-            # there. A cancelled ainvoke records nothing.
+            # there.
             self._record_query(
                 started,
                 rag_input,
@@ -2948,6 +2968,48 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         return result
 
+    def _record_cancelled(
+        self,
+        started: float,
+        query: RAGInput | dict[str, Any],
+        deadline: "_QueryDeadline",
+        search: bool,
+        query_id: str,
+        *,
+        trace_ids: tuple[str, str] | None = None,
+        usage: Mapping[str, Any] | None = None,
+        build: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Record a query cancelled from outside the chain: a stopped
+        reader (ADR 0007: no failure, its latency and usage up to there),
+        or, cancelled once its deadline had passed (the backstop of a host
+        that bounds the call, as the MCP server's), a timed-out query."""
+        if deadline.passed():
+            error = deadline.scope()._expired()
+            tag_query_failure(error, query_id, trace_ids[0] if trace_ids else None)
+            self._record_query(
+                started,
+                query,
+                search=search,
+                query_id=query_id,
+                trace_ids=trace_ids,
+                error=error,
+                usage=usage,
+                build=build,
+            )
+            return
+        self._record_query(
+            started,
+            query,
+            search=search,
+            query_id=query_id,
+            trace_ids=trace_ids,
+            usage=usage,
+            ran=_routed_strategy(),
+            stopped=True,
+            build=build,
+        )
+
     @staticmethod
     def _query_id() -> str:
         """A query's id: one bound by the caller (as the console's or an MCP
@@ -2958,10 +3020,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self, query: Mapping[str, Any], error: BaseException, *, started: float
     ) -> None:
         """Publish the query metrics of an answer a host gave up on before
-        or while the chain ran it, so no query metric was recorded (an MCP
-        ``kg_answer`` that timed out waiting for a call slot, or at the
-        backstop past the chain's deadline): one failed query, as
-        :meth:`ainvoke` records its own. ``query``: the fields known
+        the chain ran it, so no query metric was recorded (an MCP
+        ``kg_answer`` that timed out waiting for a call slot): one failed
+        query, as :meth:`ainvoke` records its own (a query cancelled once
+        it ran is recorded by the chain). ``query``: the fields known
         (``search_strategy``, ``namespace``); ``started``: the
         ``time.monotonic()`` the call began."""
         self._record_query(
@@ -5124,6 +5186,10 @@ class _QueryDeadline:
     def time_left(self) -> float | None:
         """Seconds left until the deadline (``None``: no deadline)."""
         return None if self.at is None else max(0.0, self.at - time.monotonic())
+
+    def passed(self) -> bool:
+        """Whether the deadline has passed (never without one)."""
+        return self.at is not None and time.monotonic() >= self.at
 
     def lower_to(self, seconds: float | None, setting: str) -> None:
         """End the query ``seconds`` after it started, if that comes before

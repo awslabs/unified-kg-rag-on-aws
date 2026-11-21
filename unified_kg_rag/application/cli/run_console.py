@@ -162,9 +162,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Take each request's caller from this header, set by the "
         "authenticating proxy (for example x-amzn-oidc-identity behind an "
         "Application Load Balancer), as its questions' user_id; a request "
-        "without exactly one is refused (401). Off by default. Only behind a "
-        "proxy that removes or overwrites any copy the client sends: "
-        "otherwise a client names any user",
+        "without exactly one UTF-8 value with no comma is refused (401). Off "
+        "by default. Only behind a proxy that replaces (removes or "
+        "overwrites, never appends to) any copy the client sends: otherwise "
+        "a client names any user",
     )
     add_metrics_sink_argument(
         parser,
