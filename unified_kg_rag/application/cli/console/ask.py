@@ -52,9 +52,11 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     ConversationTurn,
     GraphRAGChain,
     QueryResult,
+    QueryRouted,
     RAGInput,
     RAGOutput,
     new_query_id,
+    stopped_strategy,
 )
 from unified_kg_rag.domain.ingestion.methodologies import namespace_holdings
 from unified_kg_rag.domain.ingestion.rebuild_due import rebuild_reasons
@@ -457,6 +459,8 @@ class AskService:
         # query scope counts into it too, so a question cancelled (its page
         # disconnected) or failed records the model calls it made.
         spent: dict[str, Any] = {}
+        # The strategy the question was routed to, once it was.
+        route: dict[str, SearchStrategy] = {}
 
         async def run() -> None:
             try:
@@ -467,7 +471,7 @@ class AskService:
                     with usage_scope() as meter:
                         spent["meter"] = meter
                         output, trace_id = await self._invoke(
-                            chain, config, request, query_id, queue
+                            chain, config, request, query_id, queue, route
                         )
                 record["trace_id"] = trace_id
                 result = self._result(
@@ -504,8 +508,13 @@ class AskService:
                 )
                 queue.put_nowait({"kind": "result", **result})
             except asyncio.CancelledError:
+                # Its reader left (the page closed, or Stop): a stopped
+                # query, named by the strategy its audit record names.
+                ran = stopped_strategy(request.search_strategy, route.get("strategy"))
                 record.update(
-                    outcome="cancelled", latency_seconds=time.perf_counter() - started
+                    outcome="stopped",
+                    strategy=None if ran is None else ran.value,
+                    latency_seconds=time.perf_counter() - started,
                 )
                 raise
             except Exception as e:  # noqa: BLE001 - reported to the page
@@ -569,9 +578,11 @@ class AskService:
         request: AskRequest,
         query_id: str,
         queue: asyncio.Queue[dict[str, Any] | None],
+        route: dict[str, SearchStrategy],
     ) -> tuple[RAGOutput, str | None]:
         """Answer ``request`` under the console's trace span, the start event
-        and the answer's chunks put on ``queue``; the output and trace id."""
+        and the answer's chunks put on ``queue``, the strategy it is routed
+        to in ``route``; the output and trace id."""
         with (
             observability.span(
                 "kg_rag.console.ask",
@@ -629,6 +640,8 @@ class AskService:
                             "markers": scanner.feed(event.text) if scans else [],
                         }
                     )
+                elif isinstance(event, QueryRouted):
+                    route["strategy"] = event.strategy
                 elif isinstance(event, QueryResult):
                     output = event.output
             if scans and (tail := scanner.finish()):

@@ -325,6 +325,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 
 ### Changed
 
+- The console's question history records a question its page stopped as `stopped`, as its audit record does (it was
+  `cancelled`), with the strategy the record names (it had none); the Dashboard counts rows of either word in its
+  Cancelled figures.
 - The community-counter WARNING reads `Index namespace '<suffix>' is due for a rebuild: its communities are due for
   re-clustering: ...` (it began `Communities of '<suffix>' are due for re-clustering`), one rule with the other
   rebuild reasons. The console's job card offers "Rebuild the namespace" when the run's `rebuild_due` holds a reason
@@ -523,7 +526,13 @@ Bugs present in 0.3.0.
   not in an `ExceptionGroup`; a `CancelledError` the call raised while its task was not cancelled is a failure). The
   chain records a cancelled `ainvoke` as a stopped query, as it records a console reader's stop: its query metrics
   and its audit record, its usage up to there; one cancelled after its deadline passed, at the server's backstop, is
-  one timed-out query, not two.
+  one timed-out query, not two. A `kg_search` or `kg_answer` call that ends waiting for a call slot, before the chain
+  took it, is recorded once by the server through the chain's record path (`GraphRAGChain.record_unrun_query`, which
+  takes `None` for a caller that left and `search=True`), with what the call asked and its caller: `stopped` when its
+  client left, a timeout otherwise (a client that left there got no record, a `kg_search` timeout none, and a
+  `kg_answer` timeout one without its `user_id`, `top_k` and `filter_keys`). A stopped query names the strategy it was
+  routed to, else the explicit one it asked for, in its audit record and span as in its metrics (an `ainvoke` stopped
+  after its route recorded `strategy: null`).
   uvicorn's start line keeps the address the server listens on, which the logging setup digested (`Uvicorn running
   on len=4 sha=...`); a record that matches it keeps no traceback, and only the text and numbers it formats.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit

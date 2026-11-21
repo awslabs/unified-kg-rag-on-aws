@@ -2797,6 +2797,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         *,
         search: bool,
     ) -> RAGOutput | SearchOutput:
+        """Run one query, its route kept where its records read it
+        (``_QUERY_ROUTE``, :func:`_stopped_strategy`), events sink or none."""
+        token = _QUERY_ROUTE.set(_Route())
+        try:
+            return await self._run_query(input, config, search=search)
+        finally:
+            _QUERY_ROUTE.reset(token)
+
+    async def _run_query(
+        self,
+        input: RAGInput | dict[str, Any],
+        config: RunnableConfig | None,
+        *,
+        search: bool,
+    ) -> RAGOutput | SearchOutput:
         # Fixed when the query starts: its admission (the build-record read
         # of the methodology check, a store round trip) counts too, in the
         # deadline and the latency.
@@ -2878,7 +2893,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         # budget spent for nobody); the span ends without
                         # error, naming the strategy it ran, as its metrics
                         # do.
-                        if (ran := _routed_strategy()) is not None:
+                        if (ran := _stopped_strategy(rag_input)) is not None:
                             span.set_attributes({"kg_rag.strategy": ran.value})
                         raise _ReaderStopped() from None
                     raise
@@ -2949,7 +2964,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 query_id=query_id,
                 trace_ids=ids,
                 usage=meter.snapshot() if meter is not None else None,
-                ran=_routed_strategy(),
+                ran=_stopped_strategy(rag_input),
                 stopped=True,
                 build=build,
             )
@@ -3005,7 +3020,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             query_id=query_id,
             trace_ids=trace_ids,
             usage=usage,
-            ran=_routed_strategy(),
+            ran=_stopped_strategy(query),
             stopped=True,
             build=build,
         )
@@ -3017,21 +3032,34 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return str(get_contextvars().get("query_id") or new_query_id())
 
     def record_unrun_query(
-        self, query: Mapping[str, Any], error: BaseException, *, started: float
+        self,
+        query: Mapping[str, Any],
+        error: BaseException | None,
+        *,
+        started: float,
+        search: bool = False,
     ) -> None:
-        """Publish the query metrics of an answer a host gave up on before
-        the chain ran it, so no query metric was recorded (an MCP
-        ``kg_answer`` that timed out waiting for a call slot): one failed
-        query, as :meth:`ainvoke` records its own (a query cancelled once
-        it ran is recorded by the chain). ``query``: the fields known
-        (``search_strategy``, ``namespace``); ``started``: the
-        ``time.monotonic()`` the call began."""
+        """Record a query a host ended before the chain ran it, so the
+        chain recorded nothing of it (an MCP ``kg_answer`` or ``kg_search``
+        that timed out waiting for a call slot, or whose client left
+        there): its audit record, and an answer's query metrics, through
+        the one path the chain records its own queries by (a query
+        cancelled once it ran is recorded by the chain). ``error``: why it
+        ended (a timeout: a failed query); ``None``: its caller left (a
+        stopped query, no usage). ``query``: its input's fields, by
+        ``RAGInput`` name (``query``, ``search_strategy``, ``search_type``,
+        ``top_k``, ``filters``, ``namespace``, ``user_id``, ...);
+        ``started``: the ``time.monotonic()`` the call began; ``search``: a
+        retrieval-only search (an audit record, no answer metrics)."""
+        fields = dict(query)
         self._record_query(
             started,
-            dict(query),
-            search=False,
+            fields,
+            search=search,
             query_id=self._query_id(),
             error=error,
+            ran=None if error is not None else _stopped_strategy(fields),
+            stopped=error is None,
         )
 
     @staticmethod
@@ -4537,9 +4565,6 @@ class _ReaderStopped(GeneratorExit):
 class _EventSink:
     """Where a query's events go (``_QUERY_EVENTS``)."""
 
-    # The strategy the query runs, once routed (its metrics' Strategy).
-    routed: SearchStrategy | None = None
-
     async def send(self, event: QueryEvent) -> None:
         raise NotImplementedError
 
@@ -4624,19 +4649,34 @@ _QUERY_EVENTS: contextvars.ContextVar[_EventSink | None] = contextvars.ContextVa
 )
 
 
+class _Route:
+    """The strategy a query was routed to, once it was (``_QUERY_ROUTE``)."""
+
+    strategy: SearchStrategy | None = None
+
+
+# The route of the query running in this context (``GraphRAGChain._query``
+# sets it), read by its records whether or not a reader takes its events.
+_QUERY_ROUTE: contextvars.ContextVar[_Route | None] = contextvars.ContextVar(
+    "kg_rag_query_route", default=None
+)
+
+
 # A call several queries share (shared.query_stop.SharedContext) sends
 # no query's events, keeps none of its extractions or grounding and runs
 # under none of its deadlines (it takes the latest of its waiters').
-blank_in_shared_calls(_QUERY_EVENTS, _LEFTOVER_EXTRACTIONS, _GROUNDING_CAPTURE)
+blank_in_shared_calls(
+    _QUERY_EVENTS, _QUERY_ROUTE, _LEFTOVER_EXTRACTIONS, _GROUNDING_CAPTURE
+)
 
 
 async def _emit(event: QueryEvent) -> None:
     """Send ``event`` to the query's reader, if any (``_QUERY_EVENTS``)."""
+    if isinstance(event, QueryRouted) and (route := _QUERY_ROUTE.get()) is not None:
+        route.strategy = event.strategy
     sink = _QUERY_EVENTS.get()
     if sink is None:
         return
-    if isinstance(event, QueryRouted):
-        sink.routed = event.strategy
     await sink.send(event)
 
 
@@ -4676,10 +4716,34 @@ def _retrieved(task: asyncio.Future[Any]) -> None:
 
 
 def _routed_strategy() -> SearchStrategy | None:
-    """The strategy the query running in this context was routed to, as
-    its events' sink saw it (``None`` before its route, or without one)."""
-    sink = _QUERY_EVENTS.get()
-    return sink.routed if sink is not None else None
+    """The strategy the query running in this context was routed to
+    (``None`` before its route)."""
+    route = _QUERY_ROUTE.get()
+    return route.strategy if route is not None else None
+
+
+def stopped_strategy(
+    requested: Any, routed: SearchStrategy | None
+) -> SearchStrategy | None:
+    """The strategy a query stopped before its end names (its audit record,
+    query metrics and span, a console history row): the one it was
+    ``routed`` to, else the one ``requested`` unless that is ``auto`` (an
+    explicit strategy is its own route); ``None`` for an ``auto`` query
+    stopped before its route, or a request that names no strategy."""
+    if routed is not None:
+        return routed
+    try:
+        strategy = SearchStrategy(getattr(requested, "value", requested))
+    except (TypeError, ValueError):
+        return None
+    return None if strategy is SearchStrategy.AUTO else strategy
+
+
+def _stopped_strategy(query: RAGInput | Mapping[str, Any]) -> SearchStrategy | None:
+    """:func:`stopped_strategy` of ``query`` (an input, or its fields),
+    stopped in this context."""
+    fields = query if isinstance(query, Mapping) else getattr(query, "__dict__", {})
+    return stopped_strategy(fields.get("search_strategy"), _routed_strategy())
 
 
 class _Ledgered(Runnable[Any, Any]):

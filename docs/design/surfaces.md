@@ -144,9 +144,12 @@ POST only once its call returns and does not watch the connection, so
 (`_cancelled_on_disconnect`): an `http.disconnect` cancels the request and
 its tool call, freeing the slot. Work that does not watch the deadline (the graph tools'
 store calls) ends at a backstop `_BACKSTOP_GRACE_SECONDS` (1 s) past it. A
-`kg_answer` that times out in the slot queue or at the backstop has no
-query metric of the chain's own, so the tool records one
-(`GraphRAGChain.record_unrun_query`); the call's `query_id`, bound when it
+`kg_search` or `kg_answer` call that ends in the slot queue (it times out,
+or its client leaves) never reached the chain, so the tool records it
+through the chain's one record path (`GraphRAGChain.record_unrun_query`:
+its audit record, and an answer's query metrics) with what it asked and its
+caller; once the chain took the query, the chain records it however it
+ends, at the backstop too; the call's `query_id`, bound when it
 starts, is the one the chain's query uses and the one its error names. The tools are stateless: no conversation memory (`use_memory` is
 off), so no caller reaches another caller's history.
 

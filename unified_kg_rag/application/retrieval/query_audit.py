@@ -9,8 +9,9 @@ place every query ends (``GraphRAGChain._record_query``): ``invoke``,
 no code of their own. A query that failed, timed out, was refused, whose
 stream was closed early or whose caller cancelled it gets one too (a
 cancelled one is ``stopped``, or ``failed`` with ``timeout`` when its
-deadline had passed); a host that gives up on a query before the chain ran
-it records it (``GraphRAGChain.record_unrun_query``).
+deadline had passed); a host that ends a query before the chain ran it (an
+MCP call that timed out or whose client left waiting for a call slot)
+records it through the same path (``GraphRAGChain.record_unrun_query``).
 
 It is an INFO record of the ``unified_kg_rag.audit`` logger, its fields the
 record's own keys (``logging.log_format: structured`` writes them as one

@@ -1145,6 +1145,134 @@ async def test_a_client_that_disconnects_frees_its_call_slot(
 
 
 @requires_mcp
+async def test_a_call_that_ends_waiting_for_a_slot_is_recorded_once_with_its_caller(
+    index: Index, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2C-1: a call that ended before it reached the chain, waiting for a
+    call slot, was recorded unreliably: a kg_answer whose client left got
+    no record, a kg_answer that timed out got one without its caller, top_k
+    or filter keys, and a kg_search that timed out got none. Each gets one
+    record now, through the chain's record path, with what it asked."""
+    import asyncio
+
+    import httpx
+    import uvicorn
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_app
+    from unified_kg_rag.application.retrieval import query_audit
+
+    records: list[Any] = []
+    monkeypatch.setattr(query_audit, "audit_enabled", lambda: True)
+    monkeypatch.setattr(query_audit, "emit", records.append)
+    metrics = _Metrics()
+    monkeypatch.setattr(index.providers, "metrics_sink", metrics)
+
+    real_screen = GraphRAGChain._screen_input
+    holding = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held_first(self: GraphRAGChain, *args: Any, **kwargs: Any) -> Any:
+        if not holding.is_set():
+            holding.set()
+            await release.wait()
+        return await real_screen(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphRAGChain, "_screen_input", held_first)
+    chain = index.chain()
+    tools = KnowledgeGraphTools(chain, settings=McpServerConfig(max_concurrent_calls=1))
+    header = "x-user"
+    host = "127.0.0.1"
+    port = _free_port(host)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            build_mcp_app(tools, trusted_identity_header=header),
+            host=host,
+            port=port,
+            log_config=None,
+        )
+    )
+    serving = asyncio.create_task(server.serve())
+
+    def call(tool: str, **arguments: Any) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": tool,
+                "arguments": {
+                    "query": "가젯을 보관하는 곳은?",
+                    "strategy": "local",
+                    "top_k": 3,
+                    "filters": {"n_tokens": {"gte": 1}},
+                    **arguments,
+                },
+            },
+        }
+
+    async def until(count: int) -> None:
+        for _ in range(400):
+            if len(records) >= count:
+                return
+            await asyncio.sleep(0.025)
+        raise AssertionError(f"{len(records)} records, not {count}")
+
+    deadline = {"limits": {"deadline_seconds": 0.3}}
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        url = f"http://{host}:{port}/mcp"
+        headers = {**_HEADERS, header: "user-42"}
+        async with httpx.AsyncClient(headers=headers, timeout=60) as client:
+            holder = asyncio.create_task(
+                client.post(url, json=call("kg_answer", filters=None))
+            )
+            await asyncio.wait_for(holding.wait(), 30)
+            # Its client leaves while it waits for the one slot.
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(client.post(url, json=call("kg_answer")), 0.5)
+            await until(1)
+            timed_out = [
+                await client.post(url, json=call(tool, **deadline))
+                for tool in ("kg_answer", "kg_search")
+            ]
+            release.set()
+            answered = await asyncio.wait_for(holder, 30)
+    finally:
+        release.set()
+        server.should_exit = True
+        await serving
+        await chain.aclose()
+    for response in timed_out:
+        assert response.json()["result"]["isError"], response.text
+        assert "[timeout]" in response.text
+    assert not answered.json()["result"].get("isError"), answered.text
+    left, answer_timeout, search_timeout, held = records
+    assert [r.outcome.value for r in records] == [
+        "stopped",
+        "failed",
+        "failed",
+        "answered",
+    ]
+    assert [r.mode for r in records] == ["rag", "rag", "search", "rag"]
+    # One record each: no query recorded twice.
+    assert len({r.query_id for r in records}) == 4
+    for record in (left, answer_timeout, search_timeout):
+        assert record.user_id == "user-42"
+        assert record.top_k == 3 and record.filter_keys == ["n_tokens"]
+        assert record.requested_strategy == "local"
+        assert record.namespace == "default" and record.question is not None
+        assert record.usage is None
+    assert left.strategy == "local" and left.error_class is None
+    assert answer_timeout.error_class == search_timeout.error_class == "timeout"
+    # The answers' metrics: the stopped one no failure, the timeout one.
+    assert [row["query_failed"] for row, _ in metrics.rows] == [0.0, 1.0, 0.0]
+    assert [dims["Strategy"] for _, dims in metrics.rows] == ["local"] * 3
+
+
+@requires_mcp
 async def test_a_kg_answer_cut_at_the_backstop_is_recorded_once(
     index: Index, monkeypatch: pytest.MonkeyPatch
 ) -> None:
