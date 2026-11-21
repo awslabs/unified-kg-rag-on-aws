@@ -117,6 +117,17 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `answer_scoring.answer_contains_reads` and is refused as `--baseline-results` (or in a rebuilt comparison) beside a
    run of now. Score its saved answers again, with no new answer: `run-eval --from-results <old results> --rescore`
    (an `extracted` `answer_span` calls only the answer-span model), then compare against the re-scored run.
+   run of now. Re-run the baseline.
+11. A script that reads the CLIs' log lines, or the EMF records of `--metrics-sink cloudwatch`, from stdout reads
+    them from stderr now, in text mode too (*Breaking changes*): stdout holds only the run's output (`2>&1` keeps both
+    on one stream).
+12. A custom vector store that implements `VectorIndexer.scan_text_units` and not `scan_text_unit_pages` builds no
+    summary tree (*Breaking changes*): the method is gone and nothing calls it. Implement
+    `SummaryTreeStore.scan_text_unit_pages`, which yields the text units in id order, one page at a time.
+13. Python code that reads `RAGInput.search_type` gets `None` where the caller set none (the query runs the config's
+    `search.search_type`), and code that reads `EvaluationConfig.retrieval_k` gets a list of cutoffs (*Breaking
+    changes*): read `config.search.search_type` for the type a query runs, and `retrieval_k[0]` for the cutoff that
+    scores `hit_at_k`, `recall_at_k` and `ndcg_at_k`.
 
 ### Added
 
@@ -361,8 +372,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   their own attempts (S3: 5 requests, see below). The IaC's Nori package handlers run on Python 3.15, the newest Python
   Lambda runtime aws-cdk-lib 2.277 knows (cdk-nag AwsSolutions-L1). aws-cdk-lib 2.277 adds nodejs26.x but keeps the
   functions it creates itself (the AwsCustomResource singleton, a custom-resource provider's `framework-*` functions) on
-  nodejs24.x, and the stack cannot set their runtime, so L1 failed the synth on them: L1 is suppressed on those
-  functions only, whatever their runtime ("runtime chosen by aws-cdk-lib"), and the stack's own handlers keep it. pypdf
+  nodejs24.x, and the stack leaves their runtime to aws-cdk-lib (the one override, the experimental
+  `CustomResourceConfig`, reaches the singleton only and would move a deployed runtime untested), so L1 failed the
+  synth on them: L1 is suppressed on those functions only, whatever their runtime ("aws-cdk-lib's default runtime"),
+  and the stack's own handlers keep it. pypdf
   and langchain-core versions are part of the parser fingerprint, so the first ingestion after upgrading parses every
   file again once. pypdf 7 gives the same page text, labels and offsets as 6.21.4 on the repo's PDF fixtures, but
   separates words a line shifts between baselines (`AlphaBeta Gamma` for `AlphaBetaGamma`): such a document's text
@@ -389,14 +402,17 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - One layout and one node cap for a drawn graph: `run-visualization`'s interactive page lays out each connected
   component on its own, packed in rows largest first, as the console's Graph page did, and the Graph page draws
   `graph.visualization.interactive.max_nodes` nodes (it drew 600 whatever that said). Its default is 600 (from 2000):
-  laying out 600 nodes takes about 1.4 s, 2000 about 15 s. Set it to 2000 for the former interactive page.
+  laying out 600 nodes takes about 1.4 s, 2000 about 15 s, on a sparse graph (2.1-2.9 s on a dense one). Set it to
+  2000 for the former interactive page.
 - A full build on a vector store that cannot page its items (`StoreInspection.scan_items` left at its default, as a
   custom backend may) skips the visualization export with one WARNING saying why, as the `summary_tree` stage skips its
   tree; it logged `Visualization data export failed: [configuration] ...` on every build. The store conformance suites
   also run on a custom backend that `UKR_TEST_BACKEND` names, without editing the test fixtures ([extend
-  guide](docs/guides/extend.md#custom-backends-run-without-aws)).
-  laying out 600 nodes takes about 1.4 s, 2000 about 15 s, on a sparse graph (2.1-2.9 s on a dense one). Set it to
-  2000 for the former interactive page.
+  guide](docs/guides/extend.md#custom-backends-run-without-aws)): a test of a method the backend leaves at its port's
+  default skips, naming the method, and the summary-tree suite runs on it too. A run on such a store whose
+  `ExtractionRecordStore` is left at its default logs one WARNING at its first recovery note: the notes of a removal
+  and a commit (`pending-strip`, `pending-commit`, `pending-writes`, `stripped-summaries`, `outdated-reports`) live in
+  that store, so a run stopped mid-removal or mid-commit cannot resume them.
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0
@@ -414,17 +430,22 @@ Each name below warns and still works, and is removed in 0.5.0
   for `[NO_ANSWER]` (`search.abstention`), the token held back and stripped.
 - `RAGInput.enable_thinking` warns (`DeprecationWarning`): set `RAGInput.effort`. Until it is removed it turns the
   answer model's reasoning on at its tier's effort, as before.
-- The flat `retry` keys (`retry.max_attempts`, `base_delay_seconds`, `max_delay_seconds`, `max_total_seconds`,
-  `model_server_max_attempts`, `graph_store_max_attempts`, `query_store_max_attempts`) load, from a file or a `UKR__`
+- The flat `retry` keys (`retry.max_attempts`, `retry.base_delay_seconds`, `retry.max_delay_seconds`,
+  `retry.max_total_seconds`, `retry.model_server_max_attempts`, `retry.graph_store_max_attempts`,
+  `retry.query_store_max_attempts`) load, from a file or a `UKR__`
   variable, into every profile each one governed in 0.3.0 (`max_attempts` into `retry.model` and
   `retry.ingestion_item`, `base_delay_seconds` into `model`, `model_server` and `graph_store`, ...), with a WARNING
   naming them; one set beside a profile key to another value (a file key or a `UKR__` variable) fails the load,
-  naming both. `DEPRECATED_KEYS` maps a
-  key to one replacement or several.
+  naming both (values compared as loaded: `3` and `03` agree). `DEPRECATED_KEYS` maps a key to one replacement or
+  several.
+- `evaluation.prices` (a file key or a `UKR__` variable) loads into its replacement, with a WARNING naming it; the
+  Python attribute is gone (*Breaking changes*).
 - `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its
   new name, and is no longer in `__all__` (`unified_kg_rag.domain.models.config.TransientRetryConfig`, an internal
   path, is gone). A warning the package emits for a deprecated API now names the caller's line under
   `from unified_kg_rag import ...` too (it named a frame of the import machinery).
+- The package's deprecation warnings, log lines and CLI stderr lines name the release that removes the name
+  (`... is deprecated (removed in 0.5.0): ...`).
 
 ### Fixed
 

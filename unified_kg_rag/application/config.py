@@ -30,6 +30,7 @@ from unified_kg_rag.domain.models.config import (
 )
 from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.utils.deprecation import deprecation_message
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
@@ -401,9 +402,7 @@ class ConfigLoader:
         overrides, variables, unknown = _variable_paths(file_data)
         layer: dict[str, Any] = {}
         for name, path in overrides.items():
-            value = os.environ[variables.get(name, name)]
-            if path == ("logging", "level"):
-                value = value.upper()  # logging accepts any case
+            value = _variable_text(path, os.environ[variables.get(name, name)])
             try:
                 _set_env_value(layer, config, path, value)
             except (ValueError, ValidationError) as e:
@@ -452,9 +451,12 @@ def _variable_paths(
                         replaced.append((replacement, target))
                 if replaced and warn:
                     _logger.warning(
-                        "Environment variable %s is deprecated: set %s",
-                        name,
-                        ", ".join(replacement for replacement, _ in replaced),
+                        "%s",
+                        deprecation_message(
+                            f"Environment variable {name}",
+                            "set "
+                            + ", ".join(replacement for replacement, _ in replaced),
+                        ),
                     )
             removed = _removed_path(name)
             if removed is not None:
@@ -470,12 +472,15 @@ def _variable_paths(
             else:
                 overrides[name] = path
     # A deprecated variable and its replacement's both set: refused when
-    # they differ, as an old and a new name of a key are everywhere else (a
-    # file's pair, a flag's), else the replacement's alone.
+    # their values differ as loaded (``3`` and ``03`` agree), as an old and a
+    # new name of a key are everywhere else (a file's pair, a flag's), else
+    # the replacement's alone.
     direct = {path: name for name, path in overrides.items() if name not in variables}
     for key in [key for key in overrides if key in variables]:
         if (current := direct.get(overrides[key])) is not None:
-            if os.environ[variables[key]] != os.environ[current]:
+            if not _load_the_same(
+                overrides[key], os.environ[variables[key]], os.environ[current]
+            ):
                 # Their names only: a value may be a secret.
                 raise ConfigurationError(
                     f"Environment variables {variables[key]} (deprecated) and "
@@ -491,6 +496,28 @@ def _variable_paths(
         ):
             overrides[name] = path
     return overrides, variables, unknown
+
+
+def _variable_text(path: tuple[str, ...], value: str) -> str:
+    """A variable's value as the loader reads it into ``path``."""
+    if path == ("logging", "level"):
+        return value.upper()  # logging accepts any case
+    return value
+
+
+def _load_the_same(path: tuple[str, ...], first: str, second: str) -> bool:
+    """Whether two variables' values load as one value of ``path``, read as
+    the loader reads a variable (``3`` and ``03`` do). One that does not load
+    is compared by its text: the load then reports it, by name."""
+    loaded = []
+    for value in (first, second):
+        layer: dict[str, Any] = {}
+        try:
+            _set_env_value(layer, Config(), path, _variable_text(path, value))
+        except (ValueError, ValidationError):
+            return first == second
+        loaded.append(layer)
+    return loaded[0] == loaded[1]
 
 
 def environment_keys(file_data: dict[str, Any]) -> dict[str, str]:

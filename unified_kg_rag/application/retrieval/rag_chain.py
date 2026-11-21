@@ -269,7 +269,7 @@ from unified_kg_rag.shared.utils.concurrency import (
     gather_bounded,
     settle,
 )
-from unified_kg_rag.shared.utils.deprecation import warn_deprecated
+from unified_kg_rag.shared.utils.deprecation import deprecation_message, warn_deprecated
 
 logger = get_logger(__name__)
 
@@ -677,9 +677,11 @@ class RAGInput(BaseModel):
     def _deprecated_thinking(cls, enable: bool) -> bool:
         if enable:
             warn_deprecated(
-                "RAGInput.enable_thinking is deprecated: set RAGInput.effort "
-                "(low, medium, high, xhigh, max), which turns reasoning on at "
-                "that level"
+                deprecation_message(
+                    "RAGInput.enable_thinking",
+                    "set RAGInput.effort (low, medium, high, xhigh, max), which "
+                    "turns reasoning on at that level",
+                )
             )
         return enable
 
@@ -2755,9 +2757,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         sink: _EventSink | None = None
         if on_answer_chunk is not None:
             warn_deprecated(
-                "GraphRAGChain.ainvoke(on_answer_chunk=...) is deprecated: "
-                "iterate aquery_events() and read its AnswerChunk events "
-                "(its QueryResult carries the output)"
+                deprecation_message(
+                    "GraphRAGChain.ainvoke(on_answer_chunk=...)",
+                    "iterate aquery_events() and read its AnswerChunk events "
+                    "(its QueryResult carries the output)",
+                )
             )
             sink = _ChunkCallback(on_answer_chunk)
         token = _QUERY_EVENTS.set(sink)

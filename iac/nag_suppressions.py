@@ -369,9 +369,15 @@ def _suppress_cdk_owned_runtimes(root: IConstruct) -> None:
     """AwsSolutions-L1 wants the newest runtime of a function's family, read
     from the locked aws-cdk-lib's Runtime class. A CDK release that adds a
     Node.js runtime does not move its own functions to it (2.277 added
-    nodejs26.x and kept them on nodejs24.x), and the stack cannot set their
-    runtime. Suppressed on those functions alone and for any runtime, so the
-    next such release passes too; L1 stays live on the stack's own handlers
+    nodejs26.x and kept them on nodejs24.x). The only override is
+    ``custom_resources.CustomResourceConfig.add_lambda_runtime``, which is
+    experimental and reaches the AwsCustomResource singleton only, not a
+    Provider's ``framework-*`` functions (probed on 2.277: the singleton
+    synthesized nodejs26.x, the framework functions stayed nodejs24.x); the
+    stack does not use it, since moving a deployed function's runtime ahead
+    of aws-cdk-lib needs a deploy test of its own. Suppressed on those
+    functions alone and for any runtime, so the next such release passes
+    too; L1 stays live on the stack's own handlers
     (storage_custom_resources._HANDLER_RUNTIME), which still have to move to
     each new Python runtime."""
     for function in cdk_owned_functions(root):
@@ -380,8 +386,9 @@ def _suppress_cdk_owned_runtimes(root: IConstruct) -> None:
             [
                 {
                     "id": "AwsSolutions-L1",
-                    "reason": "Runtime chosen by aws-cdk-lib, not settable by "
-                    "the stack; it moves with the aws-cdk-lib release.",
+                    "reason": "aws-cdk-lib's default runtime for a function it "
+                    "creates, which moves with the aws-cdk-lib release; the only "
+                    "override, the experimental CustomResourceConfig, is unused.",
                 }
             ],
             apply_to_children=True,

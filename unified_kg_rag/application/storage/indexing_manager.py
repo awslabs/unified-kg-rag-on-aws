@@ -65,6 +65,7 @@ from unified_kg_rag.ports.indexer import (
     GraphIndexer,
     IndexingStats,
     VectorIndexer,
+    keeps_extraction_records,
 )
 from unified_kg_rag.shared import DataProcessingError, NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.logging import log_error
@@ -245,6 +246,8 @@ class IndexingManager:
         # The suffixes whose outdated-report note this run read or wrote
         # (note_outdated_reports), deleted once a build record takes over.
         self._outdated_notes: set[str] = set()
+        # Whether _write_note said the vector store keeps no notes (once).
+        self._unkept_notes_logged = False
         # By suffix, the stored communities this run's removals deleted
         # (the build record's community counters subtract them).
         self.deleted_communities: dict[str, set[str]] = {}
@@ -1310,7 +1313,25 @@ class IndexingManager:
 
     def _write_note(self, key: str, suffix: str, note: dict[str, Any]) -> None:
         """Write the note ``key`` (one extraction-store record of ``suffix``).
-        Raises when the write fails: the caller writes nothing before it."""
+        Raises when the write fails: the caller writes nothing before it.
+
+        A vector store that keeps no extraction records (a custom backend
+        leaving ``ExtractionRecordStore`` at its default) stores no note, so
+        a run stopped mid-removal or mid-commit leaves nothing to resume
+        from: the run says so once, at its first note, and goes on."""
+        if not self._unkept_notes_logged and not keeps_extraction_records(
+            self.vector_indexer
+        ):
+            self._unkept_notes_logged = True
+            logger.warning(
+                "The vector store keeps no extraction records "
+                "(ExtractionRecordStore is left at its default), so the note "
+                "'%s' of '%s' and the run's other recovery notes are not "
+                "stored: a run stopped before its removals or its commit "
+                "finish cannot resume them",
+                key,
+                suffix,
+            )
         stats = self.vector_indexer.write_extraction_records({key: note}, suffix=suffix)
         if stats.failed_items:
             raise DataProcessingError(

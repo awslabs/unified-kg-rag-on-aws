@@ -22,12 +22,17 @@ FAKE_PASSWORD = "secret"
 
 # ``scheme://user:<password>@`` with a literal password: one that does not
 # start as a placeholder (``{x}``, ``${X}``, ``<password>``, ``%VAR``, ``(``)
-# and holds no whitespace, ``/``, ``@``, quote, backtick or bracket, which a
-# URL's userinfo cannot hold unescaped. The password may hold ``:``, ``#``
-# and ``?``, as in GitLab's "Password in URL" rule. Every userinfo that rule
-# reports matches, unless it holds one of those unescapable characters (or
-# ``?`` or ``#`` in the user part), and so do the ones it skips: passwords
-# under 5 characters, any host, a one-letter scheme.
+# and holds no whitespace, ``/``, ``@``, quote, backtick or bracket. Of
+# those, a URL's userinfo can hold ``'`` unescaped (an RFC 3986 sub-delim);
+# the others it cannot. They are left out so a match cannot run across a
+# quote or a path in source text (``'https://u:' + pw + '@h'`` is code, not
+# a password), which makes a password holding ``'`` a miss the guard accepts
+# (it is a tripwire). The password may hold ``:``, ``#`` and ``?``, as in
+# GitLab's "Password in URL" rule. Every userinfo that rule reports matches,
+# unless it holds one of the left-out characters (GitLab also reports some
+# with ``/``, ``'`` or a bracket in the password, or ``?``, ``#``, ``'`` or
+# ``[`` in the user part), and so do the ones it skips: passwords under 5
+# characters, any host, a one-letter scheme.
 LITERAL_USERINFO = re.compile(
     r"[A-Za-z][A-Za-z0-9+.-]*://[^\s:/?#\[\]@'\"`]*:(?![{$<%(])[^\s/@'\"`\[\]]+@"
 )

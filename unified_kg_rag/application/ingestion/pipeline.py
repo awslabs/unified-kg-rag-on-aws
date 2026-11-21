@@ -847,7 +847,9 @@ class DataIngestionPipeline:
         counts = Counter(d.id for d in given)
         repeated = sorted(name for name, count in counts.items() if count > 1)
         if repeated:
-            raise ValueError(f"document ids given more than once: {repeated[:10]}")
+            raise ValueError(
+                f"document ids given more than once: {first_names(map(repr, repeated))}"
+            )
         return self._run_changes(given, (), source_scope, pipeline_id)
 
     def delete_documents(

@@ -418,10 +418,15 @@ def __getattr__(name: str) -> Any:
         # import machinery's check first, then the import itself, which warns.
         caller = sys._getframe(1).f_code.co_filename
         if not ("importlib" in caller and "_bootstrap" in caller):
-            from unified_kg_rag.shared.utils.deprecation import warn_deprecated
+            from unified_kg_rag.shared.utils.deprecation import (
+                deprecation_message,
+                warn_deprecated,
+            )
 
             warn_deprecated(
-                f"unified_kg_rag.{name} is deprecated: it is {renamed}; import that"
+                deprecation_message(
+                    f"unified_kg_rag.{name}", f"it is {renamed}; import that"
+                )
             )
         return __getattr__(renamed)
     module = _EXPORTS.get(name)

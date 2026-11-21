@@ -3,9 +3,11 @@
 """One ``VectorIndexer`` contract for every vector backend.
 
 Runs on the fake (the reference), the embedded SQLite engine, the OpenSearch
-container (``LOCAL_STORES=1``) and OpenSearch Service (``-m aws``); see
-``tests/fixtures/store_backends.py``. Index administration (aliases, mappings,
-``_meta``) is checked on the OpenSearch-protocol backends only.
+container (``LOCAL_STORES=1``), OpenSearch Service (``-m aws``) and a custom
+backend ``UKR_TEST_BACKEND`` names; see ``tests/fixtures/store_backends.py``.
+Index administration (aliases, mappings, ``_meta``) is checked on the
+OpenSearch-protocol backends only (``INDEX_ADMIN``). A test of a method a
+custom backend leaves at its port's default skips (``StoreHarness.needs``).
 """
 
 from __future__ import annotations
@@ -326,6 +328,7 @@ class _CountingFactory(HashingEmbeddingFactory):
 def test_lineage_updates_rewrite_fields_without_reembedding(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("read_claims", "read_entity_descriptions")
     counting = _CountingFactory()
     h = harness.derive(embedding_factory=counting)
     indexer = h.vector_indexer
@@ -364,6 +367,7 @@ def test_lineage_updates_rewrite_fields_without_reembedding(
 def test_claims_read_from_a_suffix_are_tagged_and_written_back_there(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("read_claims")
     indexer = harness.vector_indexer
     tenant = harness.suffix("tenant")
     (claim,) = _claims(tenant)
@@ -399,6 +403,7 @@ def test_claims_read_from_a_suffix_are_tagged_and_written_back_there(
 
 
 def test_a_claims_dates_are_read_back(harness: StoreHarness) -> None:
+    harness.needs("read_claims")
     # The dates are part of a claim's identity (resolved_claim_id): read back
     # without them, a stored claim re-keyed to follow a renamed entity took a
     # date-free id that a full build never gives it.
@@ -410,6 +415,7 @@ def test_a_claims_dates_are_read_back(harness: StoreHarness) -> None:
 
 
 def test_description_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:
+    harness.needs("read_relationship_descriptions", "read_entity_descriptions")
     indexer = harness.vector_indexer
     tenant = harness.suffix("tenant")
     _write(harness, "relationships", "upsert", _relationships(tenant))
@@ -426,6 +432,7 @@ def test_description_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None
 
 
 def test_vector_copy_reads_hold_the_compared_fields(harness: StoreHarness) -> None:
+    harness.needs("read_vector_copies")
     # What an incremental write compares with the derived items (see
     # VectorIndexer.read_vector_copies), scoped to a suffix.
     indexer = harness.vector_indexer
@@ -468,6 +475,7 @@ def test_vector_copy_reads_hold_the_compared_fields(harness: StoreHarness) -> No
 
 
 def test_vector_copy_reads_hold_the_schema_annotations(harness: StoreHarness) -> None:
+    harness.needs("read_vector_copies")
     indexer = harness.vector_indexer
     iri = "https://example.org/onto#Location"
     entities = _entities()
@@ -495,6 +503,7 @@ def test_vector_copy_reads_hold_the_schema_annotations(harness: StoreHarness) ->
 
 
 def test_vector_copy_reads_hold_the_seed_graph_fields(harness: StoreHarness) -> None:
+    harness.needs("read_vector_copies")
     indexer = harness.vector_indexer
     iri = "https://example.org/procure#depot"
     entities = _entities()
@@ -528,6 +537,7 @@ def test_vector_copy_reads_hold_the_seed_graph_fields(harness: StoreHarness) -> 
 def test_a_seed_graph_unit_is_stored_with_its_source_kind(
     harness: StoreHarness, mode: str
 ) -> None:
+    harness.needs("find_documents")
     # The top-level keyword a text search leaves seed units out by; a
     # document's unit is written without it, as before seed graphs.
     seed = TextUnit(
@@ -548,6 +558,9 @@ def test_a_seed_graph_unit_is_stored_with_its_source_kind(
 def test_schema_annotations_are_listed_and_rewritten_in_place(
     harness: StoreHarness,
 ) -> None:
+    harness.needs(
+        "read_schema_annotations", "write_schema_annotations", "read_vector_copies"
+    )
     indexer = harness.vector_indexer
     tenant = harness.suffix("ann")
     iri = "https://example.org/onto#Location"
@@ -601,6 +614,7 @@ def test_schema_annotations_are_listed_and_rewritten_in_place(
 
 
 def test_an_in_schema_false_is_written_as_false(harness: StoreHarness) -> None:
+    harness.needs("read_schema_annotations", "write_schema_annotations")
     # Not as null: in_schema false is a filter value of its own.
     indexer = harness.vector_indexer
     _write(harness, "entities", "upsert", _entities())
@@ -715,6 +729,7 @@ def test_schema_annotation_write_failures_are_counted(
 
 
 def test_text_unit_id_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:
+    harness.needs("read_text_unit_ids")
     # The incremental probe that the vector store still holds the registry's
     # documents: [] without a live index, the stored ids with one.
     indexer = harness.vector_indexer
@@ -1132,6 +1147,7 @@ def _with_seed_properties(properties: list[dict[str, Any]]) -> list[Entity]:
 def test_seed_properties_of_any_form_are_written_and_read_back(
     harness: StoreHarness, mode: str
 ) -> None:
+    harness.needs("read_vector_copies")
     entities = _with_seed_properties(_ODD_SEED_PROPERTIES)
     _write(harness, "entities", mode, entities)
     copies = harness.vector_indexer.read_vector_copies(
@@ -1145,6 +1161,7 @@ def test_seed_properties_of_any_form_are_written_and_read_back(
 def test_a_lineage_update_sets_the_filters_and_keeps_other_attributes(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("read_vector_copies", "find_documents")
     # As the incremental strip relies on: a lineage update rewrites the
     # document filters (a key the item lost stops matching) and leaves every
     # other attribute as written, so a copy whose seed properties changed
@@ -1379,6 +1396,7 @@ def test_claim_filters_match_as_the_user_guide_says(harness: StoreHarness) -> No
 def test_find_documents_matches_a_keyword_field_in_a_suffix(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("find_documents")
     indexer = harness.vector_indexer
     tenant = harness.suffix("tenant")
     prefixes = harness.config.indexing.opensearch
@@ -1418,6 +1436,7 @@ def _windowed(harness: StoreHarness, window: int) -> StoreHarness:
 def test_find_documents_reads_more_matches_than_one_search_returns(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    harness.needs("find_documents")
     # A hub's edges outnumber one search's window (an index created with
     # max_result_window 2): they are read in pages (the lookup used to raise,
     # failing the run for good). The stores count the matches only up to
@@ -1426,7 +1445,7 @@ def test_find_documents_reads_more_matches_than_one_search_returns(
     # comes.
     harness = _windowed(harness, 2)
     indexer = harness.vector_indexer
-    if harness.kind != "fake":
+    if INDEX_ADMIN in harness.capabilities:
         search = indexer.opensearch_client.search
 
         def counting_to_the_window(index: str, body: dict[str, Any]) -> Any:
@@ -1455,6 +1474,7 @@ def test_find_documents_reads_more_matches_than_one_search_returns(
 
 
 def test_find_documents_reads_past_ten_thousand_matches(harness: StoreHarness) -> None:
+    harness.needs("find_documents")
     # OpenSearch counts a search's matches up to 10,000 unless asked for
     # more: a lookup that paged only on a larger total stopped there.
     if harness.kind == "fake":
@@ -1824,12 +1844,11 @@ def test_index_settings_the_engine_refuses_fail_before_extraction(
         typo.vector_indexer.check_index_creation(tenant)
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_index_settings_reach_the_index(harness: StoreHarness) -> None:
     # Retrieval sizes a fetch by id by index_settings.max_result_window: the
     # index must be created with it. Only three keys reached the index, so a
     # raised window made every such search rejected.
-    if harness.kind == "fake":
-        pytest.skip("the fake keeps no index settings")
     window = 20_000
 
     def raise_window(config: Config) -> None:
@@ -1854,6 +1873,7 @@ def test_index_settings_reach_the_index(harness: StoreHarness) -> None:
 
 
 def test_text_unit_attributes_round_trip_in_a_suffix(harness: StoreHarness) -> None:
+    harness.needs("read_text_unit_attributes")
     indexer = harness.vector_indexer
     tenant = harness.suffix("tenant")
     keys = {"extraction_records": {"graph": "fp:hash-1", "claims": "fp2:hash-1"}}
@@ -1871,6 +1891,11 @@ def test_text_unit_attributes_round_trip_in_a_suffix(harness: StoreHarness) -> N
 def test_extraction_records_are_written_read_and_deleted_per_suffix(
     harness: StoreHarness,
 ) -> None:
+    harness.needs(
+        "write_extraction_records",
+        "read_extraction_records",
+        "delete_extraction_records",
+    )
     indexer = harness.vector_indexer
     tenant = harness.suffix("tenant")
     stats = indexer.write_extraction_records(
@@ -1923,6 +1948,7 @@ def test_the_build_record_is_read_back_by_the_retriever(
 def test_deleted_communities_leave_the_text_units_naming_them(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("prune_text_unit_communities", "find_documents")
     indexer = harness.vector_indexer
     tenant = harness.suffix("s1")
     t1, t2 = _text_units()
@@ -1941,7 +1967,7 @@ def test_deleted_communities_leave_the_text_units_naming_them(
         "upsert",
         _tagged([t1.model_copy(update={"id": "t9", "community_ids": ["c1"]})], tenant),
     )
-    prefix = indexer.opensearch_config.text_units_index_prefix
+    prefix = harness.config.indexing.opensearch.text_units_index_prefix
 
     stats = indexer.prune_text_unit_communities(["c1"], "default")
 
@@ -1959,6 +1985,7 @@ def test_deleted_communities_leave_the_text_units_naming_them(
 def test_holds_any_item_tells_a_suffix_with_items(
     harness: StoreHarness, kind: str
 ) -> None:
+    harness.needs("holds_any_item", "holds_any_text_unit")
     indexer = harness.vector_indexer
     tenant, other = harness.suffix("held"), harness.suffix("none")
     assert indexer.holds_any_item(suffix=tenant) is False
@@ -1972,6 +1999,7 @@ def test_holds_any_item_tells_a_suffix_with_items(
 def test_holds_any_text_unit_tells_a_suffix_with_text_units(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("holds_any_text_unit", "holds_any_item")
     # Text units alone (a corpus that stated no item): holds_any_item does
     # not see them, holds_any_text_unit does.
     indexer = harness.vector_indexer
@@ -1985,6 +2013,7 @@ def test_holds_any_text_unit_tells_a_suffix_with_text_units(
 
 @pytest.mark.parametrize("kind", ["text_units", "entities"])
 def test_an_emptied_index_holds_nothing(harness: StoreHarness, kind: str) -> None:
+    harness.needs("holds_any_text_unit", "holds_any_item")
     # A live index that a full build emptied exists but holds no document:
     # neither probe reads it as holding one.
     indexer = harness.vector_indexer
@@ -2000,6 +2029,7 @@ def test_an_emptied_index_holds_nothing(harness: StoreHarness, kind: str) -> Non
 def test_a_build_record_reads_back_what_the_namespace_holds(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("record_build", "read_build_record")
     # Ingestion reads the record before a run (an artifact it lacks makes an
     # incremental run rebuild) and the chain before a query (a strategy whose
     # methodology it does not hold is refused): both read what record_build
@@ -2052,6 +2082,7 @@ def test_a_build_record_reads_back_what_the_namespace_holds(
 def test_scan_items_streams_each_kind_in_id_order_without_vectors(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("scan_items")
     _write(harness, "text_units", "index", _text_units())
     _write(harness, "entities", "index", _entities())
     indexer = harness.vector_indexer
@@ -2080,6 +2111,7 @@ def test_scan_items_streams_each_kind_in_id_order_without_vectors(
 
 
 def test_describe_indices_counts_each_live_index(harness: StoreHarness) -> None:
+    harness.needs("describe_indices")
     _write(harness, "text_units", "index", _text_units())
     _write(harness, "entities", "index", _entities())
 

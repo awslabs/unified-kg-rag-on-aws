@@ -1,8 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The ``SummaryTreeStore`` contract on every vector backend
-that keeps one (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in): the embedded SQLite engine and the
-OpenSearch container (``LOCAL_STORES=1``); the fake keeps none and says so.
+that keeps one (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in): the embedded SQLite engine, the
+OpenSearch container (``LOCAL_STORES=1``) and a custom backend that
+``UKR_TEST_BACKEND`` names, skipped when its store leaves the port at its
+default; the fake keeps none and says so. The alias swap, the failure
+injections and the analyzer mapping are OpenSearch-protocol internals
+(``INDEX_ADMIN``), the retrieval cases need the backend's retrievers
+(``RETRIEVERS``).
 
 Leaf paging is complete, ordered and leaves the seed graphs' units out; a
 tree is written whole and swapped in at once, with its record; a failed
@@ -21,7 +26,9 @@ from typing import Any
 import pytest
 
 from tests.fixtures.store_backends import (
+    BACKENDS,
     INDEX_ADMIN,
+    RETRIEVERS,
     StoreHarness,
     backends,
     open_harness,
@@ -41,9 +48,11 @@ from unified_kg_rag.shared.exceptions import NamespaceLeaseError
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(params=backends(INDEX_ADMIN))
+@pytest.fixture(params=[p for p in BACKENDS if p.values[0] != "fake"])
 def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[StoreHarness]:
-    yield from open_harness(request.param, tmp_path)
+    for harness in open_harness(request.param, tmp_path):
+        harness.needs_port(SummaryTreeStore)
+        yield harness
 
 
 def _units(n: int, suffix: str | None = None) -> list[TextUnit]:
@@ -173,6 +182,8 @@ def test_a_tree_is_written_whole_with_its_record_and_swapped_in(
     assert [n["id"] for n in nodes] == ["n2", "n3", "n4"]
     assert nodes[2]["child_ids"] == ["n2", "n3"]
     assert nodes[0]["attributes"]["filters"] == {"category": "logistics"}
+    if INDEX_ADMIN not in harness.capabilities:
+        return
     # One index behind the alias: the old tree's was deleted.
     client = indexer.opensearch_client
     alias = indexer._get_name(
@@ -181,6 +192,7 @@ def test_a_tree_is_written_whole_with_its_record_and_swapped_in(
     assert len(client.get_aliases_by_index(f"{alias}-*")) == 1
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_a_failed_write_keeps_the_old_tree(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -214,6 +226,7 @@ def _index_count(harness: StoreHarness) -> int:
     return len(indexer.opensearch_client.get_aliases_by_index(f"{alias}-*"))
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 @pytest.mark.parametrize("error", [RuntimeError, NamespaceLeaseError])
 def test_a_failed_alias_swap_keeps_the_old_tree(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
@@ -261,6 +274,7 @@ def _whole(indexer: Any) -> Any:
     return indexer.delete_summary_tree("default")
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 @pytest.mark.parametrize(
     ("delete", "read", "named"),
     [
@@ -371,6 +385,7 @@ def test_a_full_build_drops_the_summaries_of_text_it_did_not_write(
     assert (indexer.read_summary_tree_record(None) or {}).get("pruned") is True
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_stored_summary_vectors_are_reused(harness: StoreHarness) -> None:
     indexer = harness.vector_indexer
     _tree(harness, [_node("n1", 1, ["u000", "u001"], ["u000", "u001"], text="kept")])
@@ -389,6 +404,7 @@ def test_stored_summary_vectors_are_reused(harness: StoreHarness) -> None:
 
 
 def test_the_build_record_gains_the_summary_tree(harness: StoreHarness) -> None:
+    harness.needs_port(BuildRecordStore)
     indexer = harness.vector_indexer
     indexer.index_text_units(_units(2), suffixes=["default"])
     record = IndexBuildRecord(
@@ -498,6 +514,7 @@ def test_a_full_build_without_raptor_deletes_the_tree(harness: StoreHarness) -> 
     assert harness.vector_indexer.read_summary_tree_record(None) is None
 
 
+@pytest.mark.parametrize("harness", backends(RETRIEVERS), indirect=True)
 def test_the_tree_strategy_holds_the_collapsed_trees_top_five(
     harness: StoreHarness,
 ) -> None:
@@ -578,6 +595,7 @@ def test_the_tree_strategy_holds_the_collapsed_trees_top_five(
     assert set(reference[:5]) <= set(ours), (reference, ours)
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 @pytest.mark.parametrize(
     ("language", "analyzer", "text", "query"),
     [
@@ -624,6 +642,7 @@ def test_a_summary_is_analyzed_in_the_index_language(
     assert hits[0].retriever_type == "summary"
 
 
+@pytest.mark.parametrize("harness", backends(RETRIEVERS), indirect=True)
 def test_expanded_passages_keep_the_callers_filters(harness: StoreHarness) -> None:
     # The summary passes the caller's filter; of its passages only those
     # that pass it too are brought, even where others match the query
@@ -691,6 +710,7 @@ def test_expanded_passages_keep_the_callers_filters(harness: StoreHarness) -> No
     assert all(r.metadata["n_tokens"] == 5 for r in expanded)
 
 
+@pytest.mark.parametrize("harness", backends(RETRIEVERS), indirect=True)
 def test_a_cut_lineage_is_read_from_the_descendants(harness: StoreHarness) -> None:
     # A node over more text units than max_lineage_text_units stores only
     # the first ones (lineage_complete false); its passages are found

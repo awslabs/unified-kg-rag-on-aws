@@ -57,7 +57,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
 )
-from unified_kg_rag.ports.indexer import BaseIndexer
+from unified_kg_rag.ports.indexer import BaseIndexer, VectorIndexer, _implements
 
 LOCAL_CONFIG = Path(__file__).parents[2] / "docker" / "config.local.yaml"
 DEFAULT_SUFFIX = Constants.DEFAULT_SUFFIX.value
@@ -69,6 +69,12 @@ RETRIEVERS = "retrievers"
 INDEX_ADMIN = "index_admin"
 # Vector documents keyed by (suffix, id), so one id lives in two suffixes.
 SUFFIX_SCOPED_VECTOR_IDS = "suffix_scoped_vector_ids"
+# INDEX_ADMIN's tests also read the store's OpenSearch-protocol internals
+# (``opensearch_client``, ``_get_name``), as ``OpenSearchIndexer`` has them on
+# either engine: a custom backend declares it only when it is one.
+
+# The backends this package ships; any other is an ``ExtraBackend``.
+_PACKAGED = frozenset({"fake", "sqlite", "container", "aws"})
 
 _FULL = frozenset({RETRIEVERS, INDEX_ADMIN, SUFFIX_SCOPED_VECTOR_IDS})
 CAPABILITIES = {
@@ -266,6 +272,39 @@ class StoreHarness:
         """Prepare the vector store for writes (the indexer's ``initialize``)."""
         self.vector_indexer.initialize()
 
+    def needs(self, *methods: str) -> None:
+        """Skip on an :class:`ExtraBackend` whose vector store leaves any of
+        ``methods`` at its port's "cannot" default: a choice the port allows
+        (a capability the backend lacks), not a broken contract, so the test
+        skips naming each method by its port. The packaged backends
+        implement every method a suite calls: on them nothing is skipped
+        and the test states the contract."""
+        if self.kind in _PACKAGED:
+            return
+        left = [
+            f"{_owner(method)}.{method}"
+            for method in methods
+            if not _implements(self.vector_indexer, VectorIndexer, method)
+        ]
+        if left:
+            defaults = "its default" if len(left) == 1 else "their defaults"
+            pytest.skip(f"{self.kind} leaves {', '.join(left)} at {defaults}")
+
+    def needs_port(self, port: type) -> None:
+        """:meth:`needs` every public method of ``port`` (a concern port
+        ``VectorIndexer`` inherits); a store that overrides none of them
+        skips naming the port."""
+        methods = [
+            name
+            for name, value in vars(port).items()
+            if callable(value) and not name.startswith("_")
+        ]
+        if self.kind not in _PACKAGED and not any(
+            _implements(self.vector_indexer, VectorIndexer, m) for m in methods
+        ):
+            pytest.skip(f"{self.kind} leaves {port.__name__} at its defaults")
+        self.needs(*methods)
+
     # --- reads ---------------------------------------------------------------
 
     def stored_ids(self, kind: str, suffix: str | None = None) -> set[str]:
@@ -277,7 +316,7 @@ class StoreHarness:
         ``graph.communities``).
         """
         scope = suffix or DEFAULT_SUFFIX
-        if self.kind not in ("fake", "sqlite", "container", "aws"):
+        if self.kind not in _PACKAGED:
             return self._listed_ids(kind, scope)
         if kind in _GRAPH_KINDS:
             return self._graph_ids(kind, scope)
@@ -399,6 +438,12 @@ class StoreHarness:
             raise AssertionError(
                 f"{self.kind} teardown left data behind: {', '.join(errors)}"
             )
+
+
+def _owner(method: str) -> str:
+    """The port that declares ``method``: ``VectorIndexer`` or one of the
+    concern ports it inherits."""
+    return next(port.__name__ for port in VectorIndexer.__mro__ if method in vars(port))
 
 
 def clear_extraction_records(vector_indexer: Any, suffixes: list[str]) -> None:

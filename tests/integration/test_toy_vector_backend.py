@@ -13,6 +13,7 @@ import os
 import subprocess  # nosec B404 - runs pytest on a fixed argv
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
 )
 from unified_kg_rag.ports import VectorIndexer
+from unified_kg_rag.ports.indexer import SummaryTreeStore
 
 pytestmark = pytest.mark.integration
 
@@ -110,12 +112,22 @@ def test_a_full_build_and_an_incremental_run_complete(
     assert "failed" not in exports[0].getMessage()
     assert full.visualization_data_path is None
 
+    unkept = "keeps no extraction records"
+    assert not [r for r in caplog.records if unkept in r.getMessage()]
+
+    caplog.clear()
     (source / "logistics.txt").unlink()
     (source / "new.txt").write_text("Carrier moves widgets for Depot.")
     incremental = _pipeline(config, source, tmp_path, vectors, graph, registry).run(
         source, pipeline_id="toy-2"
     )
     assert incremental.status is PipelineStageStatus.COMPLETED
+    # The removal's and the commit's recovery notes live in the
+    # extraction-record store, which the toy leaves at its default: the run
+    # says once that they are not stored.
+    notes = [r for r in caplog.records if unkept in r.getMessage()]
+    assert [r.levelno for r in notes] == [logging.WARNING]
+    assert "cannot resume them" in notes[0].getMessage()
 
 
 def test_an_extra_backend_is_loaded_by_name() -> None:
@@ -172,3 +184,102 @@ def test_the_suites_collect_the_extra_backend(tmp_path: Path) -> None:
         collected.stdout[-2000:] + collected.stderr[-2000:]
     )
     assert "[toy]" in collected.stdout
+
+
+class _FindingToy(ToyVectorStore):
+    """The toy with one optional method of its own."""
+
+    def find_documents(self, *args: Any, **kwargs: Any) -> dict[str, list[str]]:
+        return {}
+
+
+def test_a_test_needing_a_default_method_skips_naming_its_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(store_backends, "EXTRA_BACKEND", TOY_BACKEND)
+    monkeypatch.setitem(store_backends.CAPABILITIES, "toy", TOY_BACKEND.capabilities)
+    harness = next(store_backends.open_harness("toy", tmp_path))
+    with pytest.raises(
+        pytest.skip.Exception,
+        match=r"toy leaves VectorIndexer\.find_documents, "
+        r"ExtractionRecordStore\.read_extraction_records at their defaults",
+    ):
+        harness.needs("find_documents", "read_extraction_records")
+    with pytest.raises(
+        pytest.skip.Exception, match="toy leaves SummaryTreeStore at its defaults"
+    ):
+        harness.needs_port(SummaryTreeStore)
+    # A method the store overrides runs its test.
+    harness.vector_indexer = _FindingToy(harness.config)
+    harness.needs("find_documents")
+    # A packaged backend states every contract: nothing is skipped.
+    fake = next(store_backends.open_harness("fake", tmp_path))
+    fake.vector_indexer = ToyVectorStore(fake.config)
+    fake.needs("find_documents")
+    fake.needs_port(SummaryTreeStore)
+
+
+def test_the_suites_pass_or_skip_on_the_smallest_backend(tmp_path: Path) -> None:
+    # The recipe's command, on a backend that leaves every concern at its
+    # default: no test fails; each skips naming what the backend lacks.
+    ran = subprocess.run(  # nosec B603 - fixed argv
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-rs",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
+            "-p",
+            "no:xdist",
+            "--basetemp",
+            str(tmp_path / "run"),
+            "tests/integration/test_vector_store_conformance.py",
+            "tests/integration/test_summary_tree_conformance.py",
+            "-k",
+            TOY_BACKEND.name,
+        ],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "UKR_TEST_BACKEND": "tests.fixtures.toy_vector_backend:TOY_BACKEND",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = ran.stdout[-6000:] + ran.stderr[-2000:]
+    assert ran.returncode == 0, output
+    assert " failed" not in output and " error" not in output, output
+    assert "toy leaves VectorIndexer.find_documents at its default" in output
+    assert "toy leaves SummaryTreeStore at its defaults" in output
+
+
+def test_a_store_keeping_no_notes_is_named_once_per_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from tests.fixtures.fakes.stores import FakeVectorStore
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.stored_items import (
+        PENDING_COMMIT,
+        STRIPPED_SUMMARIES,
+    )
+
+    config = Config()
+    for vectors, logged in (
+        (ToyVectorStore(config), 1),
+        (FakeVectorStore(config.indexing.opensearch), 0),
+    ):
+        caplog.clear()
+        manager = IndexingManager(
+            config, vector_indexer=vectors, graph_indexer=FakeGraphStore(config)
+        )
+        manager._write_note(PENDING_COMMIT, "default", {"ids": []})
+        manager._write_note(STRIPPED_SUMMARIES, "default", {"ids": []})
+        notes = [
+            r for r in caplog.records if "keeps no extraction records" in r.getMessage()
+        ]
+        assert len(notes) == logged, type(vectors).__name__

@@ -7,7 +7,9 @@ name: security
 # grype and syft, cannot run here: .ash/.ash.yaml). The threshold, the path-scoped suppressions (each with
 # its reason) and the scanners left out are in .ash/.ash.yaml; a suppression
 # about one statement sits on that line (`# nosec`, `# nosemgrep`,
-# `# pragma: allowlist secret`).
+# `# pragma: allowlist secret`). The gitleaks job scans the tree and the
+# pushed or proposed commits with gitleaks' default rules and the allowlist in
+# .gitleaks.toml.
 
 on:
   push:
@@ -120,3 +122,36 @@ jobs:
           uvx --exclude-newer 2026-11-01T00:00:00Z pip-audit==2.10.1 \
             --requirement "$RUNNER_TEMP/requirements.txt" --disable-pip \
             --progress-spinner off "${ignores[@]}"
+
+  gitleaks:
+    # gitleaks' default rules over the checked-out tree and the commits this
+    # run adds: a pull request's own commits (base..head), the whole branch
+    # on a push or a manual run (about 15 s for the full history). The image
+    # is pinned by digest, as CONTRIBUTING.md's local command is (bump both
+    # together); .gitleaks.toml in the checkout is loaded automatically and
+    # holds the allowlist of known non-secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The history scan reads commits, so fetch all of them.
+          fetch-depth: 0
+
+      - name: Scan the tree and the commits
+        env:
+          IMAGE: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            range="$BASE_SHA..$HEAD_SHA"
+          else
+            range=HEAD
+          fi
+          # The image's git config trusts every directory (safe.directory=*),
+          # so the runner-owned checkout reads as root in the container.
+          run() { docker run --rm -v "$PWD:/repo:ro" -w /repo "$IMAGE" "$@" --redact --no-banner; }
+          run dir .
+          run git . --log-opts="$range"
