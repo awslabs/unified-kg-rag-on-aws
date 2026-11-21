@@ -37,10 +37,7 @@ from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("LOCAL_STORES") != "1",
-        reason="set LOCAL_STORES=1 with an OpenSearch running",
-    ),
+    pytest.mark.local_stores,
 ]
 
 _DIMENSION = 256

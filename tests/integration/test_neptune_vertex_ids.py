@@ -13,7 +13,6 @@ the other mode is refused until one full build rewrites it. Skipped unless
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -50,10 +49,7 @@ from unified_kg_rag.shared.exceptions import StoreConfigurationError
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("LOCAL_STORES") != "1",
-        reason="set LOCAL_STORES=1 with docker/compose.local.yaml running",
-    ),
+    pytest.mark.local_stores,
 ]
 
 _SUFFIX = "default"

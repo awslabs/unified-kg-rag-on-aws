@@ -15,7 +15,6 @@ Skipped unless ``LOCAL_STORES=1``.
 
 from __future__ import annotations
 
-import os
 import random
 from pathlib import Path
 
@@ -31,10 +30,7 @@ from unified_kg_rag.domain.models import (
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("LOCAL_STORES") != "1",
-        reason="set LOCAL_STORES=1 with docker/compose.local.yaml running",
-    ),
+    pytest.mark.local_stores,
 ]
 
 _ONSETS = "b c d f g h k l m n p r s t v z br dr gr kr pl st tr".split()

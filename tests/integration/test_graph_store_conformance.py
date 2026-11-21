@@ -680,7 +680,12 @@ def test_rewritten_vertex_annotations_match_the_vertex_filters(
 
 
 @pytest.mark.parametrize(
-    "harness", ["container", f"container+{CUSTOM_IDS}"], indirect=True
+    "harness",
+    [
+        pytest.param(kind, marks=pytest.mark.local_stores)
+        for kind in ("container", f"container+{CUSTOM_IDS}")
+    ],
+    indirect=True,
 )
 def test_a_failed_annotation_write_is_a_failed_item(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
