@@ -125,22 +125,35 @@ def focus_names_anything(
     text: str,
 ) -> bool:
     """Whether an entity focus names anything: some ``focus`` name is a
-    stored entity among its own hits ``per_focus`` (:func:`exact_links`) or
+    stored entity among its own hits ``per_focus`` (:func:`exact_links`),
     is written in the query ``text`` (every term of it a term of ``text``,
-    as :func:`covers` compares terms).
+    as :func:`covers` compares terms), or covers its own top hit's name or
+    is covered by it (a name the model normalized or made explicit:
+    "Beatles" for the stored "The Beatles", "New York City" for "New
+    York", neither written in the query).
 
     A model asked for a query's entities answers a placeholder ("none",
     "N/A", "Empty", in any language) for a query that names none, whatever
     the prompt says: told to write nothing, a 3B model wrote "none" for
     each of 12 entity-free questions, and under three other wordings it
-    left 1 of 36 answers empty. The placeholder is no stored
-    name and no word of the query, so the focus is read as no focus and the
-    query itself is searched, without a word list of placeholders (it would
-    hold one language's). A focus with one grounded name is kept whole."""
+    left 1 of 36 answers empty. The placeholder is no stored name, no word
+    of the query and shares no term with the entity a search returns for
+    it, so the focus is read as no focus and the query itself is searched,
+    without a word list of placeholders (it would hold one language's). A
+    focus with one grounded name is kept whole."""
     return any(
-        exact_links(name, [h for h in hits if h.source]) or covers(text, name)
+        _grounded(name, [h for h in hits if h.source], text)
         for name, hits in zip(focus, per_focus, strict=True)
     )
+
+
+def _grounded(name: str, hits: Sequence[RetrievalResult], text: str) -> bool:
+    """Whether the focus ``name`` is grounded (:func:`focus_names_anything`)
+    by its own ranked ``hits`` or the query ``text``."""
+    if exact_links(name, hits) or covers(text, name):
+        return True
+    top = hit_name(hits[0]) if hits else ""
+    return bool(top) and (covers(top, name) or covers(name, top))
 
 
 LinkPolicy = Literal["cover", "rank"]

@@ -357,6 +357,27 @@ def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> No
         (["东芝"], [[]], "东芝电子的总部在哪里", True),
         # A hit without a source links nothing.
         (["Vendor"], [[_hit("Vendor", 0.9, source="")]], "q", False),
+        # R2A-4: a name the model normalized or made explicit, neither
+        # stored nor written so: its own top hit covers it, or it the hit.
+        (
+            ["Beatles"],
+            [[_hit("The Beatles", 0.8)]],
+            "Who drummed for the Fab Four?",
+            True,
+        ),
+        (
+            ["New York City"],
+            [[_hit("New York", 0.8), _hit("York", 0.7)]],
+            "What is the population of the Big Apple?",
+            True,
+        ),
+        (["東京"], [[_hit("東京都", 0.8)]], "首都の人口はどれくらいですか", True),
+        # Only the top hit: a lower one is no evidence of the name.
+        (["Beatles"], [[_hit("Vendor", 0.9), _hit("The Beatles", 0.4)]], "q", False),
+        # A placeholder shares no term with the hit its search returns.
+        (["none"], [[_hit("Acme", 0.4)]], "Which label released it?", False),
+        (["N/A"], [[_hit("Vendor", 0.3)]], "Summarize the key points.", False),
+        (["なし"], [[_hit("東京都", 0.3)]], "要点は何ですか", False),
     ],
 )
 def test_a_focus_names_something_stored_or_written_in_the_query(
