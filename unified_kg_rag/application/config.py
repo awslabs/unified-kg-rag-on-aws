@@ -30,6 +30,7 @@ from unified_kg_rag.domain.models.config import (
 )
 from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.utils.deprecation import deprecation_message
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
@@ -452,9 +453,12 @@ def _variable_paths(
                         replaced.append((replacement, target))
                 if replaced and warn:
                     _logger.warning(
-                        "Environment variable %s is deprecated: set %s",
-                        name,
-                        ", ".join(replacement for replacement, _ in replaced),
+                        "%s",
+                        deprecation_message(
+                            f"Environment variable {name}",
+                            "set "
+                            + ", ".join(replacement for replacement, _ in replaced),
+                        ),
                     )
             removed = _removed_path(name)
             if removed is not None:

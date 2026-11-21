@@ -418,17 +418,22 @@ Each name below warns and still works, and is removed in 0.5.0
   for `[NO_ANSWER]` (`search.abstention`), the token held back and stripped.
 - `RAGInput.enable_thinking` warns (`DeprecationWarning`): set `RAGInput.effort`. Until it is removed it turns the
   answer model's reasoning on at its tier's effort, as before.
-- The flat `retry` keys (`retry.max_attempts`, `base_delay_seconds`, `max_delay_seconds`, `max_total_seconds`,
-  `model_server_max_attempts`, `graph_store_max_attempts`, `query_store_max_attempts`) load, from a file or a `UKR__`
+- The flat `retry` keys (`retry.max_attempts`, `retry.base_delay_seconds`, `retry.max_delay_seconds`,
+  `retry.max_total_seconds`, `retry.model_server_max_attempts`, `retry.graph_store_max_attempts`,
+  `retry.query_store_max_attempts`) load, from a file or a `UKR__`
   variable, into every profile each one governed in 0.3.0 (`max_attempts` into `retry.model` and
   `retry.ingestion_item`, `base_delay_seconds` into `model`, `model_server` and `graph_store`, ...), with a WARNING
   naming them; one set beside a profile key to another value (a file key or a `UKR__` variable) fails the load,
   naming both. `DEPRECATED_KEYS` maps a
   key to one replacement or several.
+- `evaluation.prices` (a file key or a `UKR__` variable) loads into its replacement, with a WARNING naming it; the
+  Python attribute is gone (*Breaking changes*).
 - `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its
   new name, and is no longer in `__all__` (`unified_kg_rag.domain.models.config.TransientRetryConfig`, an internal
   path, is gone). A warning the package emits for a deprecated API now names the caller's line under
   `from unified_kg_rag import ...` too (it named a frame of the import machinery).
+- The package's deprecation warnings, log lines and CLI stderr lines name the release that removes the name
+  (`... is deprecated (removed in 0.5.0): ...`).
 
 ### Fixed
 

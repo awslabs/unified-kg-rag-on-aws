@@ -28,6 +28,14 @@ _INTERNAL = tuple(
 )
 
 
+def deprecation_message(name: str, advice: str) -> str:
+    """What a user is told of the deprecated ``name``: that it is deprecated,
+    the release that removes it (:data:`REMOVED_IN`) and ``advice``, what to
+    use instead. Every deprecation warning, log line and stderr line the
+    package writes says it this way."""
+    return f"{name} is deprecated (removed in {REMOVED_IN}): {advice}"
+
+
 class PackageDeprecationWarning(DeprecationWarning):
     """A deprecated name of this package. Its own class so a test suite can
     turn every one into an error (``filterwarnings``): the package must

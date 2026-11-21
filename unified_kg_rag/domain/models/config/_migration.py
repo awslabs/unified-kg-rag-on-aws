@@ -11,6 +11,8 @@ from typing import Any, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
+from unified_kg_rag.shared.utils.deprecation import deprecation_message
+
 # Moved settings -> the key that replaces each. A config that sets one fails
 # validation naming its replacement.
 MOVED_KEYS: dict[str, str] = {
@@ -146,10 +148,13 @@ def deprecated_key_warning(old: str) -> str:
     loader's log line and the console's settings check say the same."""
     targets = deprecated_targets(old)
     if len(targets) == 1:
-        return f"Config key {old} is deprecated: it loads into {targets[0]}; set that key instead"
-    return (
-        f"Config key {old} is deprecated: it governed several callers and loads "
-        f"into each of {', '.join(targets)}; set those keys instead"
+        return deprecation_message(
+            f"Config key {old}", f"it loads into {targets[0]}; set that key instead"
+        )
+    return deprecation_message(
+        f"Config key {old}",
+        f"it governed several callers and loads into each of "
+        f"{', '.join(targets)}; set those keys instead",
     )
 
 

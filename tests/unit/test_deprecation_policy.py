@@ -6,12 +6,25 @@ them says which release that is."""
 
 from __future__ import annotations
 
+import re
+import tokenize
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from packaging.version import Version
 
+import unified_kg_rag
 from unified_kg_rag import __version__
+from unified_kg_rag.application.retrieval.rag_chain import RAGInput
+from unified_kg_rag.domain.models.config._migration import (
+    DEPRECATED_KEYS,
+    deprecated_key_warning,
+)
+from unified_kg_rag.domain.models.namespace import (
+    DEPRECATED_NAMESPACE_NAMES,
+    deprecated_namespace_warning,
+)
 from unified_kg_rag.shared.utils.deprecation import REMOVED_IN
 
 pytestmark = pytest.mark.unit
@@ -52,3 +65,65 @@ def test_the_docs_name_the_release() -> None:
     operations = (REPO_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
     upgrading = _section(operations, "## Upgrading the library", "## ")
     assert f"removed in {REMOVED_IN}" in upgrading
+
+
+# The root's renamed names (TransientRetryConfig -> RetryPolicy).
+_RENAMED = unified_kg_rag._RENAMED
+
+
+def test_the_deprecated_section_lists_every_deprecated_key_and_name() -> None:
+    # The release that removes the names works from this list.
+    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    deprecated = _section(
+        _section(changelog, "## [Unreleased]", "## "), "### Deprecated", "### "
+    )
+    # The names in its code spans; ``RAGInput.suffix`` lists ``suffix``.
+    named = {
+        token
+        for span in re.findall(r"`([^`]*)`", deprecated)
+        for token in re.split(r"[^\w.\-]+", span)
+    }
+    names = [*DEPRECATED_KEYS, *DEPRECATED_NAMESPACE_NAMES, *_RENAMED]
+    missing = [
+        name
+        for name in names
+        if not any(t == name or t.endswith(f".{name}") for t in named)
+    ]
+    assert not missing, f"CHANGELOG *Deprecated* does not list {missing}"
+
+
+def test_every_deprecation_text_names_the_release() -> None:
+    removed = f"(removed in {REMOVED_IN})"
+    for key in DEPRECATED_KEYS:
+        assert removed in deprecated_key_warning(key), key
+    for name in DEPRECATED_NAMESPACE_NAMES:
+        assert removed in deprecated_namespace_warning(name), name
+    for name in _RENAMED:
+        with pytest.warns(DeprecationWarning, match=re.escape(removed)):
+            getattr(unified_kg_rag, name)
+    with pytest.warns(DeprecationWarning, match=re.escape(removed)):
+        RAGInput(query="q", enable_thinking=True)
+
+
+def _strings(path: Path) -> Iterator[tuple[int, str]]:
+    """The string literals of ``path`` (an f-string's literal parts too)."""
+    kinds = {tokenize.STRING, getattr(tokenize, "FSTRING_MIDDLE", tokenize.STRING)}
+    with path.open("rb") as source:
+        for token in tokenize.tokenize(source.readline):
+            if token.type in kinds:
+                yield token.start[0], token.string
+
+
+def test_no_deprecation_text_is_written_by_hand() -> None:
+    # Each goes through deprecation_message, which names REMOVED_IN: a
+    # literal "is deprecated" elsewhere would not.
+    package = REPO_ROOT / "unified_kg_rag"
+    helper = package / "shared" / "utils" / "deprecation.py"
+    by_hand = [
+        f"{path.relative_to(REPO_ROOT)}:{line}"
+        for path in sorted(package.rglob("*.py"))
+        if path != helper
+        for line, text in _strings(path)
+        if "is deprecated" in text
+    ]
+    assert not by_hand, by_hand

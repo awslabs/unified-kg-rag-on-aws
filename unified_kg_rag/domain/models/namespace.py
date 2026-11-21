@@ -14,7 +14,7 @@ the new name given two different values refused.
 
 from typing import Any
 
-from unified_kg_rag.shared.utils.deprecation import warn_deprecated
+from unified_kg_rag.shared.utils.deprecation import deprecation_message, warn_deprecated
 
 # Each deprecated name of the namespace -> the name that replaces it.
 DEPRECATED_NAMESPACE_NAMES: dict[str, str] = {
@@ -26,9 +26,8 @@ DEPRECATED_NAMESPACE_NAMES: dict[str, str] = {
 
 def deprecated_namespace_warning(old: str) -> str:
     """What a caller that names the namespace by ``old`` is told."""
-    return (
-        f"{old} is deprecated: it names the namespace; use "
-        f"{DEPRECATED_NAMESPACE_NAMES[old]} instead"
+    return deprecation_message(
+        old, f"it names the namespace; use {DEPRECATED_NAMESPACE_NAMES[old]} instead"
     )
 
 
