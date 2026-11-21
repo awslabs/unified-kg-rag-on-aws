@@ -372,8 +372,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   their own attempts (S3: 5 requests, see below). The IaC's Nori package handlers run on Python 3.15, the newest Python
   Lambda runtime aws-cdk-lib 2.277 knows (cdk-nag AwsSolutions-L1). aws-cdk-lib 2.277 adds nodejs26.x but keeps the
   functions it creates itself (the AwsCustomResource singleton, a custom-resource provider's `framework-*` functions) on
-  nodejs24.x, and the stack cannot set their runtime, so L1 failed the synth on them: L1 is suppressed on those
-  functions only, whatever their runtime ("runtime chosen by aws-cdk-lib"), and the stack's own handlers keep it. pypdf
+  nodejs24.x, and the stack leaves their runtime to aws-cdk-lib (the one override, the experimental
+  `CustomResourceConfig`, reaches the singleton only and would move a deployed runtime untested), so L1 failed the
+  synth on them: L1 is suppressed on those functions only, whatever their runtime ("aws-cdk-lib's default runtime"),
+  and the stack's own handlers keep it. pypdf
   and langchain-core versions are part of the parser fingerprint, so the first ingestion after upgrading parses every
   file again once. pypdf 7 gives the same page text, labels and offsets as 6.21.4 on the repo's PDF fixtures, but
   separates words a line shifts between baselines (`AlphaBeta Gamma` for `AlphaBetaGamma`): such a document's text
