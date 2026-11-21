@@ -13,6 +13,7 @@ import os
 import subprocess  # nosec B404 - runs pytest on a fixed argv
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
 )
 from unified_kg_rag.ports import VectorIndexer
+from unified_kg_rag.ports.indexer import SummaryTreeStore
 
 pytestmark = pytest.mark.integration
 
@@ -172,3 +174,75 @@ def test_the_suites_collect_the_extra_backend(tmp_path: Path) -> None:
         collected.stdout[-2000:] + collected.stderr[-2000:]
     )
     assert "[toy]" in collected.stdout
+
+
+class _FindingToy(ToyVectorStore):
+    """The toy with one optional method of its own."""
+
+    def find_documents(self, *args: Any, **kwargs: Any) -> dict[str, list[str]]:
+        return {}
+
+
+def test_a_test_needing_a_default_method_skips_naming_its_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(store_backends, "EXTRA_BACKEND", TOY_BACKEND)
+    monkeypatch.setitem(store_backends.CAPABILITIES, "toy", TOY_BACKEND.capabilities)
+    harness = next(store_backends.open_harness("toy", tmp_path))
+    with pytest.raises(
+        pytest.skip.Exception,
+        match=r"toy leaves VectorIndexer\.find_documents, "
+        r"ExtractionRecordStore\.read_extraction_records at their defaults",
+    ):
+        harness.needs("find_documents", "read_extraction_records")
+    with pytest.raises(
+        pytest.skip.Exception, match="toy leaves SummaryTreeStore at its defaults"
+    ):
+        harness.needs_port(SummaryTreeStore)
+    # A method the store overrides runs its test.
+    harness.vector_indexer = _FindingToy(harness.config)
+    harness.needs("find_documents")
+    # A packaged backend states every contract: nothing is skipped.
+    fake = next(store_backends.open_harness("fake", tmp_path))
+    fake.vector_indexer = ToyVectorStore(fake.config)
+    fake.needs("find_documents")
+    fake.needs_port(SummaryTreeStore)
+
+
+def test_the_suites_pass_or_skip_on_the_smallest_backend(tmp_path: Path) -> None:
+    # The recipe's command, on a backend that leaves every concern at its
+    # default: no test fails; each skips naming what the backend lacks.
+    ran = subprocess.run(  # nosec B603 - fixed argv
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-rs",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
+            "-p",
+            "no:xdist",
+            "--basetemp",
+            str(tmp_path / "run"),
+            "tests/integration/test_vector_store_conformance.py",
+            "tests/integration/test_summary_tree_conformance.py",
+            "-k",
+            TOY_BACKEND.name,
+        ],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "UKR_TEST_BACKEND": "tests.fixtures.toy_vector_backend:TOY_BACKEND",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = ran.stdout[-6000:] + ran.stderr[-2000:]
+    assert ran.returncode == 0, output
+    assert " failed" not in output and " error" not in output, output
+    assert "toy leaves VectorIndexer.find_documents at its default" in output
+    assert "toy leaves SummaryTreeStore at its defaults" in output

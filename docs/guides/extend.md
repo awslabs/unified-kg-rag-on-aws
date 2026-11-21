@@ -467,15 +467,29 @@ builds the `Providers` its stores and retrievers come from, and
 (`tests/fixtures/toy_vector_backend.py` registers the smallest one):
 
 ```bash
+PYTHONPATH=/path/to/my_backend_project \
 UKR_TEST_BACKEND=my_backend.conformance:BACKEND \
-  uv run pytest tests/integration/test_vector_store_conformance.py -k my-backend
+  uv run pytest tests/integration/test_vector_store_conformance.py \
+  tests/integration/test_summary_tree_conformance.py -k my-backend
 ```
 
-A test of a concern the backend leaves at its default fails, as it states
-that concern's contract; a test needing a capability it does not declare
-(`ExtraBackend.capabilities`) skips. Pin its method shapes to each port it
-implements as `tests/unit/test_fake_port_signatures.py` pins the packaged
-stores.
+The module must be importable from the repository root (`PYTHONPATH`, or
+the package installed in the environment), and `-k` takes the
+`ExtraBackend.name` (it is the backend's test id: `test_...[my-backend]`).
+A test of a method the backend leaves at its port's "cannot" default skips,
+naming the method by its port (`my-backend leaves
+VectorIndexer.find_documents at its default`): that is a capability it
+lacks, as the table above says. A method it overrides runs the test, which
+states that method's contract, so a wrong store fails it. A test needing a
+capability the backend does not declare (`ExtraBackend.capabilities`)
+skips too: `RETRIEVERS` (the harness builds its retrievers) or
+`INDEX_ADMIN` (OpenSearch-protocol internals: aliases, mappings,
+`opensearch_client`, which an `OpenSearchIndexer` on another engine has).
+The smallest backend (`tests/fixtures/toy_vector_backend.py`) runs both
+suites with no failure and every test skipped
+(`tests/integration/test_toy_vector_backend.py` checks it). Pin its method
+shapes to each port it implements as `tests/unit/test_fake_port_signatures.py`
+pins the packaged stores.
 
 **Errors from a custom backend** are classified by type, never by message
 (§8.1): raise a `ConnectionError` or `ConfigurationError` subclass (the typed

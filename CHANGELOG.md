@@ -394,7 +394,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   custom backend may) skips the visualization export with one WARNING saying why, as the `summary_tree` stage skips its
   tree; it logged `Visualization data export failed: [configuration] ...` on every build. The store conformance suites
   also run on a custom backend that `UKR_TEST_BACKEND` names, without editing the test fixtures ([extend
-  guide](docs/guides/extend.md#custom-backends-run-without-aws)).
+  guide](docs/guides/extend.md#custom-backends-run-without-aws)): a test of a method the backend leaves at its port's
+  default skips, naming the method, and the summary-tree suite runs on it too.
   laying out 600 nodes takes about 1.4 s, 2000 about 15 s, on a sparse graph (2.1-2.9 s on a dense one). Set it to
   2000 for the former interactive page.
 
