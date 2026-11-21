@@ -554,6 +554,7 @@
   "graph.neighbours_few": "{{count}} связи",
   "graph.neighbours_many": "{{count}} связей",
   "graph.neighbours_other": "{{count}} связи",
+  "graph.showAllNeighbours": "Показать все связи",
   "graph.edgeOut": "исходящая",
   "graph.edgeIn": "входящая",
   "graph.pickHint": "Выберите сущность в графе или найдите её по имени.",

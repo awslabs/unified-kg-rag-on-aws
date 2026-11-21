@@ -535,6 +535,7 @@
   "graph.neighbours_one": "{{count}} relation",
   "graph.neighbours_many": "{{count}} de relations",
   "graph.neighbours_other": "{{count}} relations",
+  "graph.showAllNeighbours": "Afficher toutes les relations",
   "graph.edgeOut": "sortante",
   "graph.edgeIn": "entrante",
   "graph.pickHint": "Sélectionnez une entité dans le graphe ou recherchez-la par son nom.",

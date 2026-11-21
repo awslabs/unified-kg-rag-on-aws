@@ -63,6 +63,9 @@ type Panel = "entity" | "communities" | "analysis";
 
 // Groups the legend names (one series colour each); the rest share "other".
 const LEGEND_SLOTS = 8;
+// The relationships an entity's panel lists before "Show all relationships":
+// a hub's hundreds would push the rest of the panel out of view.
+export const NEIGHBOURS_SHOWN = 40;
 const OTHER_GROUPS = "\u0000other";
 
 export function GraphPage({ params, namespace, ready = true }: { params: URLSearchParams; namespace?: string | null; ready?: boolean }) {
@@ -170,6 +173,8 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
   const [panel, setPanel] = useState<Panel>(params.get("community") ? "communities" : "entity");
   const [search, setSearch] = useState("");
   const [active, setActive] = useState(0);
+  // The entity whose panel lists all of its relationships, not the first.
+  const [allEdgesOf, setAllEdgesOf] = useState<string | null>(null);
   const edgeTarget = params.get("edge");
 
   const byId = useMemo(() => new Map(data.nodes.map((n) => [n.id, n])), [data.nodes]);
@@ -435,7 +440,7 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                       {t("graph.neighbours", { count: nodeEdges.length })}
                     </h3>
                     <ul className="list-plain">
-                      {nodeEdges.slice(0, 40).map((edge) => {
+                      {(allEdgesOf === node.id ? nodeEdges : nodeEdges.slice(0, NEIGHBOURS_SHOWN)).map((edge) => {
                         // Told apart by direction and description: two
                         // relationships may join the same pair.
                         const out = edge.source === node.id;
@@ -459,6 +464,11 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                         );
                       })}
                     </ul>
+                    {nodeEdges.length > NEIGHBOURS_SHOWN && allEdgesOf !== node.id ? (
+                      <button className="link-button" onClick={() => setAllEdgesOf(node.id)}>
+                        {t("graph.showAllNeighbours")}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ) : (

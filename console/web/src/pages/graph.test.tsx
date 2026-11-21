@@ -7,7 +7,7 @@ import { drawnGraph, linkAlpha, placeLabels, settle, type LabelCandidate } from 
 import { I18nProvider } from "../i18n/i18n";
 import { TrailProvider } from "../lib/trail";
 import type { GraphData, GraphNode } from "../lib/types";
-import { EntityTable, GraphPage, pickGraph, rankMatches, TABLE_PAGE } from "./GraphPage";
+import { EntityTable, GraphPage, NEIGHBOURS_SHOWN, pickGraph, rankMatches, TABLE_PAGE } from "./GraphPage";
 
 const renderIn = (ui: ReactElement) => render(<I18nProvider initial="en">{ui}</I18nProvider>);
 
@@ -310,6 +310,40 @@ describe("GraphPage over a graph whose relationships were capped", () => {
     // No entity is left undrawn: that notice is not shown.
     expect(screen.queryByText(/best-connected of/)).toBeNull();
     await waitFor(() => expect(fetched.some((u) => u.includes("graphs/entity") && u.includes("id=n0"))).toBe(true));
+  });
+});
+
+describe("an entity's panel", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("lists all of a hub's relationships on request, as the cap notice says (R2C-3)", async () => {
+    const file = { ref: "cache:a/visualization/visualization_data.json", label: "default", namespace: "default", run: "a", built_at: null, modified: 1, bytes: 10, outdated: false };
+    const total = NEIGHBOURS_SHOWN + 10;
+    const data = { ...graph(total + 1, 5), linked: total + 5 };
+    // The server returns every relationship of the hub n0, drawn or not.
+    const hub = data.nodes.slice(1).map((n, i) => ({ id: `h${i}`, source: "n0", target: n.id, type: null, description: null, weight: null, in_schema: null, source_kinds: [] }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const body = String(url).includes("graphs/entity")
+          ? { node: data.nodes[0], edges: hub, names: {} }
+          : String(url).includes("graphs/data")
+            ? data
+            : { graphs: [file], current: { state: "current", namespace: "default", built_at: null, ref: file.ref } };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+    renderIn(
+      <TrailProvider>
+        <GraphPage params={new URLSearchParams("focus=n0")} />
+      </TrailProvider>,
+    );
+    const heading = await screen.findByText(`${total} relationships`);
+    const list = () => heading.parentElement!.querySelectorAll("li");
+    await waitFor(() => expect(list()).toHaveLength(NEIGHBOURS_SHOWN));
+    fireEvent.click(screen.getByRole("button", { name: "Show all relationships" }));
+    expect(list()).toHaveLength(total);
+    expect(screen.queryByRole("button", { name: "Show all relationships" })).toBeNull();
   });
 });
 

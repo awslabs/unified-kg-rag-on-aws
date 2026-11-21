@@ -497,6 +497,7 @@
   "graph.community": "커뮤니티",
   "graph.id": "ID",
   "graph.neighbours_other": "관계 {{count}}개",
+  "graph.showAllNeighbours": "관계 모두 보기",
   "graph.edgeOut": "나가는 관계",
   "graph.edgeIn": "들어오는 관계",
   "graph.pickHint": "그래프에서 엔티티를 선택하거나 이름으로 찾으세요.",
