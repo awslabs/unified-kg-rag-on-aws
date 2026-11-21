@@ -437,8 +437,8 @@ Each name below warns and still works, and is removed in 0.5.0
   variable, into every profile each one governed in 0.3.0 (`max_attempts` into `retry.model` and
   `retry.ingestion_item`, `base_delay_seconds` into `model`, `model_server` and `graph_store`, ...), with a WARNING
   naming them; one set beside a profile key to another value (a file key or a `UKR__` variable) fails the load,
-  naming both. `DEPRECATED_KEYS` maps a
-  key to one replacement or several.
+  naming both (values compared as loaded: `3` and `03` agree). `DEPRECATED_KEYS` maps a key to one replacement or
+  several.
 - `evaluation.prices` (a file key or a `UKR__` variable) loads into its replacement, with a WARNING naming it; the
   Python attribute is gone (*Breaking changes*).
 - `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its

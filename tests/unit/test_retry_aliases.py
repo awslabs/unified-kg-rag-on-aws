@@ -227,3 +227,49 @@ def test_a_deprecated_variable_beside_its_replacement_must_agree(
     config = ConfigLoader().load_config()
     assert config.retry.model.max_attempts == 2
     assert config.retry.ingestion_item.max_attempts == 2
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "deprecated", "current", "other"),
+    [
+        ("retry.max_attempts", "retry.model.max_attempts", "3", "03", "4"),
+        ("retry.max_attempts", "retry.model.max_attempts", "3", " 3", "4"),
+        ("retry.base_delay_seconds", "retry.model.base_delay_seconds", "1", "1.0", "2"),
+        (
+            "evaluation.prices",
+            "models.prices",
+            '{"m": {"input_per_million_tokens": 1, "output_per_million_tokens": 2}}',
+            '{ "m": {"output_per_million_tokens": 2.0, "input_per_million_tokens": 1.0} }',
+            '{"m": {"input_per_million_tokens": 2, "output_per_million_tokens": 2}}',
+        ),
+    ],
+)
+def test_a_deprecated_variable_and_its_replacement_agree_by_value(
+    monkeypatch: pytest.MonkeyPatch,
+    old: str,
+    new: str,
+    deprecated: str,
+    current: str,
+    other: str,
+) -> None:
+    # R2D-9: compared as text, 3 and 03 were refused as "different values",
+    # though both load as 3; a file's pair and a flag's compare loaded values.
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
+    monkeypatch.setenv(env_var(old), deprecated)
+    monkeypatch.setenv(env_var(new), current)
+    config = ConfigLoader().load_config()
+    section, field = new.rsplit(".", 1)
+    target: Any = config
+    for part in section.split("."):
+        target = getattr(target, part)
+    monkeypatch.delenv(env_var(old))
+    expected: Any = ConfigLoader().load_config()
+    for part in section.split("."):
+        expected = getattr(expected, part)
+    assert getattr(target, field) == getattr(expected, field)
+    # A value that loads otherwise is still refused.
+    monkeypatch.setenv(env_var(old), deprecated)
+    monkeypatch.setenv(env_var(new), other)
+    with pytest.raises(ConfigurationError, match="to different values"):
+        ConfigLoader().load_config()
