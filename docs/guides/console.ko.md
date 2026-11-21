@@ -376,8 +376,9 @@ diff, 오류, 경고와 함께 파일이 설정한 지원 중단 키(대체 키�
 - 무언가를 바꾸는 요청에는 다른 사이트의 폼이 보낼 수 없는 헤더가 있어야
   하고, 다른 출처의 요청은 거부합니다. 루프백에서는 다른 호스트 이름으로 온
   요청을 거부합니다(DNS 리바인딩). 어떤 응답에도 CORS 헤더가 없습니다.
-- 페이지는 다른 호스트에서 아무것도 불러오지 않습니다. 글꼴(Pretendard,
-  Pretendard JP, JetBrains Mono, SIL Open Font License, 전문은
+- 페이지는 다른 호스트에서 아무것도 불러오지 않습니다. 글꼴(Atkinson
+  Hyperlegible Next와 Mono, Pretendard, Pretendard JP, JetBrains Mono, SIL
+  Open Font License, 전문은
   `console/web/public/licenses/`)은 빌드에 포함되므로 오프라인과 프라이빗
   VPC에서도 동작합니다.
 - 인덱스 네임스페이스마다 수집이나 평가 작업은 동시에 들어온 요청까지

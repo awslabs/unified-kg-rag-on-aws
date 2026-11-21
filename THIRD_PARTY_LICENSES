@@ -18,8 +18,18 @@ files and stylesheets from the `pretendard` and `pretendard-jp` packages,
 unmodified, so they keep their names. A font re-subset or otherwise modified
 from them must not carry a Reserved Font Name (OFL 1.1, condition 3).
 --------------------------------------------------------------------------------
+Atkinson Hyperlegible Next
+https://github.com/googlefonts/atkinson-hyperlegible-next
+SIL Open Font License, Version 1.1 — Copyright 2020-2024 The Atkinson Hyperlegible Next Project Authors
+(the variable font's Latin subsets from the @fontsource-variable package; no Reserved Font Name)
+--------------------------------------------------------------------------------
+Atkinson Hyperlegible Mono
+https://github.com/googlefonts/atkinson-hyperlegible-next-mono
+SIL Open Font License, Version 1.1 — Copyright 2020-2024 The Atkinson Hyperlegible Mono Project Authors
+(the variable font's Latin subsets from the @fontsource-variable package; no Reserved Font Name)
+--------------------------------------------------------------------------------
 JetBrains Mono
 https://github.com/JetBrains/JetBrainsMono
 SIL Open Font License, Version 1.1 — Copyright 2020 The JetBrains Mono Project Authors
-(subsets of the @fontsource package; no Reserved Font Name)
+(its Cyrillic subset from the @fontsource package; no Reserved Font Name)
 --------------------------------------------------------------------------------

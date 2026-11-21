@@ -82,13 +82,13 @@ function readPalette(): Palette {
   const value = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
   const cache = new Map<string, string>();
   return {
-    ink: value("--ink", "#1c2128"),
-    graphite: value("--graphite", "#59636e"),
-    rule: value("--rule", "#d9dde3"),
-    ruleStrong: value("--rule-strong", "#b8bfc8"),
-    canvas: value("--canvas-bg", "#ffffff"),
-    nodeEdge: value("--node-edge", "#848c96"),
-    accent: value("--cobalt", "#4f46e5"),
+    ink: value("--ink", "#1b211d"),
+    graphite: value("--graphite", "#4f5b53"),
+    rule: value("--rule", "#c6d3c2"),
+    ruleStrong: value("--rule-strong", "#a6b7a1"),
+    canvas: value("--canvas-bg", "#f6faf4"),
+    nodeEdge: value("--node-edge", "#77887a"),
+    accent: value("--cobalt", "#1b211d"),
     font: getComputedStyle(document.body).fontFamily || "sans-serif",
     resolve: (css) => {
       const name = css.match(/^var\((--[\w-]+)\)$/)?.[1];

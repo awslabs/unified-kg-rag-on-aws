@@ -1,72 +1,76 @@
 /* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
- * The console's tokens; the brief is console/web/DESIGN.md (a developer
- * tool: a dark, GitHub-like palette with a matching light one, one indigo
- * accent, a highlighter for evidence). Two first-class themes, each a full
- * set of the same roles: light on :root, dark under data-theme="dark",
- * which public/theme.js sets before the first paint. Contrast ratios are
- * against --sheet unless named.
+ * The console's tokens; the brief is console/web/DESIGN.md (an engineer's
+ * computation pad: pad green, pencil graphite, the highlighter as the one
+ * colour, the boxed result). Two first-class themes, each a full set of the
+ * same roles: light on :root, dark (carbon and chalk) under
+ * data-theme="dark", which public/theme.js sets before the first paint.
+ * Contrast ratios are against --sheet unless named.
  */
 :root {
   /* Ground and surfaces */
-  --paper: #f6f7f9; /* page ground */
-  --sheet: #ffffff; /* cards and panels */
-  --sheet-sunk: #f1f3f6; /* a well inside a card: code, diffs, inputs' ground */
-  --sheet-hover: #eceff3;
-  --overlay-bg: rgb(255 255 255 / 94%); /* a legend over the graph */
-  --rule: #d9dde3; /* borders */
-  --rule-strong: #b8bfc8;
-  --control-edge: #848c96; /* field edges, 3.4:1 on sheet, 3.2:1 on paper */
+  --paper: #e8efe6; /* page ground: the pad */
+  --sheet: #fbfdfa; /* cards and panels */
+  --sheet-sunk: #eff4ec; /* a well inside a card: code, diffs, inputs' ground */
+  --sheet-hover: #e5ece2;
+  --overlay-bg: rgb(251 253 250 / 94%); /* a legend over the graph */
+  --rule: #c6d3c2; /* borders */
+  --rule-strong: #a6b7a1;
+  --control-edge: #77887a; /* field edges, 3.7:1 on sheet, 3.2:1 on paper */
 
   /* Text */
-  --ink: #1c2128; /* 16.2:1 on sheet, 15.1:1 on paper */
-  --graphite: #59636e; /* secondary, 6.1:1 on sheet, 5.7:1 on paper */
-  --placeholder: #5f6873; /* 5.1:1 on sheet-sunk (the composer), 5.7:1 on sheet */
-  --disabled-ink: #6b7480; /* 4.3:1 on sheet-sunk, a disabled control */
+  --ink: #1b211d; /* pencil graphite, 16.0:1 on sheet, 14.0:1 on paper */
+  --graphite: #4f5b53; /* secondary, 7.0:1 on sheet, 6.1:1 on paper */
+  --placeholder: #56625a; /* 5.7:1 on sheet-sunk (the composer), 6.4:1 on sheet */
+  --disabled-ink: #66726a; /* 4.5:1 on sheet-sunk, a disabled control */
 
-  /* The accent: indigo. The trace, links, focus, the primary action. */
-  --cobalt: #4f46e5; /* 6.3:1 on sheet, 5.9:1 on paper */
+  /* The accent is the pencil: links (underlined), the trace, focus rings and
+   * the primary action in graphite; the highlighter is the one colour. */
+  --cobalt: #1b211d; /* 16.0:1 on sheet */
   --trace: var(--cobalt);
-  --trace-ink: #3730a3; /* accent text on its wash, 8.8:1 */
-  --trace-wash: #eef0ff;
-  --primary-bg: #4f46e5;
-  --primary-hover: #4338ca;
-  --primary-ink: #ffffff; /* 6.3:1 */
-  --primary-meta: #dcdcff;
+  --trace-ink: #1b211d; /* on its wash, 14.4:1 */
+  --trace-wash: #fff1a8; /* chosen chips, the current row: a light highlighter */
+  --primary-bg: #1f2622;
+  --primary-hover: #343d38;
+  --primary-ink: #ffffff; /* 15.5:1, 11.2:1 hovered */
+  --primary-meta: #d6ded8;
 
   /* The top bar */
-  --rail-bg: #ffffff;
-  --rail-hover: #eceff3;
-  --rail-line: #d9dde3;
-  --rail-ink: #59636e;
-  --rail-muted: #59636e;
-  --rail-strong: #1c2128;
+  --rail-bg: #fbfdfa;
+  --rail-hover: #eff4ec;
+  --rail-line: #c6d3c2;
+  --rail-ink: #4f5b53; /* 7.0:1 */
+  --rail-muted: #4f5b53;
+  --rail-strong: #1b211d;
 
-  /* The highlighter: matched evidence */
-  --highlighter: #ffd33d;
-  --mark-ink: #1c2128; /* 11.3:1 on the highlighter, in both themes */
+  /* The highlighter: matched evidence, the current page, the chosen option */
+  --highlighter: #ffd43b;
+  --mark-ink: #1b211d; /* 11.5:1 on the highlighter, in both themes */
 
   /* Code, logs, tooltips, the graph canvas */
-  --log-bg: #0e1117;
-  --log-ink: #e6e9ee;
-  --tooltip-bg: #1c2128;
+  --log-bg: #1b211d;
+  --log-ink: #e7ede5; /* 13.8:1 */
+  --tooltip-bg: #1b211d;
   --tooltip-ink: #ffffff;
-  --grid-dot: rgb(28 33 40 / 10%);
-  --canvas-bg: #fbfcfd;
+  /* The pad's grid, where something is worked out: the graph and the
+   * composer. */
+  --pad-line: rgb(27 33 29 / 5%);
+  --pad-line-major: rgb(27 33 29 / 10%);
+  --canvas-bg: #f6faf4;
   /* A node's edge on the canvas: series 3-5 and "other" are under 3:1 on
-   * it, so the edge carries the node's 3:1 (3.3:1). */
+   * it, so the edge carries the node's 3:1 (3.6:1). */
   --node-edge: var(--control-edge);
-  --shadow-card: 0 1px 2px rgb(28 33 40 / 6%);
-  --shadow-raised: 0 4px 16px rgb(28 33 40 / 12%);
+  --shadow-card: none;
+  --shadow-raised: 0 4px 14px rgb(27 33 29 / 14%);
 
-  /* Status: GitHub-like, always with a label */
-  --good: #1a7f37; /* 4.6:1 on its wash */
-  --good-wash: #dafbe1;
-  --warn: #9a6700; /* 4.5:1 */
-  --warn-wash: #fff8c5;
-  --bad: #cf222e; /* 4.7:1 */
-  --bad-wash: #ffebe9;
+  /* Status, always with a label */
+  --good: #1f7a3a; /* 4.6:1 on its wash, 5.3:1 on sheet */
+  --good-wash: #dcf2e0;
+  --warn: #8a5a00; /* 5.2:1 */
+  --warn-wash: #fbf0cc;
+  --bad: #b3261e; /* 5.5:1 */
+  --bad-wash: #fce7e5;
 
   /* Chart and graph series: the validated categorical order (dataviz
    * reference); a ninth folds into "other". Slots 3-5 are under 3:1 on the
@@ -83,53 +87,55 @@
 }
 
 :root[data-theme="dark"] {
-  --paper: #0e1117;
-  --sheet: #151a21;
-  --sheet-sunk: #1c222a;
-  --sheet-hover: #232a33;
-  --overlay-bg: rgb(21 26 33 / 94%);
-  --rule: #2e353f;
-  --rule-strong: #3d4652;
-  --control-edge: #6b7480; /* 3.6:1 on sheet, 4.0:1 on paper */
+  /* Carbon and chalk */
+  --paper: #161718;
+  --sheet: #1d1f21;
+  --sheet-sunk: #242729;
+  --sheet-hover: #2a2d30;
+  --overlay-bg: rgb(29 31 33 / 94%);
+  --rule: #34383c;
+  --rule-strong: #464b50;
+  --control-edge: #7a8087; /* 4.1:1 on sheet, 4.5:1 on paper */
 
-  --ink: #e6e9ee; /* 14.4:1 on sheet, 15.5:1 on paper */
-  --graphite: #8f98a3; /* 6.0:1 on sheet, 6.5:1 on paper, 5.5:1 on sheet-sunk */
-  --placeholder: #8a939e; /* 5.1:1 on sheet-sunk (the composer), 5.6:1 on sheet */
-  --disabled-ink: #8f98a3;
+  --ink: #ecedea; /* chalk, 14.1:1 on sheet, 15.3:1 on paper */
+  --graphite: #a3a8a4; /* 6.8:1 on sheet, 7.4:1 on paper, 6.2:1 on sheet-sunk */
+  --placeholder: #9ca19d; /* 5.7:1 on sheet-sunk */
+  --disabled-ink: #a3a8a4;
 
-  --cobalt: #a5a8ff; /* 8.0:1 on sheet */
-  --trace-ink: #c9ccff; /* 9.2:1 on its wash */
-  --trace-wash: #232557;
-  --primary-bg: #5b5bd6;
-  --primary-hover: #6565d9; /* 4.7:1 under --primary-ink: a hovered button keeps 4.5:1 */
-  --primary-ink: #ffffff; /* 5.4:1 */
-  --primary-meta: #dcdcff;
+  --cobalt: #ffe07a; /* the highlighter's light step: links, the trace, focus; 12.8:1 */
+  --trace-ink: #ffe58a; /* 10.3:1 on its wash */
+  --trace-wash: #38321c;
+  --primary-bg: #e6e8e4; /* chalk: the primary action */
+  --primary-hover: #ffffff;
+  --primary-ink: #161718; /* 14.6:1, 18.0:1 hovered */
+  --primary-meta: #464b50;
 
-  --rail-bg: #151a21;
-  --rail-hover: #1c222a;
-  --rail-line: #2e353f;
-  --rail-ink: #8f98a3;
-  --rail-muted: #8f98a3;
-  --rail-strong: #e6e9ee;
+  --rail-bg: #1d1f21;
+  --rail-hover: #242729;
+  --rail-line: #34383c;
+  --rail-ink: #a3a8a4;
+  --rail-muted: #a3a8a4;
+  --rail-strong: #ecedea;
 
-  --log-bg: #0b0e13;
-  --log-ink: #e6e9ee;
-  --tooltip-bg: #e6e9ee;
-  --tooltip-ink: #0e1117;
-  --grid-dot: rgb(230 233 238 / 7%);
-  --canvas-bg: #0e1117;
+  --log-bg: #121314;
+  --log-ink: #ecedea;
+  --tooltip-bg: #ecedea;
+  --tooltip-ink: #161718;
+  --pad-line: rgb(236 237 234 / 4%);
+  --pad-line-major: rgb(236 237 234 / 8%);
+  --canvas-bg: #161718;
   /* Every dark series is 3:1 on the canvas: the edge only separates
    * overlapping nodes. */
   --node-edge: var(--canvas-bg);
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 30%);
-  --shadow-raised: 0 4px 16px rgb(0 0 0 / 45%);
+  --shadow-card: none;
+  --shadow-raised: 0 4px 14px rgb(0 0 0 / 50%);
 
-  --good: #3fb950; /* 6.3:1 on its wash */
-  --good-wash: #12261a;
-  --warn: #d29922; /* 6.2:1 */
-  --warn-wash: #2a2210;
-  --bad: #f85149; /* 4.9:1 */
-  --bad-wash: #331616;
+  --good: #4cc27a; /* 6.9:1 on its wash */
+  --good-wash: #14281b;
+  --warn: #e3a93e; /* 7.3:1 */
+  --warn-wash: #2c2512;
+  --bad: #ff7468; /* 6.0:1 */
+  --bad-wash: #3a1916;
 
   /* The same eight hues stepped for the dark surface (dataviz reference),
    * all at least 3:1 on the sheet; 5 and 7 lighter, so no pair falls under
@@ -147,23 +153,26 @@
 }
 
 :root {
-  /* Type: Pretendard (Latin and Hangul in one design; Pretendard JP for a
-   * Japanese page), the platform's own faces after it; JetBrains Mono for
-   * ids, strategies and figures. Documents and questions can be in any
-   * language whatever the page's, so every stack carries the CJK faces; a
-   * locale's stack (app.css) puts its script first, for the Han glyphs. */
+  /* Type: Atkinson Hyperlegible Next for Latin text and titles, Atkinson
+   * Hyperlegible Mono for ids, strategies and figures (both drawn so 0/O,
+   * 1/l/I and 5/S never look alike); Pretendard after them for Hangul
+   * (Pretendard JP for a Japanese page), the platform's own faces after it;
+   * JetBrains Mono's Cyrillic for the data face's Russian. Documents and
+   * questions can be in any language whatever the page's, so every stack
+   * carries the CJK faces; a locale's stack (app.css) puts its script
+   * first, for the Han glyphs. */
   --cjk-ko: "Pretendard Variable", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR";
   --cjk-ja: "Pretendard JP Variable", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic",
     "Meiryo", "Noto Sans JP", "Noto Sans CJK JP";
   --cjk-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC";
-  --font-latin: "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue",
-    Arial;
+  --font-latin: "Atkinson Hyperlegible Next Variable", "Pretendard Variable", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, "Helvetica Neue", Arial;
   --font-body: var(--font-latin), var(--cjk-ko), var(--cjk-ja), var(--cjk-zh), sans-serif;
   --font-display: var(--font-body);
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas;
+  --font-mono: "Atkinson Hyperlegible Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas;
   --font-data: var(--font-mono), var(--cjk-ko), var(--cjk-ja), monospace;
   /* Headings: tighter tracking for Latin; Hangul sets a little tighter too. */
-  --tracking-display: -0.02em;
+  --tracking-display: -0.025em;
 
   /* Scale: size / line height */
   --text-xs: 0.75rem; /* 12/16 labels, captions */
@@ -172,12 +181,13 @@
   --text-base: 0.9375rem; /* 15/24 body: answers */
   --text-lg: 1.125rem; /* 18/26 card headings */
   --text-xl: 1.375rem; /* 22/30 sections */
-  --text-2xl: 1.75rem; /* 28/36 page titles */
+  --text-2xl: 1.75rem; /* 28/36 */
+  --text-title: 2rem; /* 32/40 page titles */
   --leading-body: 1.55;
   --leading-cjk: 1.7;
   --weight-regular: 400;
   --weight-strong: 600;
-  --weight-display: 700;
+  --weight-display: 800;
 
   /* Space and shape */
   --space-1: 4px;
@@ -188,8 +198,11 @@
   --space-6: 32px;
   --space-7: 48px;
   --radius-sm: 6px; /* controls */
-  --radius: 8px; /* cards */
+  --radius: 10px; /* cards */
+  --radius-result: 2px; /* a boxed figure */
   --radius-pill: 999px; /* chips */
+  /* The boxed result: the double rule around an answer and a figure. */
+  --result-rule: 3px double var(--ink);
   --rail: 2px;
   --station: 11px;
   --nav-height: 56px;

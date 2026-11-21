@@ -1,9 +1,10 @@
 /* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
- * A developer tool (console/web/DESIGN.md): a top bar, cards on a quiet
- * ground in a dark, GitHub-like palette and its light counterpart, one
- * indigo accent, a highlighter for evidence, a force-directed graph. */
+ * An engineer's computation pad (console/web/DESIGN.md): a top bar, cards
+ * on pad green (carbon in the dark theme), pencil-graphite ink and
+ * controls, the highlighter as the one colour (evidence, the current page,
+ * the chosen option), the boxed result, a force-directed graph. */
 
 *,
 *::before,
@@ -90,10 +91,11 @@ label.button:has(> input:focus-visible) {
   outline-offset: 2px;
 }
 
+/* Links are underlined: in the light theme they share the ink's graphite. */
 a {
   color: var(--cobalt);
   text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
+  text-decoration-thickness: 1.5px;
 }
 a:hover {
   text-decoration-thickness: 2px;
@@ -196,7 +198,7 @@ kbd {
 }
 .brand-mark circle {
   fill: var(--primary-bg);
-  stroke: #ffffff;
+  stroke: var(--primary-ink);
   stroke-width: 1.6;
 }
 .brand-mark circle.lit {
@@ -252,10 +254,17 @@ kbd {
   background: var(--rail-hover);
   color: var(--rail-strong);
 }
+/* The current page, highlighted like a line on the pad. */
 .nav-link[aria-current="page"] {
-  background: var(--primary-bg);
-  color: var(--primary-ink);
+  background: var(--highlighter);
+  color: var(--mark-ink);
   font-weight: var(--weight-strong);
+  /* The highlighter is pale against the bar: a pencil underline carries
+   * the state at 3:1 or more. */
+  box-shadow: inset 0 -2px 0 var(--mark-ink);
+}
+.nav-link[aria-current="page"] .nav-icon {
+  opacity: 1;
 }
 .nav-note {
   margin-left: 2px;
@@ -404,7 +413,7 @@ kbd {
 }
 .page-title {
   margin: 0;
-  font-size: var(--text-2xl);
+  font-size: var(--text-title);
   line-height: 1.25;
 }
 .page-lede {
@@ -1032,16 +1041,15 @@ kbd {
     grid-template-columns: repeat(4, 1fr);
   }
 }
+/* A figure is a boxed result on the pad: a rule above its label, the value
+ * in the data face inside the double rule. */
 .stat {
   display: grid;
   /* A label that wraps pushes no figure down: the figures share a line. */
   grid-template-rows: 1fr auto;
-  gap: var(--space-1);
-  padding: var(--space-4);
-  background: var(--sheet);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--rule-strong);
 }
 .stat-label {
   font-size: var(--text-xs);
@@ -1059,10 +1067,17 @@ kbd {
   text-transform: uppercase;
 }
 .stat-value {
-  font-size: var(--text-2xl);
-  font-weight: var(--weight-display);
-  line-height: 1.2;
-  letter-spacing: -0.01em;
+  justify-self: start;
+  max-width: 100%;
+  padding: 0 10px;
+  border: var(--result-rule);
+  border-radius: var(--radius-result);
+  font-family: var(--font-data);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .progress {
@@ -1154,15 +1169,21 @@ details > summary::marker {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4) var(--space-4);
 }
+/* The composer is ruled like the pad: one line under each line of text,
+ * scrolling with it. */
 .composer > .textarea {
   font-size: var(--text-base);
   min-height: 72px;
   padding: 10px 12px;
   border-color: var(--rule);
-  background: var(--sheet-sunk);
+  background-color: var(--sheet-sunk);
+  background-image: linear-gradient(transparent calc(100% - 1px), var(--pad-line-major) calc(100% - 1px));
+  background-size: 100% 1.5em;
+  background-position: 0 10px;
+  background-attachment: local;
 }
 .composer > .textarea:focus-visible {
-  background: var(--sheet);
+  background-color: var(--sheet);
 }
 .composer-actions {
   display: flex;
@@ -1223,7 +1244,7 @@ details > summary::marker {
 }
 .welcome-mark circle.lit {
   fill: var(--highlighter);
-  stroke: var(--highlighter);
+  stroke: var(--cobalt);
 }
 .welcome-title {
   margin: 0;
@@ -1268,15 +1289,20 @@ details > summary::marker {
   justify-self: end;
   max-width: 85%;
   padding: 10px 14px;
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius) var(--radius) 2px var(--radius);
-  background: var(--primary-bg);
-  color: var(--primary-ink);
+  background: var(--sheet-sunk);
+  color: var(--ink);
   font-size: var(--text-base);
 }
 /* The answer: a card at the left, with its sources and figures. */
+/* The answer is the boxed result: the double rule is its own. */
 .answer {
   margin-right: 6%;
   padding: var(--space-4) var(--space-5);
+}
+.sheet.answer {
+  border: var(--result-rule);
 }
 .answer-text {
   margin: 0;
@@ -1343,7 +1369,8 @@ button.cite-link {
   padding: 0 4px;
   border: 0;
   border-radius: 4px;
-  background: var(--trace-wash);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--cobalt);
   cursor: pointer;
   line-height: 1.3;
 }
@@ -1378,10 +1405,10 @@ button.cite-link:hover {
   align-items: baseline;
   max-width: 100%;
   padding: 2px 10px;
-  border: 1px solid var(--rule);
+  border: 1px solid var(--cobalt);
   border-radius: var(--radius-pill);
-  background: var(--trace-wash);
-  color: var(--trace-ink);
+  background: var(--sheet);
+  color: var(--ink);
 }
 .citations-list .muted {
   color: inherit;
@@ -1590,17 +1617,18 @@ button.cite-link:hover {
 .source:hover {
   border-color: var(--control-edge);
 }
+/* An opened source: its station and its edge take the highlighter. */
 .source.open {
   border-color: var(--cobalt);
-  box-shadow: inset 3px 0 0 var(--cobalt);
+  box-shadow: inset 3px 0 0 var(--highlighter);
 }
 .source.linked {
   border-color: var(--cobalt);
-  background: var(--trace-wash);
 }
 .source.linked .station,
 .source.open .station {
-  background: var(--cobalt);
+  background: var(--highlighter);
+  border-color: var(--ink);
 }
 .source .station {
   top: 16px;
@@ -1740,12 +1768,16 @@ button.cite-link:hover {
     box-shadow: none;
   }
 }
+/* The pad's grid: minor lines every 8 px, major every 40. */
 .graph-canvas {
   position: relative;
   height: max(460px, min(calc(100vh - var(--nav-height) - 250px), 780px));
   overflow: hidden;
   background:
-    radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0 / 24px 24px,
+    linear-gradient(90deg, var(--pad-line-major) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(var(--pad-line-major) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(90deg, var(--pad-line) 1px, transparent 1px) 0 0 / 8px 8px,
+    linear-gradient(var(--pad-line) 1px, transparent 1px) 0 0 / 8px 8px,
     var(--canvas-bg);
   touch-action: none;
 }
@@ -1988,7 +2020,7 @@ button.cite-link:hover {
   stroke: var(--rule);
 }
 .chart .bar {
-  fill: var(--cobalt);
+  fill: var(--graphite);
 }
 .chart g:hover .bar {
   fill: var(--trace-ink);
