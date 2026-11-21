@@ -1470,11 +1470,29 @@ def test_a_run_whose_contains_read_the_whole_answer_is_not_compared() -> None:
         "token_f1_tokens": "whitespace",
     }
     now = {**old, "answer_contains_reads": "first_line"}
-    with pytest.raises(EvaluationException, match="answer_contains_reads 'full'"):
+    with pytest.raises(
+        EvaluationException, match="answer_contains_reads 'full'"
+    ) as refused:
         check_answer_scoring(
             [("before", {"answer_scoring": old}), ("now", {"answer_scoring": now})],
             dense_script=False,
         )
+    # R2C-6: only answer_contains reads them differently, and a re-score
+    # makes the saved run comparable without answering again.
+    message = str(refused.value)
+    assert message.startswith("the runs scored answer_contains with different")
+    assert "exact_match" not in message and "token_f1 " not in message
+    assert "run-eval --from-results <its results> --rescore" in message
+    # A setting exact match and token F1 read: named, with the same remedy.
+    squad = {**now, "answer_normalization": "default"}
+    with pytest.raises(EvaluationException) as refused:
+        check_answer_scoring(
+            [("a", {"answer_scoring": now}), ("b", {"answer_scoring": squad})],
+            dense_script=False,
+        )
+    message = str(refused.value)
+    assert message.startswith("the runs scored exact_match and token_f1 with")
+    assert "answer_contains read" not in message and "--rescore" in message
     pair = [("a", {"answer_scoring": old}), ("b", {"answer_scoring": dict(old)})]
     assert check_answer_scoring(pair, dense_script=False) == []
     pair = [("a", {"answer_scoring": now}), ("b", {"answer_scoring": dict(now)})]

@@ -115,7 +115,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    0.5.0.
 10. `answer_contains` reads the answer's first line now (*Fixed*): a `run-eval` result saved before records no
    `answer_scoring.answer_contains_reads` and is refused as `--baseline-results` (or in a rebuilt comparison) beside a
-   run of now. Re-run the baseline.
+   run of now. Score its saved answers again, with no new answer: `run-eval --from-results <old results> --rescore`
+   (an `extracted` `answer_span` calls only the answer-span model), then compare against the re-scored run.
 
 ### Added
 
@@ -728,7 +729,9 @@ Bugs present in 0.3.0.
   support quoted the context scored 1 (11 of 72 hits on the 3B local baseline's answers). It reads the answer's first
   line that is no heading, the one-sentence answer the answer prompt asks for; number and set golds read as before.
   The run manifest records it (`answer_scoring.answer_contains_reads: first_line`), and a run saved before it, read as
-  `full`, is refused as a `--baseline-results` or rebuilt comparison against a run of now: re-run it.
+  `full`, is refused as a `--baseline-results` or rebuilt comparison against a run of now, the refusal naming
+  `answer_contains` when only it differs and `run-eval --from-results <its results> --rescore`, which scores the saved
+  answers again without answering them.
 - `answer_match` with `evaluation.answer_span: extracted` scored a "yes"/"no" span for any question, so a span model
   that answered "yes" to "Who wrote it?" scored exact match and token F1 0 against "Tom Hood" (34 of 150 answers in
   the 3B local baseline). A yes/no span is the span only for a yes/no gold; otherwise the first line is scored and
