@@ -428,6 +428,7 @@ Each name below warns and still works, and is removed in 0.5.0
 
 ### Fixed
 
+- The console's Dashboard no longer shows "Loading..." under the error of a failed read.
 - The console's Ask page: an opened source keeps a line break that stands between two highlighted phrases (it read
   "Kestrel DepotKestrel Depot will add...").
 - The console's Dashboard: the day labels under "Questions per day" and "Median time per day" no longer overlap
