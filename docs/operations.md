@@ -1194,15 +1194,18 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
 - **Gleaning is optional too.** When only the gleaning of some of a
   document's units failed, for an error of their own (output cut off at the
   output cap, unparseable, a request rejected for its content), the
-  document is indexed with those units' extraction, without their gleaning
-  (and claims), and counted for none. It is recorded `FAILED` once
-  (`error_info`: `indexed without the gleaning (and claims) of some text
-  units ...`, not in `failed_documents`), so the next run extracts and
-  gleans those units again (a unit whose gleaning failed has no final record
-  to store); failing so again, it is recorded `PROCESSED` with their
-  extraction, and later runs do not try again until its content or the
-  extraction settings change. Both runs warn with the files. A gleaning
-  outage fails the document, uncounted, as in the other stages.
+  document is indexed with those units' extraction and the claims drawn
+  from it, without their gleaning, and counted for none. It is recorded
+  `FAILED` once (`error_info`: `indexed without the gleaning (and claims)
+  of some text units ...`, a text kept as earlier runs wrote it although
+  the claims are indexed; not in `failed_documents`), so the next run
+  extracts and gleans those units again (what is stored for such a unit is
+  its ungleaned extraction and its claims, which a later deletion derives
+  its items from, not the gleaned record a run looks for); failing so
+  again, it is recorded `PROCESSED` with their extraction, and later runs
+  do not try again until its content or the extraction settings change.
+  Both runs warn with the files. A gleaning outage fails the document,
+  uncounted, as in the other stages.
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of
   its own, output that failed alike on several documents included (see

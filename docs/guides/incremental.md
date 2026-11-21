@@ -375,7 +375,11 @@ content); an outage or a bad setting fails every document alike and excludes
 none. Claims and gleaning are optional: when only claim extraction or
 gleaning failed, for an error of the unit's own (gleaning output cut off at
 the cap, say), the document is indexed without those claims or that
-gleaning, counted for none, and the next run tries them once more. Which errors
+gleaning, counted for none, and the next run tries them once more. A unit
+whose gleaning failed is indexed with its extraction and the claims drawn
+from it (an earlier gleaning round's additions dropped); when the retry
+fails again, it stays ungleaned until its text or the settings change.
+Which errors
 count, resuming a failed stage and write failures:
 [Operator Runbook: Failed documents](../operations.md#failed-documents).
 

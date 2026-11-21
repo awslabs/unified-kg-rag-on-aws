@@ -765,7 +765,10 @@ Bugs present in 0.3.0.
   held 35% of the corpus FAILED while 13% lacked an extraction. Gleaning is optional, as claims are: such a document is
   recorded FAILED once under an `error_info` that says it is indexed without that gleaning (not in
   `failed_documents`, counted for none), the next run extracts and gleans those units again, and failing so again it
-  is recorded PROCESSED. A gleaning outage still fails the document, uncounted.
+  is recorded PROCESSED. Such a unit is indexed with its extraction (an earlier gleaning round's additions dropped)
+  and the claims drawn from it, both stored as its ungleaned records, so a later deletion of a document sharing its
+  entities derives them again (they kept the deleted text and file filter: the unit stored no record). A gleaning
+  outage still fails the document, uncounted.
 - `answer_contains` (the headline `answer_match` metric) read the whole answer, so a wrong first-line answer whose
   support quoted the context scored 1 (11 of 72 hits on the 3B local baseline's answers). It reads the answer's first
   line that is no heading, the one-sentence answer the answer prompt asks for; number and set golds read as before.

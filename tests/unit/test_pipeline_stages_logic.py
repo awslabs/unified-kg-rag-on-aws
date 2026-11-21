@@ -895,3 +895,130 @@ def test_a_stage_hands_on_the_units_failed_for_their_own_error(
 
     assert context.failed_text_unit_ids[stage_name] == ["u1", "u2"]
     assert context.item_failed_text_unit_ids[stage_name] == ["u1"]
+
+
+# --- A unit whose gleaning failed keeps its extraction as its record --------
+
+
+def test_a_failed_gleaning_keeps_the_extraction_without_earlier_rounds(
+    mocker,
+) -> None:
+    # R2A-3: the record stored for the unit (an ungleaned one) is what the
+    # graph holds of it, so a round that added items before a later round
+    # failed adds none.
+    from unified_kg_rag.adapters.ingestion.gleaner import GleaningStats
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Entity, TextUnitExtraction
+
+    extracted = [
+        TextUnitExtraction(text_unit_id=u, entities=[_vendor(u)]) for u in ("u1", "u2")
+    ]
+    gleaned = [
+        r.model_copy(
+            update={
+                "entities": [*r.entities, Entity(id=f"x-{r.text_unit_id}", name="X")],
+                "gleaned": r.text_unit_id == "u2",
+            }
+        )
+        for r in extracted
+    ]
+    gleaner = mocker.MagicMock()
+    mocker.patch.object(ps, "GraphGleaner", return_value=gleaner)
+    gleaner.glean.return_value = (gleaned, GleaningStats(failed_text_unit_ids=["u1"]))
+    context = _context()
+    context.unit_extractions = extracted
+
+    ps.GleaningStage(config=Config())._execute_core(context)
+
+    assert context.unit_extractions == [extracted[0], gleaned[1]]
+
+
+def test_a_failed_gleaning_stores_the_ungleaned_record(
+    mocker,
+) -> None:
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
+    from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
+    from unified_kg_rag.domain.models import (
+        PipelineStageResult,
+        TextUnit,
+        TextUnitExtraction,
+    )
+
+    config = Config()
+    stage = ps.GraphResolutionStage.__new__(ps.GraphResolutionStage)
+    stage.config = config
+    stage.store = store = mocker.MagicMock()
+    store.save.return_value = set()
+    context = _context()
+    context.text_units = [TextUnit(id=u, text=u) for u in ("u1", "u2", "u3")]
+    context.unit_extractions = [
+        TextUnitExtraction(text_unit_id="u1", entities=[_vendor("u1")]),
+        TextUnitExtraction(text_unit_id="u2", entities=[_vendor("u2")], gleaned=True),
+        TextUnitExtraction(text_unit_id="u3", entities=[_vendor("u3")]),
+    ]
+    context.failed_text_unit_ids = {"gleaning": ["u1"], "graph_extraction": ["u3"]}
+
+    stage._store_records(context)
+
+    saved = {
+        fingerprint: sorted(unit.id for unit, _ in records)
+        for records, fingerprint in (call.args for call in store.save.call_args_list)
+    }
+    # u1 under the ungleaned fingerprint; u3, whose extraction failed, not.
+    assert saved[unit_record_fingerprint(config, gleaned=False)] == ["u1"]
+    assert saved[unit_record_fingerprint(config, gleaned=True)] == ["u2"]
+    context.stage_results = [
+        PipelineStageResult(
+            stage_name="claim_extraction",
+            status=PipelineStageStatus.COMPLETED,
+            start_time=datetime(2026, 1, 1),
+        )
+    ]
+    keys = {
+        unit.id: set(unit.attributes.get(RECORD_KEYS_ATTRIBUTE, {}))
+        for unit in ps._with_record_keys(config, context, context.text_units)
+    }
+    assert keys == {"u1": {"graph", "claims"}, "u2": {"graph", "claims"}, "u3": set()}
+
+
+def test_a_unit_whose_gleaning_failed_stores_its_claims(mocker) -> None:
+    # Its ungleaned record is final, so the claims drawn from it are
+    # stored beside it, under the ungleaned claims fingerprint: a later
+    # deletion derives them again.
+    from unified_kg_rag.adapters.ingestion.claim_extractor import (
+        ClaimExtractionStats,
+    )
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
+    from unified_kg_rag.domain.models import TextUnit, TextUnitExtraction
+
+    config = Config()
+    extractor = mocker.patch.object(ps, "ClaimExtractor", autospec=True)
+    extractor.return_value.extract_units.return_value = (
+        {"u1": [], "u2": []},
+        ClaimExtractionStats(),
+    )
+    store = mocker.patch.object(ps, "ExtractionStore", autospec=True)
+    store.return_value.load.return_value = {}
+    store.return_value.save.return_value = set()
+    stage = ps.ClaimExtractionStage(config, providers=mocker.MagicMock())
+    context = _context()
+    context.text_units = [TextUnit(id=u, text=u) for u in ("u1", "u2")]
+    context.unit_extractions = [
+        TextUnitExtraction(text_unit_id="u1", entities=[_vendor("u1")]),
+        TextUnitExtraction(text_unit_id="u2", entities=[_vendor("u2")], gleaned=True),
+    ]
+    context.failed_text_unit_ids = {"gleaning": ["u1"]}
+
+    stage._execute_core(context)
+
+    saved = {
+        fingerprint: sorted(unit.id for unit, _ in records)
+        for records, fingerprint in (
+            call.args for call in store.return_value.save.call_args_list
+        )
+    }
+    ungleaned = unit_record_fingerprint(config, gleaned=False, claims=True)
+    assert saved[ungleaned] == ["u1"]
+    assert saved[unit_record_fingerprint(config, gleaned=True, claims=True)] == ["u2"]

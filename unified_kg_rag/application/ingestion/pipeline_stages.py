@@ -1559,13 +1559,14 @@ class TranslationStage(PipelineStage):
 
 
 def _failed_record_units(context: PipelineContext) -> set[str]:
-    """The text units whose extraction or gleaning failed: their records
-    (if any) are not final, so they are neither stored nor their claims."""
-    return {
-        unit_id
-        for stage in (PipelineStageType.GRAPH_EXTRACTION, PipelineStageType.GLEANING)
-        for unit_id in context.failed_text_unit_ids.get(stage.value, [])
-    }
+    """The text units whose extraction failed: they have no final record,
+    so none is stored, nor their claims. A unit whose gleaning failed keeps
+    its extraction as its record (``GleaningStage``), stored as an
+    ungleaned one with its claims, which a later deletion derives the
+    graph from."""
+    return set(
+        context.failed_text_unit_ids.get(PipelineStageType.GRAPH_EXTRACTION.value, [])
+    )
 
 
 def _with_record_keys(
@@ -1711,6 +1712,17 @@ class GleaningStage(PipelineStage):
             [unit for unit in text_units if not is_seed_unit(unit.id)],
             context.unit_extractions,
         )
+        # A unit whose gleaning failed (in any round) keeps its extraction
+        # as it was, without an earlier round's additions: the record graph
+        # resolution stores for it, as an ungleaned one, is what the graph
+        # holds of it, so a later deletion derives the same items from it.
+        failed = set(gleaning_stats.failed_text_unit_ids)
+        if failed:
+            extracted = {r.text_unit_id: r for r in context.unit_extractions}
+            records = [
+                extracted[r.text_unit_id] if r.text_unit_id in failed else r
+                for r in records
+            ]
 
         context.unit_extractions = records
         context.failed_text_unit_ids[self.name] = gleaning_stats.failed_text_unit_ids

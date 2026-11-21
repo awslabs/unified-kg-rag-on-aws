@@ -205,10 +205,12 @@ _CLAIMS_MISSING = (
     "indexed without the claims of some text units, whose claim extraction "
     "failed; the next run extracts them again"
 )
-# Indexed with the extraction of some of its units but not their gleaning
-# (it failed for an error of their own: output cut off or unparseable), nor
-# so their claims: recorded FAILED once, like claims, so the next run
-# extracts and gleans those units again (``_record_processed``).
+# Indexed with the extraction of some of its units (and the claims drawn
+# from it) but not their gleaning (it failed for an error of their own:
+# output cut off or unparseable): recorded FAILED once, like claims, so the
+# next run extracts and gleans those units again (``_record_processed``).
+# The text is stored in the registry and matched on read (_PARTLY_INDEXED),
+# so it stays as written, though such a unit's claims are indexed.
 _GLEANING_MISSING = (
     "indexed without the gleaning (and claims) of some text units, whose "
     "gleaning failed; the next run extracts and gleans them again"
@@ -3167,8 +3169,8 @@ class RunFailures(NamedTuple):
     # of their own: indexed without those claims, counted for none.
     claims_missing: set[str]
     # Only the gleaning of some of their units failed, for an error of their
-    # own (and so their claims are missing too): indexed with those units'
-    # extraction, counted for none.
+    # own: indexed with those units' extraction and its claims, counted for
+    # none.
     gleaning_missing: set[str]
 
 
