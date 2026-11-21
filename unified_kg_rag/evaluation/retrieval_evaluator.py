@@ -154,22 +154,38 @@ def source_keys(identifier: str) -> frozenset[str]:
     return frozenset(k for k in (name, stem) if k)
 
 
-def distinct_references(refs: Any) -> dict[str, str]:
+def distinct_references(
+    refs: Any, files: list[frozenset[str]] | None = None
+) -> dict[str, str]:
     """``{match key: display name}`` of the distinct references of ``refs``
-    (``reference_sources``), by the matcher's keys: two references are one
-    when a file matching one always matches the other, so one file never
-    counts as two relevant documents (nDCG's ideal ranked two where one
-    file gained once, and perfect retrieval scored 0.61). That is a
-    reference spelled as another's stem (``report-a`` beside
-    ``Report-A.pdf``, whose keys hold ``report-a``), or with the same key;
-    the more specific spelling stays. Two files of one stem
-    (``a.pdf``, ``a.docx``) stay two."""
+    (``reference_sources``), against the ranked ``files`` (``ranked_files``).
+
+    References with the same key are one. A reference spelled as others'
+    stem (``report-a`` beside ``Report-A.pdf``, whose keys hold
+    ``report-a``) is one with them when every file of ``files`` it matches
+    one of them matches too: one file then never counts as two relevant
+    documents (nDCG's ideal ranked two where it gained once, and perfect
+    retrieval scored 0.61), and the more specific spelling stays. A file
+    the stem alone matches is another document (``Amazon.txt`` beside the
+    reference ``Amazon.com``, ``a.txt`` beside ``a.pdf``), so the stem
+    stays a reference of its own, as it does when it matches no file."""
     references: dict[str, str] = {}
     for ref in refs or []:
         if isinstance(ref, str) and (key := reference_key(ref)):
             references.setdefault(key, ref.strip())
-    stems = {stem for key in references for stem in source_keys(key) if stem != key}
-    return {key: name for key, name in references.items() if key not in stems}
+
+    def matched(key: str) -> set[int]:
+        return {i for i, file_keys in enumerate(files or []) if key in file_keys}
+
+    def merged(key: str) -> bool:
+        longer = [
+            other for other in references if other != key and key in source_keys(other)
+        ]
+        if not longer or not (own := matched(key)):
+            return False
+        return own <= set().union(*(matched(other) for other in longer))
+
+    return {key: name for key, name in references.items() if not merged(key)}
 
 
 def ranked_files(
@@ -269,9 +285,10 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         else:
             skipped[EvaluationMetricType.ATTRIBUTABLE_FRACTION.value] = "no_sources"
 
-        references = distinct_references(result.metadata.get("reference_sources"))
-
         files = ranked_files(sources, source_types)
+        references = distinct_references(
+            result.metadata.get("reference_sources"), files
+        )
         metadata: dict[str, Any] = {
             **self._extract_search_metadata(result),
             "k": self.k,

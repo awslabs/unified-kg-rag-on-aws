@@ -481,8 +481,10 @@ Bugs present in 0.3.0.
   `ナ한` bigram) where the embedded engine, which folds width first, did not: its split reads U+FF65-FF9F as Kana. An
   index's analysis is set when it is created, so an index built before keeps the old split until a reset.
 - `retrieval`'s nDCG@k counted two references a single file matches (`report-a` beside `Report-A.pdf`) as two
-  relevant documents, so perfect retrieval scored 0.61. References are deduplicated by the matcher's keys: one spelled
-  as another's stem is one reference, the specific spelling kept; two files of one stem stay two.
+  relevant documents, so perfect retrieval scored 0.61. A reference spelled as others' stem is one with them when
+  every retrieved file it matches one of them matches too, the specific spelling kept. A file only the stem matches
+  is another document, so a title another title begins with (`Amazon` beside `Amazon.com`) stays its own reference,
+  and two files of one stem stay two.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
   out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items

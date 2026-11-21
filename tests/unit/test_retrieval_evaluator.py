@@ -174,8 +174,48 @@ class TestMetrics:
             "mrr": 1.0,
         }
         assert out["metadata"]["num_references"] == 1
-        # The specific spelling stays: another file of the stem names it not.
-        assert _score(evaluator, [["a.txt"]], ["a", "a.pdf"])["metrics"] == _MISS
+
+    @pytest.mark.parametrize(
+        ("ranked", "expected"),
+        [
+            # Each title's own document: the stem was dropped as a spelling
+            # of the longer title, so Amazon.txt scored 0 and Amazon.com.txt
+            # alone scored perfect (R2B-4).
+            ([["Amazon.txt"]], (1.0, 0.5, 1 / (1 + 1 / math.log2(3)), 1.0)),
+            ([["Amazon.com.txt"]], (1.0, 0.5, 1 / (1 + 1 / math.log2(3)), 1.0)),
+            ([["Amazon.com.txt"], ["Amazon.txt"]], (1.0, 1.0, 1.0, 1.0)),
+            ([["x.txt"]], (0.0, 0.0, 0.0, 0.0)),
+        ],
+    )
+    def test_a_title_another_title_begins_with_is_its_own_reference(
+        self, evaluator: RetrievalEvaluator, ranked: list, expected: tuple
+    ) -> None:
+        out = _score(evaluator, ranked, ["Amazon", "Amazon.com"])
+        assert out["metadata"]["num_references"] == 2
+        hit, recall, ndcg, mrr = expected
+        assert out["metrics"] == {
+            "hit_at_k": hit,
+            "recall_at_k": recall,
+            "ndcg_at_k": pytest.approx(ndcg),
+            "mrr": mrr,
+        }
+
+    def test_a_file_only_the_stem_names_is_another_document(
+        self, evaluator: RetrievalEvaluator
+    ) -> None:
+        # a.txt is a document "a" names and "a.pdf" does not.
+        out = _score(evaluator, [["a.txt"]], ["a", "a.pdf"])
+        assert out["metrics"]["recall_at_k"] == 0.5
+        # Two real files of one stem, each its reference first: perfect.
+        out = _score(
+            evaluator, [["report.txt"], ["report.pdf"]], ["report", "report.pdf"]
+        )
+        assert out["metrics"] == {
+            "hit_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_k": 1.0,
+            "mrr": 1.0,
+        }
 
     def test_two_files_of_one_stem_stay_two_references(self, config: Config) -> None:
         # a.pdf and a.docx are two documents; "a" is a spelling of either.
