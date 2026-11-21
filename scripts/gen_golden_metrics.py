@@ -4,9 +4,9 @@
 
 The golden-metrics gate (``tests/integration/test_golden_metrics.py``, the
 ``golden-metrics`` CI job) ingests the synthetic structural and bridge
-corpora with deterministic fake models and fails when any score of the
-held-out ``test`` half (or of an unsplit dataset) differs from this
-baseline. Run this only to accept a change you meant: the diff it prints,
+corpora with deterministic fake models and fails when any score or answer
+fingerprint of the held-out ``test`` half (or of an unsplit dataset)
+differs from this baseline. Run this only to accept a change you meant: the diff it prints,
 and the baseline's diff in the pull request, show every score that moved
 (docs/guides/evaluate.md "Golden metrics").
 

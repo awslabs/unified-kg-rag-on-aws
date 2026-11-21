@@ -5,34 +5,41 @@
 
 It ingests the synthetic corpora the repository already has, the
 ``structural`` benchmark (``prepare-benchmark structural --size small
---seed 0``, generated at run time) and the multilingual bridge corpus
-(``tests/fixtures/bridge_corpus.py``), on the embedded SQLite stores with
-deterministic models: ``FakeOllama`` answering with the console demo's
-prompt-reading responder (extraction by name, extractive answers) and its
-hashing vectors, and no reranker (a reranker re-sorts the candidates and
-would hide a fusion change). Then ``run-eval`` answers every dataset with
-every search strategy and search type and scores the answers with the
+--seed 0``, generated at run time), a deep variant of it and the
+multilingual bridge corpus (``tests/fixtures/bridge_corpus.py``), on the
+embedded SQLite stores with deterministic models: ``FakeOllama`` answering
+with the console demo's prompt-reading responder (extraction by name,
+extractive answers, and keywords, report ratings, iterative verdicts and
+DRIFT follow-ups read from the question and the entities its context
+names) and its hashing vectors, and no reranker (a reranker re-sorts the
+candidates and would hide a fusion change). Then ``run-eval`` answers every
+dataset with every search strategy (and the deep case's global search
+again with the settings in ``ARMS``) and scores the answers with the
 LLM-free evaluators only (retrieval, answer_match, graph_aware). The demo's
 responder is a copy loaded with the case's entity names, so the gate moves
-when that responder changes too. :func:`measure` returns the metric means;
-``tests/fixtures/golden_metrics.json`` holds the committed baseline
-(``scripts/gen_golden_metrics.py`` writes it) and
+when that responder changes too. :func:`measure` returns, per run, the
+metric means and a fingerprint of each answer (:func:`fingerprint`: the
+ranked sources, the context read and the answer), so a change that moves
+no mean still shows; ``tests/fixtures/golden_metrics.json`` holds the
+committed baseline (``scripts/gen_golden_metrics.py`` writes it) and
 ``tests/integration/test_golden_metrics.py`` compares the two.
 
 The numbers measure this pipeline on fake models: they catch a change in
-ranking, fusion, graph building, context packing or scoring, not answer
-quality, which only a real model shows.
+ranking, fusion, graph building, context packing, a strategy's own steps or
+scoring, not answer quality, which only a real model shows.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
+import hashlib
 import importlib.util
 import io
 import json
 import types
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +77,7 @@ from unified_kg_rag.domain.models.config import (
 from unified_kg_rag.evaluation.benchmarks import SPLITS, structural
 
 BASELINE = Path(__file__).with_name("golden_metrics.json")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DIMENSIONS = 64
 STRATEGIES = tuple(SearchStrategy)
 SEARCH_TYPES = tuple(SearchType)
@@ -100,6 +107,39 @@ def _responder(entities: dict[str, str]) -> types.ModuleType:
     module.ENTITIES = dict(entities)
     module.RELATION_TYPES = {}
     return module
+
+
+# The deep case: the structural world at ``medium`` size (40 vendors, 30
+# buyers, 20 products; 128 text units), so the summary tree has two levels
+# and more leaves than a tree search reads (``search.tree_search.text_top_k``
+# 20), and the first Leiden pass splits a community over this many members,
+# so the hierarchy has depths -1 to 2 (measured: 33 reports, 2/8/19/4 at
+# depths -1/0/1/2) and every cut is a different set of reports. The default
+# (20) splits none of the 88 entities' 8 communities.
+DEEP_SIZE: structural.Size = "medium"
+DEEP_MAX_CLUSTER_SIZE = 5
+# The deep dataset: the first questions of each template in each split, in
+# the order the benchmark writes them (206 in all at medium size; 24 kept). A fixed
+# rule, not a pick by score: the gate's partitions are not tuned on.
+DEEP_QUESTIONS_PER_TEMPLATE = 1
+
+
+def _global_dynamic(config: Config) -> None:
+    config.search.global_search.use_dynamic_selection = True
+
+
+def _global_capped(config: Config) -> None:
+    # Under the 8 first-pass reports: the cut steps down past depth 0 to the
+    # coarser level (2 reports).
+    config.search.global_search.max_reports_per_level = 4
+
+
+# Extra runs of one strategy on the deep case, with settings off by default
+# that have a path of their own: name -> (strategy, change to the config).
+ARMS: dict[str, tuple[SearchStrategy, Callable[[Config], None]]] = {
+    "dynamic": (SearchStrategy.GLOBAL, _global_dynamic),
+    "capped": (SearchStrategy.GLOBAL, _global_capped),
+}
 
 
 def _config(name: str, stores: Path, chunk_size: int, language: LanguageCode) -> Config:
@@ -156,6 +196,7 @@ class _Case:
         config: Config,
         entities: dict[str, str],
         split: bool,
+        arms: tuple[str, ...] = (),
     ) -> None:
         self.name = name
         self.root = root
@@ -163,6 +204,7 @@ class _Case:
         self.dataset = dataset
         self.config = config
         self.split = split
+        self.arms = arms
         responder = _responder(entities)
         self.server = FakeOllama(
             lambda system, human: str(responder.respond(system, human)[0]),
@@ -191,13 +233,23 @@ class _DemoEmbeddings(HashingEmbeddings):
         return list(self.responder.embed(text, self.dimensions))
 
 
-def _structural_case(root: Path) -> _Case:
+def _structural_case(root: Path, deep: bool = False) -> _Case:
+    name = "structural-deep" if deep else "structural"
+    size: structural.Size = DEEP_SIZE if deep else "small"
     prepared = root / "prepared"
-    structural.prepare(prepared, seed=0, size="small")
-    world = structural.generate_world(0, "small")
+    structural.prepare(prepared, seed=0, size=size)
+    world = structural.generate_world(0, size)
     entities = {node.name: node.type for node in world.nodes.values()}
     # 200 characters: the longest vendor documents (up to 230) are two chunks.
-    config = _config("structural", root / "stores", 200, LanguageCode.EN)
+    config = _config(name, root / "stores", 200, LanguageCode.EN)
+    dataset = prepared / "eval_data.json"
+    if deep:
+        config.graph.community_detection.max_cluster_size = DEEP_MAX_CLUSTER_SIZE
+        dataset = root / "eval_data.json"
+        dataset.write_text(
+            json.dumps(_first_of_each_template(prepared / "eval_data.json")),
+            encoding="utf-8",
+        )
     snippet = (prepared / "structural-config.yaml").read_text(encoding="utf-8")
     extraction = yaml.safe_load(snippet)["processing"]
     graph = config.processing.graph_extraction
@@ -208,14 +260,29 @@ def _structural_case(root: Path) -> _Case:
         SeedGraphConfig(**{**seed, "path": str(prepared / seed["path"])})
     ]
     return _Case(
-        "structural",
+        name,
         root,
         prepared / "corpus",
-        prepared / "eval_data.json",
+        dataset,
         config,
         entities,
         split=True,
+        arms=tuple(ARMS) if deep else (),
     )
+
+
+def _first_of_each_template(path: Path) -> list[dict[str, Any]]:
+    """The first ``DEEP_QUESTIONS_PER_TEMPLATE`` questions of each template
+    and split of a structural dataset, in its order."""
+    taken: dict[tuple[str, str], int] = {}
+    kept = []
+    for question in json.loads(path.read_text(encoding="utf-8")):
+        metadata = question["metadata"]
+        key = (metadata["template"], metadata["split"])
+        if taken.get(key, 0) < DEEP_QUESTIONS_PER_TEMPLATE:
+            taken[key] = taken.get(key, 0) + 1
+            kept.append(question)
+    return kept
 
 
 def _bridge_case(root: Path, language: LanguageCode) -> _Case:
@@ -276,80 +343,166 @@ def _ingest(case: _Case) -> None:
         raise RuntimeError(f"{case.name}: ingestion failed: {errors}")
 
 
-def _run_eval(case: _Case, chain: GraphRAGChain, argv: list[str]) -> int:
-    args = run_evaluation.CommandLineInterface().parser.parse_args(
-        [*argv, "--output-format", "json"]
-    )
-    with contextlib.redirect_stdout(io.StringIO()):
-        return asyncio.run(
-            run_evaluation.EvaluationRunner(args, chain, case.config).run()
+def _summaries(
+    directory: Path,
+) -> Iterator[tuple[str, dict[str, Any], list[dict[str, Any]]]]:
+    """Each strategy's run summary (``evaluation_summary_<strategy>_<stamp>_<id>.json``)
+    and its per-question results (``evaluation_results_...``, same suffix)."""
+    strategies = {s.value for s in STRATEGIES}
+    for path in sorted(directory.rglob("evaluation_summary_*.json")):
+        suffix = path.stem.removeprefix("evaluation_summary_")
+        strategy = suffix.split("_", 1)[0]
+        assert strategy in strategies, path
+        results = path.with_name(f"evaluation_results_{suffix}.json")
+        yield (
+            strategy,
+            json.loads(path.read_text(encoding="utf-8")),
+            json.loads(results.read_text(encoding="utf-8")),
         )
 
 
-def _summaries(directory: Path) -> Iterator[tuple[str, dict[str, Any]]]:
-    """Each strategy's run summary (``evaluation_summary_<strategy>_<stamp>_<id>.json``)."""
-    strategies = {s.value for s in STRATEGIES}
-    for path in sorted(directory.rglob("evaluation_summary_*.json")):
-        strategy = path.stem.removeprefix("evaluation_summary_").split("_", 1)[0]
-        assert strategy in strategies, path
-        yield strategy, json.loads(path.read_text(encoding="utf-8"))
+def _digest(value: Any) -> str:
+    text = json.dumps(value, sort_keys=True, ensure_ascii=False)
+    return hashlib.blake2b(text.encode("utf-8"), digest_size=5).hexdigest()
 
 
-def _scores(summary: dict[str, Any]) -> dict[str, Any]:
+def fingerprint(result: dict[str, Any]) -> str:
+    """One question's answer as ``<ranked>-<read>``: a digest of the sources
+    the strategy returned, in rank order, with their types and the ones the
+    answer cites, and one of what the answer step read and wrote (the
+    contexts, entities and relationships, the answer, whether it abstained
+    or failed). Timings and usage are left out: they vary between runs."""
+    ranked = [
+        result.get("retrieved_source_ids"),
+        result.get("retrieved_source_types"),
+        result.get("cited_source_ids"),
+        result.get("cited_section_types"),
+    ]
+    read = [
+        result.get("retrieved_contexts"),
+        result.get("retrieved_entities"),
+        result.get("retrieved_relationships"),
+        result.get("generated_answer"),
+        result.get("abstained"),
+        result.get("error"),
+    ]
+    return f"{_digest(ranked)}-{_digest(read)}"
+
+
+def _scores(summary: dict[str, Any], results: list[dict[str, Any]]) -> dict[str, Any]:
     stats = summary["metric_statistics"]
     return {
         "queries": summary["total_queries"],
         "failed": summary["failed_evaluations"],
         "metrics": {name: stats[name]["mean"] for name in sorted(stats)},
+        "answers": {str(r["query_id"]): fingerprint(r) for r in results},
     }
 
 
-CASES = ("structural", *(f"bridge-{language.value}" for language in BRIDGE_CORPORA))
+CASES = (
+    "structural",
+    "structural-deep",
+    *(f"bridge-{language.value}" for language in BRIDGE_CORPORA),
+)
+# The search types each case runs. The deep case is there for the
+# strategies' own paths, which run under any search type: the default one.
+CASE_SEARCH_TYPES: dict[str, tuple[SearchType, ...]] = {
+    name: (SearchType.HYBRID,) if name == "structural-deep" else SEARCH_TYPES
+    for name in CASES
+}
+# The gate's tests: one per case, search type and split (``None``: the
+# whole of an unsplit dataset), so ``-n`` spreads the deep case too.
+RUNS: tuple[tuple[str, SearchType, str | None], ...] = tuple(
+    (name, search_type, split)
+    for name in CASES
+    for search_type in CASE_SEARCH_TYPES[name]
+    for split in (SPLITS if name.startswith("structural") else (None,))
+)
 
 
 def build_case(name: str, root: Path) -> _Case:
     """Case ``name`` (one of ``CASES``) in the empty directory ``root``."""
-    if name == "structural":
-        return _structural_case(root)
+    if name in ("structural", "structural-deep"):
+        return _structural_case(root, deep=name == "structural-deep")
     return _bridge_case(root, LanguageCode(name.removeprefix("bridge-")))
 
 
+def _evaluate(
+    case: _Case,
+    chain: GraphRAGChain,
+    config: Config,
+    strategies: tuple[SearchStrategy, ...],
+    search_type: SearchType,
+    split: str | None,
+    directory: Path,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    """``run-eval`` of ``strategies`` on ``split``: each strategy's scores."""
+    argv = [
+        "--data-path",
+        str(case.dataset),
+        "--search-strategy",
+        ",".join(s.value for s in strategies),
+        "--search-type",
+        search_type.value,
+        "--evaluators",
+        ",".join(e.value for e in EVALUATORS),
+        "--output-directory",
+        str(directory),
+        *(["--split", split] if split else []),
+    ]
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        [*argv, "--output-format", "json"]
+    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = asyncio.run(run_evaluation.EvaluationRunner(args, chain, config).run())
+    if code != 0:
+        raise RuntimeError(f"{case.name}: run-eval exited {code}")
+    for strategy, summary, results in _summaries(directory):
+        yield strategy, _scores(summary, results)
+
+
 def measure_case(
-    name: str, root: Path, search_types: tuple[SearchType, ...] = SEARCH_TYPES
+    name: str,
+    root: Path,
+    search_types: tuple[SearchType, ...] | None = None,
+    splits: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Case ``name``'s scores with each of ``search_types`` and every
-    strategy: ``{split: {"<search type>/<strategy>": {"queries", "failed",
-    "metrics": {name: mean}}}}``, the splits ``tune`` and ``test`` for a split
-    dataset, ``all`` for one that is not."""
+    """Case ``name``'s scores with each of ``search_types`` (by default
+    ``CASE_SEARCH_TYPES``) and every strategy, and with its ``ARMS``, on
+    each of ``splits`` (by default both of a split dataset):
+    ``{split: {"<search type>/<strategy>[@<arm>]": {"queries", "failed",
+    "metrics": {name: mean}, "answers": {query id: fingerprint}}}}``, the
+    splits ``tune`` and ``test`` for a split dataset, ``all`` for one that
+    is not."""
     case = build_case(name, root)
     _ingest(case)
-    chain = GraphRAGChain(case.config, providers=case.providers)
+    chains = {"": (case.config, GraphRAGChain(case.config, providers=case.providers))}
+    for arm in case.arms:
+        config = copy.deepcopy(case.config)
+        ARMS[arm][1](config)
+        chains[arm] = (config, GraphRAGChain(config, providers=case.providers))
     out: dict[str, Any] = {}
     try:
-        for search_type in search_types:
-            for split in SPLITS if case.split else (None,):
-                directory = case.root / "eval" / search_type.value / (split or "all")
-                argv = [
-                    "--data-path",
-                    str(case.dataset),
-                    "--search-strategy",
-                    ",".join(s.value for s in STRATEGIES),
-                    "--search-type",
-                    search_type.value,
-                    "--evaluators",
-                    ",".join(e.value for e in EVALUATORS),
-                    "--output-directory",
-                    str(directory),
-                    *(["--split", split] if split else []),
-                ]
-                code = _run_eval(case, chain, argv)
-                if code != 0:
-                    raise RuntimeError(f"{case.name}: run-eval exited {code}")
-                for strategy, summary in _summaries(directory):
-                    key = f"{search_type.value}/{strategy}"
-                    out.setdefault(split or "all", {})[key] = _scores(summary)
+        for search_type in search_types or CASE_SEARCH_TYPES[name]:
+            for split in (splits or SPLITS) if case.split else (None,):
+                for arm, (config, chain) in chains.items():
+                    strategies = (ARMS[arm][0],) if arm else STRATEGIES
+                    directory = (
+                        case.root
+                        / "eval"
+                        / search_type.value
+                        / (split or "all")
+                        / (arm or "default")
+                    )
+                    for strategy, scores in _evaluate(
+                        case, chain, config, strategies, search_type, split, directory
+                    ):
+                        key = f"{search_type.value}/{strategy}"
+                        key += f"@{arm}" if arm else ""
+                        out.setdefault(split or "all", {})[key] = scores
     finally:
-        chain.close()
+        for _, chain in chains.values():
+            chain.close()
     return out
 
 
@@ -362,17 +515,22 @@ def measure(workdir: Path) -> dict[str, Any]:
 
 
 def select(
-    result: dict[str, Any], case: str, search_type: SearchType
+    result: dict[str, Any],
+    case: str,
+    search_type: SearchType,
+    split: str | None = None,
 ) -> dict[str, Any]:
-    """The part of a :func:`measure` result of one case and search type."""
+    """The part of a :func:`measure` result of one case and search type
+    (and ``split``, by default every one)."""
     prefix = f"{search_type.value}/"
     splits = result["cases"].get(case, {})
     return {
         "schema_version": result.get("schema_version"),
         "cases": {
             case: {
-                split: {k: v for k, v in runs.items() if k.startswith(prefix)}
-                for split, runs in splits.items()
+                name: {k: v for k, v in runs.items() if k.startswith(prefix)}
+                for name, runs in splits.items()
+                if split is None or name == split
             }
         },
     }
@@ -433,6 +591,26 @@ def _differences(
             found.append(f"{where} {name}: only in the {side}")
         elif old[name] != new[name]:
             found.append(f"{where} {name}: {old[name]!r} -> {new[name]!r}")
+    old, new = before["answers"], after["answers"]
+    for query in sorted(old.keys() | new.keys()):
+        if query not in old or query not in new:
+            side = "baseline" if query in old else "run"
+            found.append(f"{where} answer {query}: only in the {side}")
+            continue
+        (old_ranked, old_read), (new_ranked, new_read) = (
+            old[query].split("-"),
+            new[query].split("-"),
+        )
+        changed = [
+            part
+            for part, moved in (
+                ("the ranked sources", old_ranked != new_ranked),
+                ("the context or the answer", old_read != new_read),
+            )
+            if moved
+        ]
+        if changed:
+            found.append(f"{where} answer {query}: {' and '.join(changed)} changed")
     return found
 
 
