@@ -26,7 +26,10 @@ but EM still under-counts. ``extracted`` asks the ``answer_span`` model role
 for the span (``AnswerSpanExtractionPrompt``, one call per distinct question
 and answer, cached for the evaluator's life); a failed call, an empty reply
 or a span that is not in the answer falls back to ``first_line`` and is
-recorded in the report (``answer_span_fallback``). Only an extracted span with
+recorded in the report (``answer_span_fallback``). A yes/no span (a polarity
+word, below) need not be written in the answer ("The clause does not
+apply." is "no"), but it is the span only for a yes/no gold; for any other
+gold it falls back too. Only an extracted span with
 an official normalization gives numbers close to the papers'. Each report
 records the span mode (``answer_span``) and the text scored
 (``scored_span``). Then:
@@ -517,12 +520,22 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
     ) -> EvaluationReport:
         if self.answer_span != "extracted":
             return self.evaluate_single(query, result, ground_truth, **kwargs)
-        if result.abstained or not self._references(ground_truth, result.metadata):
+        references = self._references(ground_truth, result.metadata)
+        if result.abstained or not references:
             # Nothing to extract (a decline scores 0): no model call.
             return self._score(query, result, ground_truth, "", {})
         answer = self.answer_words(result)
         try:
             span = await self._extracted_span(result.question, answer)
+            if normalize_answer(span) in _POLARITY and not any(
+                normalize_answer(ref) in _POLARITY for ref in references
+            ):
+                # A yes/no span answers a yes/no question: for any other
+                # gold the span model read the question wrong.
+                raise EvaluationException(
+                    "the extracted span is a yes/no word and the gold answer "
+                    "is not one"
+                )
         except Exception as e:  # noqa: BLE001 - scored on the first line instead
             # The error may quote the model's span: a digest at WARNING.
             log_failure(

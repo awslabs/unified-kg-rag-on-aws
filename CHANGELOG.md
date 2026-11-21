@@ -700,6 +700,10 @@ Bugs present in 0.3.0.
 - Bedrock's token-limit cut (`BedrockTokenCounter.truncate_to_token_limit`: embedding inputs, ragas contexts,
   summary-tree texts) could return text over the limit (15 of 300 mixed-script samples, by up to 202 tokens); it keeps
   the longest prefix that fits, by binary search as the local counter does.
+- `answer_match` with `evaluation.answer_span: extracted` scored a "yes"/"no" span for any question, so a span model
+  that answered "yes" to "Who wrote it?" scored exact match and token F1 0 against "Tom Hood" (34 of 150 answers in
+  the 3B local baseline). A yes/no span is the span only for a yes/no gold; otherwise the first line is scored and
+  the fallback counted.
 - The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
   searched for as a focus entity. Local search now reads a focus that names no stored entity and no word of the query
   (a placeholder such as "none" or "Empty", in any language) as no focus and searches by the query, and the prompt

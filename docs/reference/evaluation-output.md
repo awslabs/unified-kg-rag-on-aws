@@ -833,7 +833,10 @@ list, top level or under `metadata`, which wins), taking the maximum.
     the answer, one call per distinct question and answer, reused across
     repeats and strategies. A failed call, an empty reply or a span that is
     not in the answer is scored on the first line instead and counted in
-    `answer_span_statistics.fallbacks`. This is the setting for numbers
+    `answer_span_statistics.fallbacks`. A yes/no span (`no` for `The clause
+    does not apply.`) need not be written in the answer, but it is the span
+    only when the gold answer (or an alias) is a yes/no word; for any other
+    gold it falls back the same way. This is the setting for numbers
     close to the papers'.
   - `full`: the whole answer.
 
