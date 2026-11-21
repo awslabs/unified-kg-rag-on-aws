@@ -807,6 +807,8 @@ Bugs present in 0.3.0.
   them. The call timeout is the factory's request timeout of ingestion calls (`providers.llm.timeout_seconds`;
   Bedrock's 330 s read timeout, from 300 s), an abandoned call sends no further request, and its item is retried only
   once it ended (`ModelCallStillRunningError` when it still runs a call timeout later).
+- An index creation the search engine refused (a language analyzer whose plugin is not installed, say) said `..`
+  between the engine's message and the hint when the message ended a sentence.
 
 ## [0.3.0] - 2026-11-14
 

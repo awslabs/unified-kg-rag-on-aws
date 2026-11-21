@@ -237,6 +237,20 @@ class TestPreflight:
         assert "2.17" not in str(error)
         assert "compression_level" in str(error)
 
+    def test_a_refusal_that_ends_a_sentence_is_not_followed_by_two_periods(
+        self,
+    ) -> None:
+        # The missing-analyzer refusal ends with "." itself, and the message
+        # read "... Amazon OpenSearch Service domain).. Every ..." (R2E-3).
+        error = opensearch_indexer._creation_refused(
+            StoreRequestRejectedError(
+                "Map the language to another analyzer (for nori: analysis-nori).",
+                reason="illegal_argument_exception",
+            )
+        )
+        assert "analysis-nori). Every indexing.opensearch" in str(error)
+        assert ".." not in str(error)
+
 
 class TestLiveIndex:
     def _built(self, tmp_path: Path, config: Config) -> _RemoteEngine:

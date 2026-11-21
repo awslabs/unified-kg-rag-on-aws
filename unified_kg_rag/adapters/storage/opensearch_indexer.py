@@ -349,8 +349,10 @@ def _creation_refused(
             "setting it names."
         )
     target = f" (a probe of '{index}')" if index else ""
+    # The engine's own message may end a sentence already.
+    cause = str(e).rstrip(" .")
     return StoreRequestRejectedError(
-        f"The search engine refused to create an index{target}: {e}. {hint}",
+        f"The search engine refused to create an index{target}: {cause}. {hint}",
         reason=e.reason,
     )
 
