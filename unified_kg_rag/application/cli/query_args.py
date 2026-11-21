@@ -219,8 +219,8 @@ def add_query_arguments(
         type=positive_int,
         default=10,
         help="Set the most results a retrieval-only search returns (times "
-        "--retrieval-multiplier; default 10), cut by rank after fusion and "
-        "rerank. An answer's context may hold more: each strategy reads "
+        "--retrieval-multiplier; default 10), cut after fusion and rerank, "
+        "each kind of result keeping its share of the strategy's results. An answer's context may hold more: each strategy reads "
         "wider pools of its own",
     )
     parser.add_argument(

@@ -155,6 +155,13 @@ async def test_kg_search_returns_chunks_with_their_documents(
     assert result.usage["llm_calls"] >= 1
 
 
+def _by_kind(records: list[Any]) -> dict[str, list[str]]:
+    kinds: dict[str, list[str]] = {}
+    for record in records:
+        kinds.setdefault(record.kind, []).append(record.source_id)
+    return kinds
+
+
 @pytest.mark.parametrize("strategy", ["mix", "hybrid", "naive", "iterative", "ppr"])
 async def test_top_k_bounds_what_a_search_returns_not_the_answers_context(
     tools: KnowledgeGraphTools, strategy: str
@@ -162,18 +169,68 @@ async def test_top_k_bounds_what_a_search_returns_not_the_answers_context(
     # kg_search's top_k ("results to return", at most mcp.max_top_k)
     # returned every result of a strategy's own pools: LightRAG's per-type
     # floors (40 entities and relationships, 20 chunks), iterative's rounds,
-    # ppr's passages and entities. The search is cut by rank; the pools the
-    # answer reads are not.
+    # ppr's passages and entities. The search is cut, each kind to its own
+    # best-ranked records; the pools the answer reads are not.
     question = "Who stores the widgets for Vendor?"
     wide = await tools.search(question, strategy=strategy, top_k=20)
     assert len(wide.records) > 2, [r.kind for r in wide.records]
+    wide_kinds = _by_kind(wide.records)
     for top_k in (1, 2):
         result = await tools.search(question, strategy=strategy, top_k=top_k)
-        assert [r.source_id for r in result.records] == [
-            r.source_id for r in wide.records[:top_k]
-        ]
+        assert len(result.records) == top_k
+        for kind, ids in _by_kind(result.records).items():
+            assert ids == wide_kinds[kind][: len(ids)], kind
     answer = await tools.answer(question, strategy=strategy, top_k=1, records="all")
     assert len(answer.records) > 1
+
+
+@pytest.fixture
+async def graded_tools(index: Index) -> Any:
+    # The same stores, reranked by a graded cross-encoder (the share of the
+    # question's words a passage holds): chunk scores 0-1, beside graph
+    # records at their fusion score (about 1/61).
+    providers = _providers(
+        index.config, index.server, FakeCrossEncoder("graded", relevant=None)
+    )
+    chain = GraphRAGChain(index.config, providers=providers)
+    try:
+        yield KnowledgeGraphTools(chain)
+    finally:
+        await chain.aclose()
+
+
+@pytest.mark.parametrize(
+    ("strategy", "graph_kinds"),
+    [
+        ("local", {"entity", "relationship"}),
+        ("mix", {"entity", "relationship"}),
+        ("hybrid", {"entity", "relationship"}),
+        ("iterative", {"entity", "relationship"}),
+        ("ppr", {"relationship"}),
+    ],
+)
+async def test_a_cut_search_keeps_the_graph_beside_reranked_chunks(
+    graded_tools: KnowledgeGraphTools, strategy: str, graph_kinds: set[str]
+) -> None:
+    # The top_k cut ranked one list mixing reranked chunk scores (0-1) and
+    # unreranked graph scores (about 0.016), so every graph strategy's
+    # search returned text chunks only. Each kind now keeps its share.
+    question = "Who stores the widgets for Vendor?"
+    wide = await graded_tools.search(question, strategy=strategy, top_k=20)
+    wide_kinds = _by_kind(wide.records)
+    assert graph_kinds <= set(wide_kinds) and "text" in wide_kinds, wide_kinds
+    texts = [r.score for r in wide.records if r.kind == "text"]
+    graph = [r.score for r in wide.records if r.kind in graph_kinds]
+    # The scales differ: every chunk outscores every graph record.
+    assert min(texts) > max(graph), (texts, graph)
+    for top_k in (3, 5):
+        result = await graded_tools.search(question, strategy=strategy, top_k=top_k)
+        kinds = _by_kind(result.records)
+        assert len(result.records) == top_k, kinds
+        assert graph_kinds <= set(kinds), kinds
+        assert "text" in kinds, kinds
+        for kind, ids in kinds.items():
+            assert ids == wide_kinds[kind][: len(ids)], kind
 
 
 async def test_kg_answer_answers_with_its_sources(tools: KnowledgeGraphTools) -> None:

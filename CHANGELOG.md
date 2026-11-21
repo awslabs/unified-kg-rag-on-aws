@@ -470,7 +470,10 @@ Bugs present in 0.3.0.
 - `top_k` did not bound what a search returns: `kg_search` with `top_k` 1 returned 49 records for `mix`, `hybrid` and
   `iterative`, 17 for `ppr` and 12 for `naive` (a strategy's own pools: LightRAG's per-type floors, iterative's
   rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
-  results to `top_k` (times `retrieval_multiplier`) by rank; an answer's context keeps the strategy's pools.
+  results to `top_k` (times `retrieval_multiplier`), each kind of result keeping its share of the strategy's results
+  and its own best-ranked records: one cut by score across kinds compares a reranked chunk's score (0-1) with a graph
+  record's fusion score (about 0.016), and kept chunks only for every graph strategy. An answer's context keeps the
+  strategy's pools, and `kg_answer`'s `top_k` schema says so.
 - `cjk_script_split` on OpenSearch put a space between halfwidth Katakana and the Hangul after it (`ｶﾀｶﾅ한글` lost the
   `ナ한` bigram) where the embedded engine, which folds width first, did not: its split reads U+FF65-FF9F as Kana. An
   index's analysis is set when it is created, so an index built before keeps the old split until a reset.

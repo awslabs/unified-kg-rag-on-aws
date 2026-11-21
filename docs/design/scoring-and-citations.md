@@ -14,6 +14,15 @@ the section numbers: they never change.
   `RerankTrace`, reported as `SearchResult.metadata["rerank"]`; a rerank model
   that cannot be built leaves the fused order (`unavailable`) or raises under
   `search.reranking.required`.
+- **A search's cut** (`GraphRAGChain.asearch`, so `kg_search` and `run-rag
+  --mode search`) bounds the strategy's results to `top_k` times
+  `retrieval_multiplier` the same way: each kind keeps its share of what the
+  strategy returned (largest remainder, `domain/retrieval/kind_shares.py`)
+  and its own best-ranked records. Scores are compared only within a kind: a
+  reranked chunk carries the reranker's score (0-1, or a logit) and a graph
+  record its fusion score (about 1/61 under RRF), so one cut by score across
+  kinds would keep whichever scale is larger. An answer's context is not cut
+  here.
 - **TokenManager** (`adapters/retrieval/token_manager.py`) packs the context
   into the answer model's budget. Each section type gets a hard-capped share
   (`search.token_manager.type_budgets`); within it sections go in score order
