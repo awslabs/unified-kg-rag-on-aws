@@ -52,11 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespace whose last full build an earlier release wrote gets a `community_depths` rebuild reason (remedy `reset`)
   in `run-describe`, the console, MCP and the run's `rebuild_due`.
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
-  holds only a run's output; on a stdout that is no terminal no line is wrapped at 80 columns, and `run-rag --query
-  ... > answer.txt` keeps the answer, its citations and a sources line as plain text, its banner, settings panel and
-  progress lines on stderr; `run-visualization`, whose result was its log line, prints the output directory and each
-  file written; `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
-  stderr (`2>&1` keeps both on one stream).
+  holds only a run's output; on a stdout or stderr that is no terminal no line is wrapped or cropped at 80 columns (a
+  panel or table is drawn as wide as its widest line: `run-ingestion`'s source and cache paths lost their ends), and
+  `run-rag --query ... > answer.txt` keeps the answer, its citations and a sources line as plain text, its banner,
+  settings panel and progress lines on stderr; `run-visualization`, whose result was its log line, prints the output
+  directory and each file written; `setup_logging` without a `stream` logs to stderr. A script that read the logs from
+  stdout reads stderr (`2>&1` keeps both on one stream).
 - A filter on `attr_file` or `attr_folder` (*Added*: path filters) is refused on a namespace built before this
   release, a document's own `file` or `folder` filter included, until it is rebuilt (*Upgrading*).
 - `VectorIndexer` is split by concern, for extenders: its other concerns are `Protocol`s of their own, exported from

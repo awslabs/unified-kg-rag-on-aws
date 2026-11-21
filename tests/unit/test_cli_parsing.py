@@ -716,6 +716,34 @@ def test_a_piped_console_does_not_wrap_a_printed_command(
     )
 
 
+def test_a_piped_console_crops_no_panel_or_table(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R2C-5: soft wrap kept plain lines whole on a pipe, but a panel or a
+    table was still drawn at 80 columns and cropped what did not fit
+    (run-ingestion's source and cache directories lost their ends)."""
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from unified_kg_rag.application.cli.conventions import fit_console
+    from unified_kg_rag.application.cli.display import console
+
+    fit_console()
+    path = "/data/" + "a-rather-long-directory-name/" * 6 + "end"
+    console.print(Panel(f"[dim]Source Directory:[/dim] '{path}'", expand=False))
+    table = Table(expand=True)
+    table.add_column("Path")
+    table.add_row(path)
+    console.print(table)
+    console.rule("done")
+    lines = capsys.readouterr().out.splitlines()
+    assert sum(f"Source Directory: '{path}'" in line for line in lines) == 1
+    assert sum(path in line for line in lines) == 2
+    # A rule, which has no width of its own, stays at the console's.
+    (rule,) = [line for line in lines if "done" in line]
+    assert len(rule) == console.width
+
+
 # --- run_rag_chain: _parse_filters --------------------------------------
 
 

@@ -120,8 +120,9 @@ are flushed first, and a process pool's workers are ended with it.
 
 In either output format the logs and the EMF records of `--metrics-sink
 cloudwatch` go to stderr, so stdout holds only the run's output. In text
-mode on a stdout that is no terminal (a file, a pipe) no line is wrapped
-at 80 columns, and `run-rag --query` prints its result alone as plain
+mode on a console stream that is no terminal (a file, a pipe, a task's
+log stream) no line is wrapped or cropped at 80 columns, a panel's or a
+table's included (each is drawn as wide as its widest line), and `run-rag --query` prints its result alone as plain
 text, the answer, its citations and a sources line (`--verbose`: every
 source), with the banner, settings, progress and warnings on stderr:
 `run-rag --query ... > answer.txt` keeps the answer.

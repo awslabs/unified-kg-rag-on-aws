@@ -101,6 +101,7 @@ ALLOWED: dict[str, str] = {
         "domain/ingestion/cache_keys.py:_STAGE_FORMAT_VERSION",
         "adapters/llm/token_estimate.py:UNITS_PER_TOKEN",
         "adapters/storage/opensearch_indexer.py:_DIGEST_LENGTH",
+        "application/cli/display.py:_UNBOUNDED_WIDTH",
         "application/cli/conventions.py:EXIT_FAILURE",
         "application/cli/conventions.py:EXIT_USAGE",
         "application/cli/run_console.py:DEFAULT_PORT",
