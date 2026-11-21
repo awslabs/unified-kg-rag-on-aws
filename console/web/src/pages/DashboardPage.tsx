@@ -97,8 +97,11 @@ export function DashboardPage() {
         }
       />
       <ErrorText error={data.error} />
+      {/* A failed read says so above and is not still loading. */}
       {!d ? (
-        <Loading />
+        data.loading ? (
+          <Loading />
+        ) : null
       ) : !d.totals.queries && !d.jobs.length ? (
         <Empty
           title={t("dashboard.emptyTitle")}

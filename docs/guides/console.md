@@ -422,8 +422,9 @@ The next question and job use the saved file.
   send, and one from another origin is refused; on loopback a request for
   another host name is refused (DNS rebinding). No response carries a CORS
   header.
-- The page loads nothing from another host: its fonts (Pretendard,
-  Pretendard JP and JetBrains Mono, SIL Open Font License; the texts are in
+- The page loads nothing from another host: its fonts (Atkinson
+  Hyperlegible Next and Mono, Pretendard, Pretendard JP and JetBrains Mono,
+  SIL Open Font License; the texts are in
   `console/web/public/licenses/`) are part of the build, so it works
   offline and in a private VPC.
 - One ingestion or evaluation job per index namespace at a time, also for

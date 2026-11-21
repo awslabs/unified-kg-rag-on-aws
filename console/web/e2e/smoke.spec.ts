@@ -165,6 +165,13 @@ for (const locale of ["en", "ko", "de", "ja"]) {
       const statusRead = page.waitForResponse((response) => response.url().includes("/api/status"));
       await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
       await statusRead;
+      // A Japanese page imports Pretendard JP's stylesheet once it turns
+      // Japanese (lib/scriptFonts.ts), which can be after fonts.ready first
+      // resolves: until its faces load, the labels are set in a fallback and
+      // the row measures a step too wide.
+      if (locale === "ja") {
+        await page.waitForFunction(() => [...document.fonts].some((face) => face.family === "Pretendard JP Variable" && face.status === "loaded"));
+      }
       await page.evaluate(() => document.fonts.ready.then(() => undefined));
       await page.waitForTimeout(100);
       return { context, page };
@@ -234,6 +241,107 @@ for (const locale of ["en", "de", "fr", "ru", "es", "it", "pt", "ko", "ja", "zh"
     });
   }
 }
+
+// Regression: an opened source's excerpt was a -webkit-box without a clamp,
+// which dropped a line break standing alone between two highlighted
+// phrases: "destination: Kestrel Depot\nKestrel Depot will add..." read
+// "Kestrel DepotKestrel Depot". Each line of the excerpt keeps its own line.
+test("an opened source keeps the line break between two highlights", async ({ page, baseURL }) => {
+  const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+  // The answer's sources are one fixed entity whose description holds the
+  // question's phrase twice, a line break apart: the layout is tested, not
+  // what the demo's corpus happens to say.
+  const source = {
+    rank: 1,
+    kind: "entity",
+    id: "e2e-kestrel-depot",
+    title: "Kestrel Depot",
+    score: 1,
+    excerpt: "Entity: Kestrel Depot\nType: location\nDescription: destination: Kestrel Depot\nKestrel Depot will add a second storage bay.",
+    truncated: false,
+    document_ids: [],
+    file_name: null,
+    chunk_id: null,
+    text_unit_ids: [],
+    source_kinds: [],
+    iri: null,
+    provenance: null,
+    entity_type: "location",
+  };
+  await page.route(
+    (url) => url.pathname === "/api/ask",
+    async (route) => {
+      const response = await route.fetch();
+      const events = (await response.text()).split("\n\n").map((block) => {
+        const data = block.startsWith("data:") ? JSON.parse(block.slice(5)) : null;
+        if (data?.kind !== "result") return block;
+        return `data: ${JSON.stringify({ ...data, sources: [source], citations: [] })}`;
+      });
+      await route.fulfill({ status: response.status(), headers: response.headers(), body: events.join("\n\n") });
+    },
+  );
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+  await page.getByLabel("Question").fill("Where does Kestrel Depot store the units?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".answer-meta").first()).toBeVisible({ timeout: 60_000 });
+  await page.locator('.source[data-kind="entity"] > button').first().click();
+  const excerpt = page.locator(".source.open .source-excerpt");
+  await expect(excerpt.locator("mark")).toHaveCount(2);
+  const tops = await excerpt.evaluate((element) => {
+    const nodes = [...element.childNodes];
+    const i = nodes.findIndex((node, k) => node.nodeType === Node.TEXT_NODE && node.textContent === "\n" && nodes[k - 1]?.nodeName === "MARK" && nodes[k + 1]?.nodeName === "MARK");
+    return i < 0 ? [] : [nodes[i - 1], nodes[i + 1]].map((node) => Math.round((node as Element).getBoundingClientRect().top));
+  });
+  expect(tops, "the excerpt has two highlights a line break apart").toHaveLength(2);
+  expect(tops[1]!).toBeGreaterThan(tops[0]!);
+});
+
+// Regression: the Entity panel's relationship types (RELATED_TO,
+// DELIVERS_TO) shrank to one or two letters per line beside a long
+// description at 1440 px. Each type now keeps one line.
+test("the entity panel's relationship types keep one line at 1440 px", async ({ page, baseURL }) => {
+  const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+  // Every relationship gets a long description and a type of its own
+  // length, so the panel's rows are the ones the bug showed up in whatever
+  // the demo's graph says.
+  await page.route(
+    (url) => url.pathname === "/api/graphs/data",
+    async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { edges: { type?: string; description?: string | null }[] };
+      const types = ["RELATED_TO", "CONTRACTS_WITH", "DELIVERS_TO"];
+      body.edges = body.edges.map((edge, i) => ({
+        ...edge,
+        type: types[i % types.length],
+        description: "A relationship stated at length, long enough to fill two lines of the panel beside its type label.",
+      }));
+      await route.fulfill({ response, json: body });
+    },
+  );
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  await page.goto(token ? `/graph?token=${encodeURIComponent(token)}` : "/graph");
+  await expect(page.locator(".graph-canvas canvas").first()).toBeVisible({ timeout: 60_000 });
+  await page.locator('[role="tabpanel"] .list-plain button').first().click();
+  const types = page.locator('[role="tabpanel"] .list-plain .neighbour + .id');
+  await expect(types.first()).toBeVisible();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  const lines = await types.evaluateAll((elements) =>
+    elements.map((element) => {
+      // The line boxes the text lays out in, not the element's height.
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const tops = new Set([...range.getClientRects()].map((rect) => Math.round(rect.top)));
+      return { type: element.textContent, lines: tops.size };
+    }),
+  );
+  expect(lines.length).toBeGreaterThanOrEqual(2);
+  expect(lines.filter((entry) => entry.lines > 1), JSON.stringify(lines)).toEqual([]);
+});
 
 // Regression (arch E1): with a second namespace ingested, the Graph page
 // opened that namespace's newer export and an answer's "Show in the graph"

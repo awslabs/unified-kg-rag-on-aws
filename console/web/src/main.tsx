@@ -5,7 +5,8 @@
 // dynamic-subset stylesheet, unmodified (its Reserved Font Name stays
 // valid); one file per slice carries every weight, and a browser fetches a
 // slice only for the characters a page shows. Pretendard JP loads with the
-// Japanese page only (lib/scriptFonts.ts). JetBrains Mono: fonts.css, which
+// Japanese page only (lib/scriptFonts.ts). Atkinson Hyperlegible Next and
+// Mono, and JetBrains Mono's Cyrillic: fonts.css, which
 // scripts/gen-fonts.mjs writes (npm run fonts).
 import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import "./styles/fonts.css";

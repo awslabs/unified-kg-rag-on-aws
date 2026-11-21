@@ -11,7 +11,7 @@ import type { AskResult, Citation, Comparison, Delta, JobRecord, Multiplicity, S
 import { conversationHistory, filterText, stepNames } from "../pages/AskPage";
 import { intervalResamples } from "../pages/EvaluatePage";
 import { AnswerText, CitationList } from "./AnswerText";
-import { DeltaPlot, deltaInterval, deltaVerdict, higherIsBetter } from "./charts";
+import { Bars, DeltaPlot, deltaInterval, deltaVerdict, higherIsBetter } from "./charts";
 import { citedBy, EvidenceTrace, excerptBody } from "./EvidenceTrace";
 import { highlightRuns, queryTerms } from "./Highlighted";
 import { StrategyPicker } from "./StrategyPicker";
@@ -177,6 +177,37 @@ describe("helpers", () => {
     ]);
     // A line break is not joined across.
     expect(highlightRuns("Kestrel\nDepot", "kestrel depot").map((r) => r.marked)).toEqual([true, false, true]);
+  });
+  it("spaces a bar chart's day labels so no two overlap", () => {
+    // Regression: two adjacent days with bars drew "11-2111-22": each label
+    // (5 characters of the 12px data face, 8px each) is wider than a bar's
+    // 34px slot. Labels thin out, counted back from the latest day.
+    const MONO = 8;
+    for (const days of [2, 3, 7, 30]) {
+      const data = Array.from({ length: days }, (_, i) => ({ key: `2026-11-${String(i + 1).padStart(2, "0")}`, value: i + 1 }));
+      const { container, unmount } = render(<Bars data={data} format={String} label="Questions per day" />);
+      const ticks = [...container.querySelectorAll("text")].filter((text) => /^\d\d-\d\d$/.test(text.textContent ?? ""));
+      const spans = ticks.map((text) => {
+        const width = (text.textContent ?? "").length * MONO;
+        const x = Number(text.getAttribute("x"));
+        const left = text.getAttribute("text-anchor") === "middle" ? x - width / 2 : x;
+        return { left, right: left + width };
+      });
+      expect(ticks.length).toBeGreaterThanOrEqual(1);
+      for (let i = 1; i < spans.length; i += 1) expect(spans[i]!.left).toBeGreaterThanOrEqual(spans[i - 1]!.right);
+      expect(ticks.at(-1)?.textContent).toBe(`11-${String(days).padStart(2, "0")}`);
+      unmount();
+    }
+  });
+  it("keeps the whitespace between two adjacent highlighted phrases", () => {
+    // Two matches of one phrase, a space or a line break apart: the runs
+    // put back the text as written, the space inside the highlight, the
+    // line break between two.
+    const spaced = highlightRuns("destination: Kestrel Depot Kestrel Depot will add a bay.", "kestrel depot");
+    expect(spaced.map((r) => r.text).join("")).toBe("destination: Kestrel Depot Kestrel Depot will add a bay.");
+    expect(spaced.filter((r) => r.marked).map((r) => r.text)).toEqual(["Kestrel Depot Kestrel Depot"]);
+    const broken = highlightRuns("destination: Kestrel Depot\nKestrel Depot will add a bay.", "kestrel depot");
+    expect(broken.map((r) => r.text)).toEqual(["destination: ", "Kestrel Depot", "\n", "Kestrel Depot", " will add a bay."]);
   });
   it("calls a delta better or worse only outside zero, by direction", () => {
     const delta = { pairs: 5, mean_delta: 0.1, ci_low: 0.05, ci_high: 0.2, wins: 3, ties: 2, losses: 0 };

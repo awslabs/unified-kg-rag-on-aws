@@ -332,6 +332,14 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - The console's question history records a question its page stopped as `stopped`, as its audit record does (it was
   `cancelled`), with the strategy the record names (it had none); the Dashboard counts rows of either word in its
   Cancelled figures.
+- The console's look is an engineer's computation pad: pad green and pencil graphite (carbon and chalk in the dark
+  theme) in place of the GitHub-like palette and its indigo accent, the highlighter as the one colour (matched
+  evidence, the current page, the chosen option), and the answer and every dashboard figure boxed in a double rule.
+  Text and figures are set in Atkinson Hyperlegible Next and Mono (SIL OFL 1.1, bundled), whose 0/O, 1/l/I and 5/S
+  never look alike; Hangul, Japanese and Chinese keep their faces (Pretendard, Pretendard JP, the system's), and
+  JetBrains Mono stays for the data face's Cyrillic only. Contrast stays at WCAG AA or above in both themes
+  (`console/web/DESIGN.md`).
+
 - The community-counter WARNING reads `Index namespace '<suffix>' is due for a rebuild: its communities are due for
   re-clustering: ...` (it began `Communities of '<suffix>' are due for re-clustering`), one rule with the other
   rebuild reasons. The console's job card offers "Rebuild the namespace" when the run's `rebuild_due` holds a reason
@@ -419,6 +427,14 @@ Each name below warns and still works, and is removed in 0.5.0
   `from unified_kg_rag import ...` too (it named a frame of the import machinery).
 
 ### Fixed
+
+- The console's Dashboard no longer shows "Loading..." under the error of a failed read.
+- The console's Ask page: an opened source keeps a line break that stands between two highlighted phrases (it read
+  "Kestrel DepotKestrel Depot will add...").
+- The console's Dashboard: the day labels under "Questions per day" and "Median time per day" no longer overlap
+  ("11-2111-22") when adjacent days have bars; they thin out, counted back from the latest day.
+- The console's Graph page: an entity's relationship types (`RELATED_TO`, `DELIVERS_TO`) no longer shrink to one or
+  two letters per line beside a long description in the Entity panel.
 Bugs present in 0.3.0.
 
 - The guardrail's client made 4 requests per screening call, not 3: it set botocore's `max_attempts`, which counts

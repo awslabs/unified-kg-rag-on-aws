@@ -15,6 +15,17 @@ function serve(refused: number, limited = 0, cancelled = 0, tokensPerQuery: numb
 afterEach(() => vi.unstubAllGlobals());
 
 describe("DashboardPage", () => {
+  it("shows a failed read's error and no loading line under it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "The usage store could not be read.", code: "store" }), { status: 500 })));
+    render(
+      <I18nProvider initial="en">
+        <DashboardPage />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText(/The usage store could not be read\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
+  });
+
   it("says the Questions figure counts the refused ones the strategy rows leave out", async () => {
     serve(1);
     render(

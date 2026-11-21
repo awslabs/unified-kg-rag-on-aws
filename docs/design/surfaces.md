@@ -532,17 +532,20 @@ chunk).
 
 **Identity.** The client is a knowledge-graph workbench where every claim
 has a trail; its brief, tokens and references are in
-[`console/web/DESIGN.md`](../../console/web/DESIGN.md): a developer tool, with
-a dark, GitHub-like palette and a matching light one, a sticky top bar,
+[`console/web/DESIGN.md`](../../console/web/DESIGN.md): an engineer's
+computation pad, with pad green and pencil graphite (carbon and chalk in
+the dark theme), the highlighter as the one colour, a sticky top bar,
 cards, a chat-style answer view and a force-directed canvas graph. One
-signature element: the *provenance trace*, an indigo rail from an answer
-through each source it read (ranked), the passage and file it came from, to
-the entity or relationship in the graph, where the traced node wears a
-dashed ring and its edge carries particles; matched words are in a
-highlighter. Text is set in Pretendard (Latin and Hangul; Pretendard JP for
-a Japanese page), ids and figures in JetBrains Mono, both OFL and
-self-hosted (Pretendard as its vendor ships it, unmodified), per locale
-through `:lang()`. A light and a dark theme are two full
+signature element: the *boxed result*, the double rule around the answer
+and every figure, beside the *provenance trace*, a pencil rail from an
+answer through each source it read (ranked), the passage and file it came
+from, to the entity or relationship in the graph, where the traced node
+wears a dashed ring and its edge carries particles; matched words are in
+the highlighter. Text is set in Atkinson Hyperlegible Next, ids and figures
+in Atkinson Hyperlegible Mono (0/O, 1/l/I and 5/S never alike), Hangul in
+Pretendard (Pretendard JP for a Japanese page), all OFL and self-hosted
+(Pretendard as its vendor ships it, unmodified), per locale through
+`:lang()`. A light and a dark theme are two full
 token sets (the dark one its own, not inverted), following the system
 setting unless the top bar's toggle picks one; a same-origin script sets
 the theme before the first paint, as the CSP allows no inline script. The

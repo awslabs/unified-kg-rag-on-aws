@@ -159,8 +159,11 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding =
   );
 }
 
-// Advance of one character of the 12px data face, to centre a label.
-const MONO_WIDTH = 7.2;
+// Advance of one character of the 12px data face (Atkinson Hyperlegible
+// Mono: 2/3 em), to size the scale's gutter and space the axis labels.
+const MONO_WIDTH = 8;
+// The least air between two axis labels.
+const LABEL_GAP = 6;
 const tickText = (key: string) => (key.length > 6 ? key.slice(-5) : key);
 // Bars are capped at 24px: the band's leftover stays air (dataviz specs).
 const BAR_MAX = 24;
@@ -179,7 +182,14 @@ export function Bars({ data, format, label }: { data: { key: string; value: numb
   // The scale's labels sit in a gutter left of the first bar, so no bar
   // ever covers one.
   const gutter = Math.ceil(Math.max(format(max).length, half ? format(max / 2).length : 0) * MONO_WIDTH) + 12;
-  const width = Math.max(220, gutter + data.length * (barWidth + BAR_GAP) + 8);
+  // The axis labels: every step-th one, counted back from the latest, so
+  // two never overlap when the bars are narrower than a label.
+  const slot = barWidth + BAR_GAP;
+  const labelWidth = Math.max(0, ...data.map((d) => tickText(d.key).length)) * MONO_WIDTH;
+  const step = Math.max(1, Math.ceil((labelWidth + LABEL_GAP) / slot));
+  // A label wider than its bar's slot overhangs the last bar.
+  const overhang = Math.max(0, labelWidth / 2 - slot / 2);
+  const width = Math.max(220, gutter + data.length * slot + 8 + overhang);
   return (
     <div style={{ position: "relative", overflowX: "auto" }}>
       <svg className="chart" width={width} height={height + 34} role="img" aria-label={label}>
@@ -203,9 +213,11 @@ export function Bars({ data, format, label }: { data: { key: string; value: numb
             >
               <rect x={x - BAR_GAP / 2} y={0} width={barWidth + BAR_GAP} height={height} fill="transparent" />
               <path className="bar" d={roundedTop(x, height - h, barWidth, h)} />
-              <text x={x + barWidth / 2 - (tickText(d.key).length * MONO_WIDTH) / 2} y={height + 16}>
-                {tickText(d.key)}
-              </text>
+              {(data.length - 1 - i) % step === 0 ? (
+                <text className="tick" x={x + barWidth / 2} y={height + 16} textAnchor="middle">
+                  {tickText(d.key)}
+                </text>
+              ) : null}
             </g>
           );
         })}
