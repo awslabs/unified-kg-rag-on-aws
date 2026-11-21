@@ -409,7 +409,7 @@ answer uses it), `section_type`, `title`, the main `document_id` /
 `page_end`, `chunk_id` (a passage), `text_unit_ids`, every document as
 `documents`, and seed-graph `provenance` and `iri`. A graph section names the
 documents of up to `search.citations.lineage_units` of its text units that
-the query's filters and suffix let through (batched store reads: a document
+the query's filters and namespace let through (batched store reads: a document
 they exclude is never named, and the next units are read in its place, in
 at most four reads). A number the answer uses that the
 context did not show is in `metadata.unknown_citation_markers`, never a
@@ -596,7 +596,7 @@ How it works and how it differs from RAPTOR's own code:
 `--search-strategy structured` answers counts, rankings, lists, paths
 between two named entities and seed-entity properties from a query the
 graph store runs: a model writes the question as a JSON plan (never query
-text), code checks it and runs it read-only within the query's suffix, and
+text), code checks it and runs it read-only within the query's namespace, and
 the answer reads the result table, the entities it names and their
 passages. Without a structured answer the query runs
 `search.structured.fallback_strategy` (`local`); `metadata["structured"]`

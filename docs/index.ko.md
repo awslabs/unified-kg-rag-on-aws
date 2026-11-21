@@ -27,7 +27,7 @@
 | 설명 | [개요](./concepts/overview.ko.md) | 아키텍처, 파이프라인, 방법론과 프로필, 원 논문 대비 확장한 부분, 제한 사항 |
 | 설명 | [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) | 측정으로 정한 기본값, 측정 방법, 날짜를 밝힌 가격, 재현 방법 |
 | 설명 | [설계 문서](./design.md)(영문) | 설계 문서의 절마다 요약을 단 목차. 절 본문(헥사고날 아키텍처, 알고리즘, 데이터 모델)은 `docs/design/`에 있음 |
-| 설명 | [검색](./concepts/retrieval.ko.md), [범위와 네임스페이스](./concepts/scopes-and-namespaces.ko.md) | 검색 전략과 언제 어떤 전략을 쓸지, 하이브리드 점수와 재순위화, 답변 형식, 컨텍스트 예산. 네임스페이스, 소스 범위, 네임스페이스, 네임스페이스와 필터가 접근 제어가 아닌 이유 |
+| 설명 | [검색](./concepts/retrieval.ko.md), [범위와 네임스페이스](./concepts/scopes-and-namespaces.ko.md) | 검색 전략과 언제 어떤 전략을 쓸지, 하이브리드 점수와 재순위화, 답변 형식, 컨텍스트 예산. 네임스페이스, 소스 범위, 인덱스 네임스페이스, 네임스페이스와 필터가 접근 제어가 아닌 이유 |
 | 사용 방법 | [`iac/README.md`](../iac/README.md)(영문) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
 | 사용 방법 | [Local mode](./guides/local-mode.md)(영문), [설정](./guides/configure.ko.md) | 로컬 공급자, AWS 모드와 다른 점, 컨테이너로 띄운 저장소. 설정을 읽는 순서, 대부분의 실행에서 바꾸는 설정, 환경 변수, 로그에 남는 내용 |
 | 사용 방법 | [수집](./guides/ingest.ko.md), [다국어 코퍼스](./guides/multilingual.ko.md), [질의](./guides/query.ko.md), [구조화 그래프 질의](./guides/structured-queries.ko.md) | 13개 단계, 재개와 강제 재구축, S3 동기화, 응답 캐시, 대규모 코퍼스와 비용 조절 수단. 번역, 분석기, CJK 텍스트의 청크 크기. 질의 실행, 필터, 재순위화 상태, 질의 제한 시간, 대화형 모드와 메모리. 그래프 저장소가 계산하는 개수, 순위, 경로 |

@@ -183,7 +183,7 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
         "name": "uncited",
         "overlay": str(uncited),
         "overlay_sha256": hashlib.sha256(uncited.read_bytes()).hexdigest(),
-        "suffix": None,
+        "namespace": None,
         "aa": False,
     }
     assert manifest["citations"]["enabled"] is False

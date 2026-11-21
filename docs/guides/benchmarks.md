@@ -34,8 +34,11 @@ question brings 2-4 supporting paragraphs and up to 18 distractors) and
 `reference_sources`, the hop count as `category`, and the question's half
 as `metadata.split`: [below](#tune-and-test-halves)), with `prepared.json`
 recording how it was drawn (`seed`, `limit`, `hops`, `unanswerable`,
-`split`, each source file's `sha256`, the package version and the counts),
-which `run-eval` copies into its run manifest (`dataset.prepared`). A
+`split`, each source file's `sha256`, the package version and the counts)
+and the dataset it describes (`dataset`: the file name and the
+`content_sha256` of `eval_data.json`), which `run-eval` copies into the run
+manifest of that dataset alone (`dataset.prepared`: not of another file in
+the directory, nor of one edited since). A
 `corpus/` that is not empty is a usage error (exit 2), reported before
 anything is downloaded.
 
@@ -45,7 +48,7 @@ anything is downloaded.
 # 1. 100 questions (about 1,900 paragraphs), sampled with seed 0.
 prepare-benchmark musique --output-directory bench/musique --limit 100
 
-# 2. Ingest the paragraphs under their own suffix.
+# 2. Ingest the paragraphs under their own namespace.
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
 # 3. Paired comparison of GraphRAG and LightRAG strategies, EM / F1 on the short answer span.

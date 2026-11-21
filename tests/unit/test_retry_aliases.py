@@ -206,17 +206,24 @@ def test_a_variable_wins_over_the_files_deprecated_key_with_a_warning(
     )
 
 
-def test_a_replacement_variable_wins_over_a_deprecated_one_with_a_warning(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+def test_a_deprecated_variable_beside_its_replacement_must_agree(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # RV4-7: the replacement won with a WARNING; an old and a new name given
+    # different values are refused, as a file's pair is.
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
     monkeypatch.setenv(env_var("retry.max_attempts"), "2")
     monkeypatch.setenv(env_var("retry.model.max_attempts"), "5")
-    with caplog.at_level(logging.WARNING):
-        config = ConfigLoader().load_config()
-    assert config.retry.model.max_attempts == 5
+    with pytest.raises(ConfigurationError) as refused:
+        ConfigLoader().load_config()
+    assert (
+        "UKR__RETRY__MAX_ATTEMPTS (deprecated) and UKR__RETRY__MODEL__MAX_ATTEMPTS "
+        "both set retry.model.max_attempts, to different values"
+    ) in str(refused.value)
+    assert "2" not in str(refused.value).split(":")[-1]  # never a value
+    # The same value: loaded, the deprecated one into its other keys too.
+    monkeypatch.setenv(env_var("retry.model.max_attempts"), "2")
+    config = ConfigLoader().load_config()
+    assert config.retry.model.max_attempts == 2
     assert config.retry.ingestion_item.max_attempts == 2
-    assert any(
-        "UKR__RETRY__MAX_ATTEMPTS and UKR__RETRY__MODEL__MAX_ATTEMPTS both set "
-        "retry.model.max_attempts" in r.getMessage()
-        for r in caplog.records
-    )

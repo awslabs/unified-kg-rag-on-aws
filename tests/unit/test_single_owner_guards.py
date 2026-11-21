@@ -1151,7 +1151,7 @@ GUARDS = [
                 "the extraction prompts' entity lines, ranked, one per line: "
                 "model-visible text the response cache is keyed on",
             ),
-            "application/cli/run_rag_chain.py::_print_hits": (
+            "application/cli/run_rag_chain.py::_hit_lines": (
                 1,
                 "numbered hit rows, one per line, then how to list them all",
             ),

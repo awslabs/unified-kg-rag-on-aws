@@ -9,8 +9,10 @@ Every prepared row carries ``metadata.split`` (:func:`split_of`): ``tune`` or
 ``test``, from a hash of its question id, so settings chosen on the ``tune``
 half are reported on the ``test`` half (``run-eval --split``) without a
 second sample. ``prepared.json`` (:data:`PREPARED_FILE`) next to
-``eval_data.json`` records how the dataset was prepared; ``run-eval`` copies
-it into its run manifest (``dataset.prepared``).
+``eval_data.json`` records how the dataset was prepared, and the dataset it
+describes (its file name and :func:`content_sha256`); ``run-eval`` copies it
+into its run manifest (``dataset.prepared``) for that dataset alone, not
+for another file in the same directory or one edited since.
 """
 
 from __future__ import annotations
@@ -37,6 +39,16 @@ Split = Literal["tune", "test"]
 SPLITS: tuple[Split, Split] = ("tune", "test")
 # Written next to eval_data.json: the parameters the dataset was prepared with.
 PREPARED_FILE = "prepared.json"
+# The dataset every benchmark writes next to it.
+DATASET_FILE = "eval_data.json"
+
+
+def content_sha256(data: Any) -> str:
+    """The SHA-256 of a dataset's parsed JSON (sorted keys, UTF-8): files
+    differing only in formatting have the same one (a run manifest's
+    ``dataset.content_sha256``)."""
+    encoded = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def split_of(question_id: str) -> Split:
@@ -57,21 +69,37 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_prepared(output_dir: Path, record: dict[str, Any]) -> None:
+def write_prepared(output_dir: Path, record: dict[str, Any], dataset: Any) -> None:
     """Write ``record`` (the benchmark, its parameters and sources) as
-    ``output_dir/prepared.json``."""
+    ``output_dir/prepared.json``, with the dataset it describes
+    (``dataset``: the rows written there as ``eval_data.json``, by file name
+    and :func:`content_sha256`)."""
+    record = {
+        **record,
+        "dataset": {"file": DATASET_FILE, "content_sha256": content_sha256(dataset)},
+    }
     atomic_write_text(
         output_dir / PREPARED_FILE,
         json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
 
 
-def read_prepared(eval_data_path: Path) -> dict[str, Any] | None:
-    """The ``prepared.json`` next to ``eval_data_path``, or ``None`` when
-    there is none or it is not a JSON object."""
+def read_prepared(eval_data_path: Path, data: Any) -> dict[str, Any] | None:
+    """The ``prepared.json`` next to ``eval_data_path`` when it describes
+    that dataset (``data``, its parsed JSON: the file name and content
+    digest it records), else ``None``: none there, not a JSON object, or
+    another dataset's (a file beside a prepared one, one edited since)."""
     path = eval_data_path.parent / PREPARED_FILE
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return record if isinstance(record, dict) else None
+    if not isinstance(record, dict):
+        return None
+    described = record.get("dataset")
+    if described != {
+        "file": eval_data_path.name,
+        "content_sha256": content_sha256(data),
+    }:
+        return None
+    return record

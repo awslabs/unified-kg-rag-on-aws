@@ -113,7 +113,7 @@ from .answer_match_evaluator import (
     answer_scoring,
 )
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
-from .benchmarks import read_prepared
+from .benchmarks import content_sha256, read_prepared
 from .citation_scoring import (
     CITATION_SCORING,
     cited_section_types,
@@ -1689,13 +1689,15 @@ class EvaluationManager:
             # The file's parsed JSON, so files differing only in formatting
             # compare equal, and the metadata the CLI adds to every query
             # (strategy, suffix, top_k) does not count as the dataset's.
-            dataset["content_sha256"] = self._sha256_json(json.loads(content))
-            # How prepare-benchmark drew it (seed, sizes, split, sources).
-            if (prepared := read_prepared(path)) is not None:
+            data = json.loads(content)
+            dataset["content_sha256"] = content_sha256(data)
+            # How prepare-benchmark drew it (seed, sizes, split, sources),
+            # when its prepared.json describes this file.
+            if (prepared := read_prepared(path, data)) is not None:
                 dataset["prepared"] = prepared
         elif queries is not None:
             # A library caller that read no file: its queries as given.
-            dataset["content_sha256"] = self._sha256_json(
+            dataset["content_sha256"] = content_sha256(
                 {
                     "queries": [q.model_dump(mode="json") for q in queries],
                     "ground_truths": [
@@ -1831,11 +1833,6 @@ class EvaluationManager:
                 )
                 builds[suffix] = None
         return builds
-
-    @staticmethod
-    def _sha256_json(data: Any) -> str:
-        encoded = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str)
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _package_version(name: str) -> str | None:

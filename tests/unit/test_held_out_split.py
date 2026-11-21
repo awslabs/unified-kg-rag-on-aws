@@ -23,6 +23,7 @@ from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.benchmarks import (
     PREPARED_FILE,
     SPLITS,
+    content_sha256,
     musique,
     split_of,
     structural,
@@ -178,8 +179,34 @@ def test_the_manifest_records_the_half_the_draw_and_the_settings(
     assert dataset["splits"] == {"tune": len(queries)}
     assert dataset["prepared"]["seed"] == 2 and dataset["prepared"]["limit"] == 6
     settings = manifest["answer_settings"]
-    assert manifest["retrieval_config_sha256"] == manager._sha256_json(settings)
+    assert manifest["retrieval_config_sha256"] == content_sha256(settings)
     assert settings["evaluation.retrieval_k"] == 5
+
+
+def test_prepared_json_is_recorded_only_for_the_dataset_it_describes(
+    tmp_path: Path,
+) -> None:
+    # RV4-4: any dataset beside a prepared.json got its provenance (seed,
+    # sizes, split) in its manifest, a 2-item file beside a 42-question one.
+    out = tmp_path / "bench"
+    structural.prepare(out, seed=0)
+    manager = EvaluationManager(Config(), rag_chain=object())
+
+    def prepared(path: Path) -> Any:
+        return manager.build_run_manifest(path, {})["dataset"].get("prepared")
+
+    data = out / "eval_data.json"
+    assert prepared(data)["benchmark"] == structural.BENCHMARK_NAME
+    rows = json.loads(data.read_text())
+    # Reformatted, it is the same dataset.
+    data.write_text(json.dumps(rows), encoding="utf-8")
+    assert prepared(data) is not None
+    mine = out / "mine.json"
+    mine.write_text(json.dumps(rows[:2]), encoding="utf-8")
+    assert prepared(mine) is None
+    # Edited since: no longer the one prepared.
+    data.write_text(json.dumps(rows[1:]), encoding="utf-8")
+    assert prepared(data) is None
 
 
 def test_runs_of_different_halves_are_different_datasets() -> None:

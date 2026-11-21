@@ -152,7 +152,8 @@ The console prints the same summary.
   text; `splits`, the questions per `metadata.split` half; `split`, the
   half `run-eval --split` kept; and `prepared`, the `prepared.json` next
   to the dataset file: how [prepare-benchmark](../guides/benchmarks.md)
-  drew it), a UTC timestamp, `dropped_evaluators` and `usage_schema` (`4`:
+  drew it, recorded only when it describes that file, by name and
+  `content_sha256`, not another file beside it or one edited since), a UTC timestamp, `dropped_evaluators` and `usage_schema` (`4`:
   the usage records count the embedding requests and their input tokens,
   and the rerank requests and their search units as Bedrock bills them;
   `3` counted no embedding request, `2` one rerank unit per 100 documents,

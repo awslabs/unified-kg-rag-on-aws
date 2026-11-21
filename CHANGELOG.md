@@ -51,8 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coarser roots. Stored reports keep their depth, and step down to depth 0 only, until a reset (*Upgrading*); a
   namespace whose last full build an earlier release wrote gets a `community_depths` rebuild reason (remedy `reset`)
   in `run-describe`, the console, MCP and the run's `rebuild_due`.
-- The CLIs log to stderr in text mode too, so stdout holds only a run's output (`run-rag ... > answer.txt` keeps the
-  answer alone); `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
+- The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
+  holds only a run's output; on a stdout that is no terminal no line is wrapped at 80 columns, and `run-rag --query
+  ... > answer.txt` keeps the answer, its citations and a sources line as plain text, its banner, settings panel and
+  progress lines on stderr; `run-visualization`, whose result was its log line, prints the output directory and each
+  file written; `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
   stderr (`2>&1` keeps both on one stream).
 - A filter on `attr_file` or `attr_folder` (*Added*: path filters) is refused on a namespace built before this
   release, a document's own `file` or `folder` filter included, until it is rebuilt (*Upgrading*).
@@ -120,8 +123,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - One name for the namespace on every surface: `--namespace` on every CLI that reads or writes one,
   `RAGInput.namespace`, `processing.document_parsing.namespace`, `run-eval --arm ...,namespace=`,
   `describe_namespace(config, namespace)`, `export_graph(namespace=)` and the console's requests (`namespace`).
-  Messages, `--help` and `run-describe` say "namespace"; a `run-eval` manifest records `cli_args.namespace` (a saved
-  run's `suffix` still pools). The old names are *Deprecated*.
+  Messages, `--help` and `run-describe` say "namespace"; a `run-eval` manifest records `cli_args.namespace` and an
+  arm run's `arm.namespace` (a saved run's `suffix` still pools). The old names are *Deprecated*.
 - One owner of model prices: `models.prices` (`domain/pricing.py`) prices every USD figure, the `run-eval` comparison,
   the console's answers and dashboard alike. A price keyed by the bare model id, or by one inference profile's id,
   prices the model under every profile when no other entry disagrees. `evaluation.prices` is deprecated: it loads
@@ -250,7 +253,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   most): an entity or community write batch closes at it or at `batch_size` items, whichever comes first.
 - Held-out evaluation: `prepare-benchmark` labels every row `metadata.split` (`tune`/`test`, the SHA-256 of its
   question id mod 2), `musique --split` draws one half, and `run-eval --split` answers one; `prepared.json` records
-  the draw (seed, sizes, split, sources' SHA-256) and the run manifest copies it (`dataset.prepared`).
+  the draw (seed, sizes, split, sources' SHA-256) and the dataset it describes, and the run manifest of that dataset
+  copies it (`dataset.prepared`).
 - The run manifest stores `answer_settings`, the map `retrieval_config_sha256` hashes; a refused pooling names the
   settings that differ.
 - Retrieval `ndcg_at_k` (binary relevance, log2 discount), and several cutoffs: `evaluation.retrieval_k` takes a
@@ -385,7 +389,8 @@ Each name below warns and still works, and is removed in 0.5.0
   `model_server_max_attempts`, `graph_store_max_attempts`, `query_store_max_attempts`) load, from a file or a `UKR__`
   variable, into every profile each one governed in 0.3.0 (`max_attempts` into `retry.model` and
   `retry.ingestion_item`, `base_delay_seconds` into `model`, `model_server` and `graph_store`, ...), with a WARNING
-  naming them; one set beside a profile key to another value fails the load, naming both. `DEPRECATED_KEYS` maps a
+  naming them; one set beside a profile key to another value (a file key or a `UKR__` variable) fails the load,
+  naming both. `DEPRECATED_KEYS` maps a
   key to one replacement or several.
 - `unified_kg_rag.TransientRetryConfig` warns (`DeprecationWarning`, at the importing line): it is `RetryPolicy`, its
   new name, and is no longer in `__all__` (`unified_kg_rag.domain.models.config.TransientRetryConfig`, an internal

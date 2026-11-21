@@ -553,7 +553,7 @@ pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
   builds a default one. There is deliberately no DI container: the bundle
   covers exactly what the framework consumes.
 - Conversation memory belongs to the chain and keys each conversation by index
-  suffix, `user_id` and `conversation_id`; pass one `MemoryManager(cfg)` as
+  namespace, `user_id` and `conversation_id`; pass one `MemoryManager(cfg)` as
   `memory_manager=` to share history across chains.
 
 **Provider registry.** `adapters/provider_registry.py` maps
@@ -601,11 +601,11 @@ Two boundaries are intentional:
   backend-neutral query model would be a large, risky churn that only a
   backend unable to map named collections would justify.
 - **One physical OpenSearch index per namespace and artifact type.** Fine
-  for a handful of tenants; tens of thousands of suffixes multiply the shard
+  for a handful of tenants; tens of thousands of namespaces multiply the shard
   count. The scale-out fix (one index per artifact type with an enforced
   tenant field and routing) changes the index, search and delete paths and is
   deferred. Metadata filters are relevance filters, not access control:
-  isolation comes from separate suffixes
+  isolation comes from separate namespaces
   ([runbook](../operations.md#query-access-and-tenant-isolation)).
 
 ---

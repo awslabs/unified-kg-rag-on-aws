@@ -94,7 +94,9 @@ uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query 
 every source it used (each numbered with its type, `entity`,
 `relationship` or `text`, its name or file, its score and a snippet) and
 the retrieval metrics. The commands log every step at `INFO` to stderr
-(stdout holds only the result, so `> answer.txt` keeps the answer alone);
+(stdout holds only the result: `> answer.txt` keeps the answer, its
+citations and a sources line as plain, unwrapped lines, and the banner,
+settings and progress go to stderr when stdout is not a terminal);
 prefix them with `UKR__LOGGING__LEVEL=WARNING` or pass `--log-level WARNING`
 to see only warnings next to the result.
 

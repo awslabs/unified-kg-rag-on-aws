@@ -86,8 +86,9 @@ uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query 
 
 `--verbose`는 답변 뒤에 질의에서 추출한 엔티티, 답변에 쓴 근거 전체(번호마다 유형인 `entity`,
 `relationship`, `text`와 이름 또는 파일, 점수, 발췌)와 검색 지표를 출력합니다. 명령은 모든 단계를
-`INFO`로 stderr에 기록합니다(stdout에는 결과만 있으므로 `> answer.txt`로 답변만 저장할 수
-있습니다). 결과 옆에 경고만 보려면 명령 앞에 `UKR__LOGGING__LEVEL=WARNING`을 붙이거나
+`INFO`로 stderr에 기록합니다(stdout에는 결과만 있습니다. `> answer.txt`에는 답변, 인용, 근거
+한 줄이 줄바꿈 없는 일반 텍스트로 남고, stdout이 터미널이 아니면 배너, 설정, 진행 상황은
+stderr로 갑니다). 결과 옆에 경고만 보려면 명령 앞에 `UKR__LOGGING__LEVEL=WARNING`을 붙이거나
 `--log-level WARNING`을 주세요.
 
 `cross-encoder` extra가 있으면 첫 질의는 기본 재순위화 모델인 크로스 인코더

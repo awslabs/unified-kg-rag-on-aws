@@ -12,7 +12,7 @@ model is called. From Python the same are `describe_namespace` and
 # What the default namespace (or the config's namespace) holds
 run-describe --config-path config.yaml
 
-# Another suffix, as one JSON document
+# Another namespace, as one JSON document
 run-describe --namespace tenant_a --output-format json
 
 # Export its graph as GraphML (Gephi, Cytoscape, networkx) or JSON Lines

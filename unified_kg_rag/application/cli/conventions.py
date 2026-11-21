@@ -699,8 +699,31 @@ def json_output(args: argparse.Namespace) -> bool:
     """Whether the run prints JSON; the console writes to stderr if so."""
     as_json = getattr(args, "output_format", "text") == "json"
     console.stderr = as_json
+    fit_console()
     _json["enabled"] = as_json
     return as_json
+
+
+def fit_console() -> None:
+    """Have the shared console wrap no line at its width when it writes to
+    no terminal (a file, a pipe), where it assumes 80 columns: each line
+    reaches the file whole, so a printed path or command can be copied.
+    Called again once a run moves the console to stderr."""
+    console.soft_wrap = not console.is_terminal
+
+
+def plain_result(args: argparse.Namespace) -> bool:
+    """Whether a text-mode run prints its result alone, as plain text, on a
+    stdout that is no terminal (``run-rag --query ... > answer.txt``): then
+    the console (the banner, settings, progress and warnings) writes to
+    stderr, as in JSON mode."""
+    plain = getattr(args, "output_format", "text") == "text" and not (
+        sys.stdout.isatty()
+    )
+    if plain:
+        console.stderr = True
+        fit_console()
+    return plain
 
 
 # The ``status`` of a JSON document whose run succeeded and that names

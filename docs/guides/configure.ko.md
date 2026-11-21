@@ -90,7 +90,9 @@ retry:
 `false`/`0`/`no`/`off`, 목록이나 매핑은 JSON, 예:
 `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`). 값이 잘못되었거나 어떤
 키도 가리키지 않는 `UKR__` 변수는 그 변수를 밝힌 사용법 오류(종료 코드 2)이며,
-`--allow-unknown-keys`를 주면 알 수 없는 변수는 WARNING만 남깁니다.
+`--allow-unknown-keys`를 주면 알 수 없는 변수는 WARNING만 남깁니다. 지원 중단된 변수는
+WARNING과 함께 그 변수를 대체한 키로 읽습니다. 대체한 키의 변수와 함께 다른 값으로 설정하면
+한 파일에 옛 키와 새 키를 함께 쓴 경우처럼 두 변수를 밝힌 사용법 오류입니다.
 
 - `AWS_PROFILE`과 `AWS_REGION`은 파일이 `aws.profile_name`과 `aws.region_name`을
   지정하지 않았을 때만 그 값을 채우므로, 셸이 `AWS_REGION`을 내보내도(SSO 도우미와

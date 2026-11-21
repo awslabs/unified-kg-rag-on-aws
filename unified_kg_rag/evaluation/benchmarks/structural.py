@@ -941,5 +941,6 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
             "size": size,
             "counts": counts,
         },
+        dataset,
     )
     return counts

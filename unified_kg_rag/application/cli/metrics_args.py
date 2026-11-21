@@ -8,10 +8,10 @@ when ``UKR_METRICS_ENVIRONMENT`` is set (the CDK stack sets its
 ``env_name``, which its alarms filter on). The query surfaces (``run-rag``,
 ``run-mcp-server``, ``run-console``) publish ``GraphRAGChain``'s query
 metrics per ``Strategy`` too (:data:`QUERY_METRICS_DIMENSION_KEYS`);
-``run-ingestion`` its pipeline metrics. The records go to stdout, the
-stream the container's log driver ships, or to stderr where stdout carries
-the command's own output (``--output-format json``, the MCP server's
-stdio), as the logs do there; the log driver ships both streams.
+``run-ingestion`` its pipeline metrics. The records go to stderr with the
+logs, in either output format, so stdout carries only the command's own
+output (an answer, a summary, ``--output-format json``'s document, the MCP
+server's protocol); the container's log driver ships both streams.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ import argparse
 import logging
 import os
 import sys
-from typing import TextIO
 
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.metrics import (
@@ -61,13 +60,11 @@ def add_metrics_sink_argument(parser: argparse.ArgumentParser, help: str) -> Non
     )
 
 
-def _emf_logger(stream: TextIO) -> logging.Logger:
-    """A non-propagating logger writing bare EMF lines to ``stream``, one
-    per stream."""
-    name = "unified_kg_rag.emf" + ("" if stream is sys.stdout else ".stderr")
-    emf_logger = logging.getLogger(name)
+def _emf_logger() -> logging.Logger:
+    """A non-propagating logger writing bare EMF lines to stderr."""
+    emf_logger = logging.getLogger("unified_kg_rag.emf.stderr")
     if not emf_logger.handlers:
-        handler = logging.StreamHandler(stream)
+        handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter("%(message)s"))
         emf_logger.addHandler(handler)
         emf_logger.setLevel(logging.INFO)
@@ -75,26 +72,21 @@ def _emf_logger(stream: TextIO) -> logging.Logger:
     return emf_logger
 
 
-def build_metrics_sink(
-    choice: str, *, query: bool, stdout_taken: bool = False
-) -> MetricsSink:
+def build_metrics_sink(choice: str, *, query: bool) -> MetricsSink:
     """The sink ``--metrics-sink choice`` selects: for the query metrics
     (``query``: with the ``Strategy`` dimension) or the pipeline's, its EMF
-    written to stdout, or to stderr when ``stdout_taken`` (stdout carries
-    the command's JSON or a protocol)."""
+    written to stderr (stdout carries the command's output)."""
     if choice != "cloudwatch":
         return NullMetricsSink()
     # Set by the CDK stack to its env_name, which its alarms filter on.
     environment = os.getenv("UKR_METRICS_ENVIRONMENT") or None
-    stream: TextIO = sys.stderr if stdout_taken else sys.stdout
     logger.info(
-        "Forwarding %s metrics to CloudWatch (EMF on %s), environment '%s'",
+        "Forwarding %s metrics to CloudWatch (EMF on stderr), environment '%s'",
         "query" if query else "pipeline",
-        "stdout" if stream is sys.stdout else "stderr",
         environment or "-",
     )
     return CloudWatchEMFSink(
-        _emf_logger(stream),
+        _emf_logger(),
         environment=environment,
         dimension_keys=QUERY_METRICS_DIMENSION_KEYS if query else (),
     )

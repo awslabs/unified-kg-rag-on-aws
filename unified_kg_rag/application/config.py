@@ -435,7 +435,9 @@ def _variable_paths(
     ``NAME -> REPLACEMENT``), the variable each such key reads, and the
     ``UKR__`` variables that name no config key. ``AWS_PROFILE`` /
     ``AWS_REGION`` only where ``file_data`` leaves their key unset. With
-    ``warn``, a WARNING for each deprecated or removed variable."""
+    ``warn``, a WARNING for each deprecated or removed variable. A
+    deprecated variable and its replacement set to different values are a
+    ``ConfigurationError``."""
     overrides: dict[str, tuple[str, ...]] = {}
     # The variable each override reads (a deprecated key's sets several).
     variables: dict[str, str] = {}
@@ -467,18 +469,18 @@ def _variable_paths(
                 unknown.append(name)
             else:
                 overrides[name] = path
-    # A deprecated variable and its replacement's both set: the
-    # replacement's wins, as it would over the deprecated key in a file.
+    # A deprecated variable and its replacement's both set: refused when
+    # they differ, as an old and a new name of a key are everywhere else (a
+    # file's pair, a flag's), else the replacement's alone.
     direct = {path: name for name, path in overrides.items() if name not in variables}
     for key in [key for key in overrides if key in variables]:
-        if (winner := direct.get(overrides[key])) is not None:
-            if warn:
-                _logger.warning(
-                    "Environment variables %s and %s both set %s: %s wins",
-                    variables[key],
-                    winner,
-                    ".".join(overrides[key]),
-                    winner,
+        if (current := direct.get(overrides[key])) is not None:
+            if os.environ[variables[key]] != os.environ[current]:
+                # Their names only: a value may be a secret.
+                raise ConfigurationError(
+                    f"Environment variables {variables[key]} (deprecated) and "
+                    f"{current} both set {'.'.join(overrides[key])}, to "
+                    f"different values: unset {variables[key]}"
                 )
             del overrides[key]
     for name, path in AWS_ENV_FALLBACKS.items():

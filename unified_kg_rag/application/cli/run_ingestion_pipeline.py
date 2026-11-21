@@ -406,8 +406,8 @@ class CommandLineInterface:
         add_metrics_sink_argument(
             parser,
             "Where to forward pipeline metrics: 'none' (default) or "
-            "'cloudwatch' (CloudWatch EMF to stdout, to stderr with "
-            "--output-format json, auto-extracted by "
+            "'cloudwatch' (CloudWatch EMF to stderr, with the logs, "
+            "auto-extracted by "
             "CloudWatch Logs, with an Environment dimension when "
             "UKR_METRICS_ENVIRONMENT is set; pipeline_id is a log property, not "
             "a dimension). A stage's metrics are emitted when it finishes and "
@@ -605,11 +605,7 @@ class IngestionPipelineRunner:
 
     def _build_metrics_sink(self) -> MetricsSink:
         """The pipeline's sink (``--metrics-sink``)."""
-        return build_metrics_sink(
-            self.args.metrics_sink,
-            query=False,
-            stdout_taken=self.json_output,
-        )
+        return build_metrics_sink(self.args.metrics_sink, query=False)
 
     def _create_pipeline_config(self) -> PipelineConfig:
         all_stages = {stage.name: stage for stage in PipelineStageType}

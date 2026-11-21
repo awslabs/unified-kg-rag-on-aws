@@ -289,13 +289,9 @@ def test_the_console_questions_publish_query_metrics_when_asked(
     sink = built[0]["providers"].metrics_sink
     assert isinstance(sink, CloudWatchEMFSink)
     assert set(sink._dimension_keys) == {"Strategy", "Environment"}
-    assert not sink._emf_logger.name.endswith(".stderr")
-    # With --output-format json, stdout carries the status: EMF on stderr.
-    stderr_factory = run_console._chain_factory("cloudwatch", stdout_taken=True)
-    assert stderr_factory is not None
-    stderr_factory(Config())
-    emf_logger = built[1]["providers"].metrics_sink._emf_logger
-    assert emf_logger.name.endswith(".stderr")
+    # In either output format stdout carries the console's output: EMF on
+    # stderr, with the logs.
+    assert sink._emf_logger.name.endswith(".stderr")
 
 
 @requires_console

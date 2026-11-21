@@ -194,6 +194,21 @@ def test_the_config_refuses_the_old_and_new_key_at_different_values() -> None:
     )
 
 
+def test_the_old_and_new_variable_at_different_values_are_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # RV4-7: the new variable won with a WARNING, where every other surface
+    # (a flag pair, a file pair, RAGInput, the console) refuses a conflict.
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
+    monkeypatch.setenv(env_var("processing.document_parsing.index_value"), "a")
+    monkeypatch.setenv(env_var("processing.document_parsing.namespace"), "b")
+    with pytest.raises(ConfigurationError, match="to different values"):
+        ConfigLoader().load_config()
+    monkeypatch.setenv(env_var("processing.document_parsing.namespace"), "a")
+    assert ConfigLoader().load_config().processing.document_parsing.namespace == "a"
+
+
 def test_the_config_attribute_index_value_reads_and_sets_the_namespace() -> None:
     parsing = Config().processing.document_parsing
     with pytest.warns(DeprecationWarning, match="index_value is deprecated"):
