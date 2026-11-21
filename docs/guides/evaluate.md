@@ -365,7 +365,10 @@ arm answers the same dataset with the run's configuration under the
 overlay, a YAML mapping merged over it, as a chain of its own, with every
 `--search-strategy`, interleaved with the base runs. Repeat the flag for
 more arms; `,namespace=NAME` queries another index namespace with the arm
-(one ingested with other settings, say).
+(one ingested with other settings, say). The same corpus and settings under
+another namespace are another build, not a copy (its summary tree and some
+descriptions differ: [Scopes and namespaces](../concepts/scopes-and-namespaces.md#source-scope)),
+so the A/A noise floor is an arm on the same namespace.
 
 ```bash
 # Rerank off against on, and an A/A copy for the noise floor.

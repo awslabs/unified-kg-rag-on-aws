@@ -30,6 +30,10 @@ from ._common import ConfigSection
 _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 
+# The largest value OpenSearch parses a fuzziness bound as (a Java int).
+_INT32_MAX = 2**31 - 1
+
+
 class HybridConfig(ConfigSection):
     # The weights are relative: every reader divides by their sum
     # (combine_min_max, local search's seed floor), so they are checked,
@@ -88,7 +92,7 @@ class HybridConfig(ConfigSection):
             "text, is matched exactly): AUTO (OpenSearch's recommended "
             "value: no edit for a term of 1-2 characters, one for 3-5, two "
             "above), AUTO:<low>,<high> (no edit below low characters, two "
-            "from high), 1 or 2 edits, or 0 to match exactly. A fuzzy term "
+            "from high; low <= high), 1 or 2 edits, or 0 to match exactly. A fuzzy term "
             "matches up to 10 indexed terms. Fuzziness absorbs a typo or a "
             "variant spelling of a name, at the cost of near-miss names "
             "('gadgets' also matches 'widgets', 'Acme' 'Acne'). OpenSearch "
@@ -103,6 +107,24 @@ class HybridConfig(ConfigSection):
             "exactly (codes, identifiers)."
         ),
     )
+
+    @field_validator("lexical_fuzziness")
+    @classmethod
+    def _check_fuzziness_bounds(cls, value: str) -> str:
+        # The pattern takes any digits; OpenSearch refuses every lexical and
+        # hybrid query with AUTO:<low>,<high> unless low <= high and both
+        # parse as an int (2.19.7: "fuzziness wrongly configured", "failed
+        # to parse"), while the embedded engine ignores fuzziness, so a
+        # config that ran locally failed on the cluster.
+        if value.startswith("AUTO:"):
+            low, high = (int(part) for part in value[len("AUTO:") :].split(","))
+            if low > high or high > _INT32_MAX:
+                raise ValueError(
+                    f"lexical_fuzziness {value}: AUTO:<low>,<high> needs low <= "
+                    f"high, each at most {_INT32_MAX}, or OpenSearch refuses "
+                    "every lexical and hybrid query"
+                )
+        return value
 
     @model_validator(mode="after")
     def _check_weights(self) -> "HybridConfig":

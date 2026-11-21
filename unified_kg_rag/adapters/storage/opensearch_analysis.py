@@ -51,15 +51,26 @@ def _java_class(ranges: Iterable[tuple[int, int]]) -> str:
     )
 
 
+# Halfwidth Katakana (and its halfwidth middle dot and sound marks). The
+# char filter runs before cjk_width folds it to full width, and the
+# embedded engine folds width before it splits, so to match it the split
+# reads these as Kana too: "ｶﾀｶﾅ한글" kept its ナ한 bigram there and lost it
+# here.
+_HALFWIDTH_KANA = (0xFF65, 0xFF9F)
 # The Hangul letters, and every letter of the dense scripts (Han, Hangul,
 # Kana), from the one script table (shared.utils.scripts) the embedded
 # engine splits its dense runs by.
 _HANGUL = _java_class(script_named("hangul").ranges)
 _DENSE = _java_class(
-    span
-    for script in SCRIPTS
-    if script.spacing is Spacing.DENSE
-    for span in script.ranges
+    [
+        *(
+            span
+            for script in SCRIPTS
+            if script.spacing is Spacing.DENSE
+            for span in script.ranges
+        ),
+        _HALFWIDTH_KANA,
+    ]
 )
 # A space between a Hangul letter and a character next to it that is neither
 # a space nor a dense-script letter, either way round: the embedded engine's

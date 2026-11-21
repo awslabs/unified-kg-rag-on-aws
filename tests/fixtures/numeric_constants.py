@@ -46,6 +46,8 @@ ALLOWED: dict[str, str] = {
         LIMIT,
         "adapters/aws/neptune.py:_EVALUATION_TIMEOUT_STATUS",
         "adapters/aws/opensearch.py:_DELETE_BATCH_MAX_NAMES",
+        # The largest fuzziness bound OpenSearch parses (a Java int).
+        "domain/models/config/_fusion.py:_INT32_MAX",
         "adapters/aws/opensearch.py:_DELETE_BATCH_MAX_CHARS",
         "adapters/doc_status/dynamodb.py:_MAX_ITEM_BYTES",
         "adapters/doc_status/dynamodb.py:_BATCH_GET_SIZE",

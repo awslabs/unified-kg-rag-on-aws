@@ -256,9 +256,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   dashboard sums and prices the embedding role's and model's rows too, and names an embedding model without a price.
 - With tracing on, `run-eval` reports per-span latency (`stage_latency_seconds`: answers, mean, p50, p95) in the run
   summary and per comparison strategy, from each answer's `stage_seconds`.
-- `search.hybrid.lexical_fuzziness` (default `AUTO`, the fixed value before; `AUTO:<low>,<high>`, `1`, `2`, or `0` to
-  match exactly): the OpenSearch fuzziness of a short lexical query. A synthetic name-lookup A/B (dev and held-out
-  splits) found no value better on both exact and misspelled names, so the default is unchanged
+- `search.hybrid.lexical_fuzziness` (default `AUTO`, the fixed value before; `AUTO:<low>,<high>` with low <= high,
+  each at most 2^31-1, as OpenSearch parses it, `1`, `2`, or `0` to match exactly): the OpenSearch fuzziness of a
+  short lexical query; a value OpenSearch refuses is refused when the config loads. A synthetic name-lookup A/B (dev
+  and held-out splits) found no value better on both exact and misspelled names, so the default is unchanged
   ([Defaults and evidence](docs/concepts/defaults-and-evidence.md#lexical-fuzziness)).
 - A per-query audit record: every query (an answer or a search, failed, timed out, refused or a stream closed early
   included) writes one INFO record on the `unified_kg_rag.audit` logger from the chain, so every surface writes the
@@ -396,6 +397,12 @@ Bugs present in 0.3.0.
   `iterative`, 17 for `ppr` and 12 for `naive` (a strategy's own pools: LightRAG's per-type floors, iterative's
   rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
   results to `top_k` (times `retrieval_multiplier`) by rank; an answer's context keeps the strategy's pools.
+- `cjk_script_split` on OpenSearch put a space between halfwidth Katakana and the Hangul after it (`ｶﾀｶﾅ한글` lost the
+  `ナ한` bigram) where the embedded engine, which folds width first, did not: its split reads U+FF65-FF9F as Kana. An
+  index's analysis is set when it is created, so an index built before keeps the old split until a reset.
+- `retrieval`'s nDCG@k counted two references a single file matches (`report-a` beside `Report-A.pdf`) as two
+  relevant documents, so perfect retrieval scored 0.61. References are deduplicated by the matcher's keys: one spelled
+  as another's stem is one reference, the specific spelling kept; two files of one stem stay two.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
   out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items
