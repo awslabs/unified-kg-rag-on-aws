@@ -25,6 +25,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.botocore_backoff import stub_botocore_backoff
 from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.guardrail.bedrock import (
     DEFAULT_BLOCKED_MESSAGE,
@@ -332,7 +333,7 @@ async def test_the_client_makes_three_requests_per_call(
 ) -> None:  # noqa: ANN001
     # total_max_attempts counts the first request; botocore's max_attempts
     # would count retries only and send one request more.
-    monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _delay: None)
+    stub_botocore_backoff(monkeypatch)
     session = boto3.Session(
         aws_access_key_id="testing",
         aws_secret_access_key="testing",

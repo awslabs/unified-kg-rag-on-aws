@@ -15,6 +15,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
+from tests.fixtures.botocore_backoff import stub_botocore_backoff
 from tests.fixtures.fakes.model_servers import FakeOllama, ModelRejects
 from unified_kg_rag.adapters.llm.response_cache import (
     CachingLLMFactory,
@@ -593,7 +594,6 @@ def test_throttled_bedrock_requests_count_per_attempt_and_role(monkeypatch) -> N
     # so usage showed request_retries with no cause and nothing told this
     # deployment's throttling from a read timeout's.
     import json
-    import time
 
     import boto3
     from botocore.awsrequest import AWSResponse
@@ -601,7 +601,7 @@ def test_throttled_bedrock_requests_count_per_attempt_and_role(monkeypatch) -> N
     from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 
     monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setattr(time, "sleep", lambda _seconds: None)  # retry backoff
+    stub_botocore_backoff(monkeypatch)
     session = boto3.Session(
         aws_access_key_id="testing",
         aws_secret_access_key="testing",
@@ -672,7 +672,6 @@ def test_embedding_and_rerank_requests_count_like_the_chat_models(
     # sent although Bedrock throttled them, and the throttling alarm, which
     # reads this deployment's share, never saw it.
     import json
-    import time
 
     import boto3
     from botocore.awsrequest import AWSResponse
@@ -683,7 +682,7 @@ def test_embedding_and_rerank_requests_count_like_the_chat_models(
     )
 
     monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setattr(time, "sleep", lambda _seconds: None)  # retry backoff
+    stub_botocore_backoff(monkeypatch)
     session = boto3.Session(
         aws_access_key_id="testing",
         aws_secret_access_key="testing",

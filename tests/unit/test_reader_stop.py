@@ -19,6 +19,7 @@ import pytest
 from botocore.httpsession import URLLib3Session
 from langchain_core.runnables import Runnable, RunnableConfig
 
+from tests.fixtures.botocore_backoff import stub_botocore_backoff
 from unified_kg_rag.adapters.llm.chain_factory import TransientRetryRunnable
 from unified_kg_rag.adapters.llm.retry import (
     acall_with_transient_retry,
@@ -379,12 +380,43 @@ class _ThrottlingServer:
         count_requests(client, "bedrock-runtime", "answer_generation")
         stop_at_query_stop(client, "bedrock-runtime")
         # No real backoff: the stops land on the requests, not on a timer.
-        monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _s: None)
+        stub_botocore_backoff(monkeypatch, calling_thread_only=True)
         return client
 
     def close(self) -> None:
         self.http.shutdown()
         self.http.server_close()
+
+
+@pytest.mark.parametrize("calling_thread_only", [False, True])
+def test_the_backoff_stub_runs_for_botocore_s_waits_only(
+    monkeypatch: pytest.MonkeyPatch, calling_thread_only: bool
+) -> None:
+    # Regression (flaky in CI): the stop tests set
+    # botocore.endpoint.time.sleep, which is every thread's time.sleep, so
+    # another thread's wait set the stop before the 1st request was sent.
+    import time
+
+    import botocore.endpoint
+
+    ran: list[float] = []
+    stub_botocore_backoff(
+        monkeypatch, ran.append, calling_thread_only=calling_thread_only
+    )
+
+    def elsewhere() -> None:
+        time.sleep(0)
+        botocore.endpoint.time.sleep(0.25)
+
+    worker = threading.Thread(target=elsewhere)
+    worker.start()
+    worker.join(_BACKSTOP)
+    assert not worker.is_alive()
+    time.sleep(0)
+    assert ran == ([] if calling_thread_only else [0.25])
+    botocore.endpoint.time.sleep(0.5)
+    assert ran[-1] == 0.5
+    assert botocore.endpoint.time.monotonic is time.monotonic
 
 
 def _converse(client: Any) -> None:
@@ -554,22 +586,32 @@ def test_a_stop_before_a_resend_takes_no_rate_limiter_token(
 ) -> None:
     # The stop comes during botocore's backoff after the 1st throttle (the
     # limiter now on): the check before the limiter refuses the resend
-    # before it takes a token.
+    # before it takes a token. Only this thread's backoff sets the stop:
+    # another thread's time.sleep set it before the 1st request was sent.
     from botocore.retries import bucket
 
     stop = QueryStop()
     server = _ThrottlingServer()
     tokens: list[None] = []
+    backoffs: list[float] = []
+
+    def stop_in_the_backoff(seconds: float) -> None:
+        backoffs.append(seconds)
+        stop.set()
+
     _spy(monkeypatch, bucket.TokenBucket, "acquire", lambda: tokens.append(None))
     try:
         client = server.client(monkeypatch)
-        monkeypatch.setattr("botocore.endpoint.time.sleep", lambda _s: stop.set())
+        stub_botocore_backoff(
+            monkeypatch, stop_in_the_backoff, calling_thread_only=True
+        )
         with query_stop_scope(stop):
             with pytest.raises(asyncio.CancelledError):
                 _converse(client)
     finally:
         server.close()
     assert server.received == 1
+    assert len(backoffs) == 1
     assert tokens == []
 
 
@@ -635,15 +677,18 @@ class _CountingServer:
         self.http.server_close()
 
 
-def _connect_loses_its_cancel(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+def _connect_loses_its_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[asyncio.Event, asyncio.Event]:
     """Make httpcore's connect lose a cancellation, as anyio's
     ``connect_tcp`` can (it returns a connected stream to a task cancelled
-    while it connected): each connect waits for the returned event, then
-    connects, whatever was cancelled in between."""
+    while it connected): ``connecting`` is set once a connect is under way;
+    each connect waits for ``go``, then connects, whatever was cancelled in
+    between. Returns ``(connecting, go)``."""
     from httpcore._backends.anyio import AnyIOBackend
 
     connect = AnyIOBackend.connect_tcp
-    go = asyncio.Event()
+    connecting, go = asyncio.Event(), asyncio.Event()
 
     async def connected(backend: Any, *args: Any, **kwargs: Any) -> Any:
         await go.wait()
@@ -651,13 +696,14 @@ def _connect_loses_its_cancel(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
 
     async def losing(backend: Any, *args: Any, **kwargs: Any) -> Any:
         inner = asyncio.ensure_future(connected(backend, *args, **kwargs))
+        connecting.set()
         try:
             return await asyncio.shield(inner)
         except asyncio.CancelledError:
             return await inner
 
     monkeypatch.setattr(AnyIOBackend, "connect_tcp", losing)
-    return go
+    return connecting, go
 
 
 def _model_client(kind: str) -> Any:
@@ -686,7 +732,7 @@ async def test_a_request_whose_connect_lost_the_cancel_is_not_sent(
     # made, the request is stopped before it is written.
     from unified_kg_rag.shared.model_responses import closing_responses
 
-    go = _connect_loses_its_cancel(monkeypatch)
+    connecting, go = _connect_loses_its_cancel(monkeypatch)
     server = _CountingServer()
     stop = QueryStop()
     try:
@@ -694,7 +740,9 @@ async def test_a_request_whose_connect_lost_the_cancel_is_not_sent(
             with query_stop_scope(stop):
                 async with closing_responses():
                     request = asyncio.ensure_future(client.post(server.url))
-                    await asyncio.sleep(0.05)
+                    # The cancel lands while the request connects.
+                    async with asyncio.timeout(_BACKSTOP):
+                        await connecting.wait()
                     if ended == "reader stop":
                         stop.set()
                     request.cancel()
