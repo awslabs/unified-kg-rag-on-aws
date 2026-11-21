@@ -205,19 +205,29 @@ _CLAIMS_MISSING = (
     "indexed without the claims of some text units, whose claim extraction "
     "failed; the next run extracts them again"
 )
-# Indexed with the extraction of some of its units (and the claims drawn
-# from it) but not their gleaning (it failed for an error of their own:
+# Indexed with the extraction of some of its units and the claims drawn
+# from it, but not their gleaning (it failed for an error of their own:
 # output cut off or unparseable): recorded FAILED once, like claims, so the
 # next run extracts and gleans those units again (``_record_processed``).
-# The text is stored in the registry and matched on read (_PARTLY_INDEXED),
-# so it stays as written, though such a unit's claims are indexed.
 _GLEANING_MISSING = (
+    "indexed with the ungleaned extraction and its claims of some text "
+    "units, whose gleaning failed; the next run extracts and gleans them again"
+)
+# The text unreleased builds before it wrote for the same record (it read
+# the claims as missing), still read as one by the registry's readers
+# (_PARTLY_INDEXED, _same_failure). Drop it in 0.5.0: no release wrote it.
+_GLEANING_MISSING_BEFORE = (
     "indexed without the gleaning (and claims) of some text units, whose "
     "gleaning failed; the next run extracts and gleans them again"
 )
+# Each partial record's texts as stored, the current one first.
+_STORED_INFOS: dict[str, frozenset[str]] = {
+    _CLAIMS_MISSING: frozenset({_CLAIMS_MISSING}),
+    _GLEANING_MISSING: frozenset({_GLEANING_MISSING, _GLEANING_MISSING_BEFORE}),
+}
 # The partial records: the document is indexed, uncounted; neither is a
 # failure of the run (recorded_failed_doc_ids).
-_PARTLY_INDEXED = frozenset({_CLAIMS_MISSING, _GLEANING_MISSING})
+_PARTLY_INDEXED = frozenset().union(*_STORED_INFOS.values())
 _WRITE_AHEAD_INFO = (
     "indexing in progress (write-ahead record); a run that ends with this "
     "record re-extracts the document, or removes its artifacts if it is gone"
@@ -1824,7 +1834,10 @@ def _same_failure(
         existing is not None
         and existing.status is DocStatus.FAILED
         and existing.content_hash == content_hash
-        and (error_info is None or existing.error_info == error_info)
+        and (
+            error_info is None
+            or existing.error_info in _STORED_INFOS.get(error_info, {error_info})
+        )
         and not settings_changed(
             existing.extraction_fingerprint, extraction_fingerprint
         )

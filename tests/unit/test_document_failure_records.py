@@ -253,3 +253,23 @@ def test_run_failures_leave_gleaning_optional(
         )
         == expected
     )
+
+
+@pytest.mark.parametrize("stored", ["current", "before"])
+def test_a_gleaning_record_reads_as_one_whichever_text_wrote_it(stored: str) -> None:
+    # The text unreleased builds wrote before it ("(and claims)") is read
+    # as the current one until 0.5.0: the retry is given up, and the
+    # document counts as indexed.
+    from unified_kg_rag.application.ingestion import incremental as inc
+
+    info = {"current": inc._GLEANING_MISSING, "before": inc._GLEANING_MISSING_BEFORE}
+    existing = DocStatusRecord(
+        doc_id="d",
+        content_hash="h",
+        status=DocStatus.FAILED,
+        error_info=info[stored],
+    )
+    assert inc._same_failure(existing, "h", None, inc._GLEANING_MISSING)
+    assert not inc._same_failure(existing, "h", None, inc._CLAIMS_MISSING)
+    assert existing.error_info in inc._PARTLY_INDEXED
+    assert "(and claims)" not in inc._GLEANING_MISSING

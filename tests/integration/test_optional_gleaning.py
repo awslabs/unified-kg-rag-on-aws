@@ -111,7 +111,9 @@ def test_documents_are_indexed_without_the_failed_gleaning_and_retried_once(
         status, failures, retries, info = records[name]
         # FAILED once, uncounted, and saying what was indexed.
         assert (status, failures, retries) == (DocStatus.FAILED, 0, 0), records
-        assert info is not None and info.startswith("indexed without the gleaning")
+        assert info is not None and info.startswith(
+            "indexed with the ungleaned extraction"
+        )
     assert records["d0.txt"][0] is DocStatus.PROCESSED
     # Not among the run's failed documents (failed_documents).
     assert context.recorded_failed_doc_ids == []

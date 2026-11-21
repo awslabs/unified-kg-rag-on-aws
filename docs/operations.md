@@ -1196,9 +1196,9 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   output cap, unparseable, a request rejected for its content), the
   document is indexed with those units' extraction and the claims drawn
   from it, without their gleaning, and counted for none. It is recorded
-  `FAILED` once (`error_info`: `indexed without the gleaning (and claims)
-  of some text units ...`, a text kept as earlier runs wrote it although
-  the claims are indexed; not in `failed_documents`), so the next run
+  `FAILED` once (`error_info`: `indexed with the ungleaned extraction and
+  its claims of some text units ...`, not in `failed_documents`), so the
+  next run
   extracts and gleans those units again (what is stored for such a unit is
   its ungleaned extraction and its claims, which a later deletion derives
   its items from, not the gleaned record a run looks for); failing so
