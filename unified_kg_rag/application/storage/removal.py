@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from unified_kg_rag.application.storage.stored_items import (
     PENDING_STRIP,
+    REMOVED_RECORDS,
     STRIPPED_SUMMARIES,
     IndexingTask,
     claim_text,
@@ -69,6 +70,7 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
 from unified_kg_rag.domain.models import Entity, Relationship, TextUnit
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import translated_text_field
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.logging import log_error
@@ -106,6 +108,7 @@ class TextUnitRemoval:
             stats.add_error(e, count=stats.total_items)
             return {f"find_removed_{suffix}": stats}
         exclusive, gone = citing.exclusive, citing.gone
+        self._note_removed_records(suffix)
 
         outdated = sorted(i for i, units in citing.reports.items() if not gone(units))
         if outdated:
@@ -1146,6 +1149,32 @@ class TextUnitRemoval:
             )
         }
 
+    def _note_removed_records(self, suffix: str) -> None:
+        """Note the extraction-record keys of the removed text units
+        (``REMOVED_RECORDS``, beside a stored note's) before anything is
+        removed. Best-effort: without it a run killed before its commit
+        leaves the records, which cost space only."""
+        m = self._m
+        keys = m._removed_record_keys.get(suffix, set())
+        try:
+            stored = m.vector_indexer.read_extraction_records(
+                [REMOVED_RECORDS], suffix=suffix
+            ).get(REMOVED_RECORDS)
+            noted = note_ids(stored, "keys")
+            if keys - noted:
+                m._write_note(REMOVED_RECORDS, suffix, {"keys": sorted(noted | keys)})
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - garbage only costs space
+            log_error(
+                logger,
+                logging.WARNING,
+                "Noting the removed text units' extraction records of '%s' "
+                "failed (%s): a run killed before its commit leaves them",
+                suffix,
+                error=e,
+            )
+
     def collect_extraction_records(self) -> dict[str, IndexingStats]:
         """See :meth:`IndexingManager.collect_extraction_records`."""
         m = self._m
@@ -1156,8 +1185,19 @@ class TextUnitRemoval:
         # claims off) stay, as a reset keeps them: the units it extracted
         # again name none, and a run that builds the kind again reuses them.
         unbuilt = tuple(unbuilt_record_prefixes(m.config, artifacts_to_build(m.config)))
-        for suffix, keys in sorted(m._removed_record_keys.items()):
+        for suffix in sorted(
+            {*m._removed_record_keys, resolve_namespace(m.config, None)}
+        ):
             try:
+                # What a removal of a run killed before its commit noted.
+                note = vector.read_extraction_records(
+                    [REMOVED_RECORDS], suffix=suffix
+                ).get(REMOVED_RECORDS)
+                keys = m._removed_record_keys.get(suffix, set()) | note_ids(
+                    note, "keys"
+                )
+                if not keys:
+                    continue
                 naming: set[str] = set()
                 for kind in RECORD_KINDS:
                     naming.update(
@@ -1181,6 +1221,7 @@ class TextUnitRemoval:
                     for key in keys - still_named
                     if not (unbuilt and key.startswith(unbuilt))
                 )
+                deleted = None
                 if unused:
                     logger.info(
                         "Deleting %d extraction records no text unit of '%s' "
@@ -1188,9 +1229,10 @@ class TextUnitRemoval:
                         len(unused),
                         suffix,
                     )
-                    results[f"extraction_records_{suffix}"] = (
-                        vector.delete_extraction_records(unused, suffix=suffix)
-                    )
+                    deleted = vector.delete_extraction_records(unused, suffix=suffix)
+                    results[f"extraction_records_{suffix}"] = deleted
+                if note is not None and not (deleted and deleted.failed_items):
+                    m._delete_note(REMOVED_RECORDS, suffix)
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - garbage only costs space

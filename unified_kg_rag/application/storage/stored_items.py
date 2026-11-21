@@ -71,6 +71,14 @@ PENDING_WRITES = "pending-writes"
 OUTDATED_REPORTS = "outdated-reports"
 
 
+# Extraction-store key of a suffix's removed-records note: the
+# extraction-record keys the text units a removal deletes named, written
+# before it deletes them and deleted once a commit collected the ones no
+# stored text unit names (see IndexingManager.collect_extraction_records):
+# a run killed in between leaves only this note to name them.
+REMOVED_RECORDS = "removed-records"
+
+
 # Extraction-store key of a suffix's summary note: the items a removal's
 # strip summarized or wrote unsummarized, whose stored summary the run's
 # commit must not extend; written before the strip's writes and deleted

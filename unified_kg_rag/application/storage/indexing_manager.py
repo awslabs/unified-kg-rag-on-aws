@@ -1506,7 +1506,9 @@ class IndexingManager:
         reuses.
 
         Run after the delta is written: a changed document's unchanged chunk
-        names the same record as its removed copy. Best-effort: a failure
+        names the same record as its removed copy. The keys a removal of a
+        run killed before this noted (``REMOVED_RECORDS``) are collected
+        too, on the run's suffix and the removals'. Best-effort: a failure
         leaves records no text unit names, which cost space only.
         """
         return self._removal.collect_extraction_records()

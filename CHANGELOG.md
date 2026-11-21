@@ -526,6 +526,9 @@ Bugs present in 0.3.0.
   report again, after a write failure the run tolerates or under a profile without reports, lists them in its build
   record and keeps the note, with the members the refresh reads, for the run that does). A flagged report's text
   units, documents and path filters no longer name what was removed, so a filter on a deleted file stops matching it.
+- A run killed after its removal and before its commit left the removed text units' extraction records in the
+  extraction store for good (the removal held their keys in memory only); a note now lists them, and the next commit
+  deletes those no stored text unit names, as the killed run's would have.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server

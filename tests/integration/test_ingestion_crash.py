@@ -207,6 +207,7 @@ def test_a_run_killed_in_the_report_refresh_resumes_to_the_unkilled_run(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     unkilled = _reports_state(providers)
     assert not any(outdated for _, outdated, _ in unkilled.values())
+    unkilled_records = _extraction_records(providers)
 
     # The same run, killed in the refresh's report call.
     config, providers, source = first_run("killed")
@@ -222,17 +223,22 @@ def test_a_run_killed_in_the_report_refresh_resumes_to_the_unkilled_run(
     context = e2e._ingest(config, _providers_of(config), source, cache)
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert _reports_state(providers) == unkilled
+    # R2A-5: the deleted document's extraction records, whose keys the
+    # killed removal held in memory only, were left behind.
+    assert _extraction_records(providers) == unkilled_records
     vectors = providers.build_vector_indexer()
     try:
         record = vectors.read_build_record("default")
         assert record is not None and record["outdated_reports"] == []
-        # The note that carried the reports across the kill is gone.
+        # The notes that carried the reports and records across the kill
+        # are gone.
         from unified_kg_rag.application.storage.stored_items import (
             OUTDATED_REPORTS,
+            REMOVED_RECORDS,
         )
 
-        assert OUTDATED_REPORTS not in vectors.read_extraction_records(
-            [OUTDATED_REPORTS], suffix="default"
+        assert not vectors.read_extraction_records(
+            [OUTDATED_REPORTS, REMOVED_RECORDS], suffix="default"
         )
     finally:
         vectors.close()
@@ -270,6 +276,19 @@ def _kill_in_refresh(stores: Path, source: Path, cache: Path) -> None:
         child.communicate()
     assert child.returncode == -signal.SIGKILL
     marker.unlink()
+
+
+def _extraction_records(providers: Any) -> set[str]:
+    """The keys of the stored extraction records (notes included)."""
+    vectors = providers.build_vector_indexer()
+    try:
+        keys = vectors.extraction_record_keys(
+            list("0123456789abcdefghijklmnopqrstuvwxyz"), "default"
+        )
+        assert keys is not None
+        return keys
+    finally:
+        vectors.close()
 
 
 def _outdated_note(providers: Any) -> dict[str, Any] | None:
