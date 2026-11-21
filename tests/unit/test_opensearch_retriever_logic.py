@@ -519,6 +519,23 @@ def test_vector_search_is_one_knn_search(retriever) -> None:
     assert "knn" in body["query"]
 
 
+@pytest.mark.parametrize("search_type", list(SearchType))
+def test_a_relevance_search_ranks_ties_by_id_without_tracking_scores(
+    retriever, search_type
+) -> None:
+    # track_scores made OpenSearch score every matching document (Lucene's
+    # early termination off): a common-term search on a 1M-document index
+    # took 26-70 ms instead of 5 (R2B-2). Under a sort that starts with the
+    # score the hits carry it anyway; the id still breaks a tie.
+    q = SearchQuery(query="alice", search_type=search_type)
+    for body in _bodies(retriever, q, [0.1]):
+        assert body["sort"] == [
+            {"_score": {"order": "desc"}},
+            {"id": {"order": "asc"}},
+        ]
+        assert "track_scores" not in body
+
+
 def test_lexical_search_wraps_filters(retriever) -> None:
     q = SearchQuery(
         query="alice", search_type=SearchType.LEXICAL, filters={"type": "person"}

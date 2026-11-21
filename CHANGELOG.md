@@ -466,7 +466,9 @@ Bugs present in 0.3.0.
   incremental index and a clean full build of the same corpus answered 3 to 9 of 36 questions differently on the
   containers, 1 on the embedded stores) and other results than the embedded engine, which ranks a tie by id. A search
   scored by relevance now sorts by score, then id, on OpenSearch, and the hybrid fusion (`combine_min_max`) ranks equal
-  scores by id instead of by the order the hits came in.
+  scores by id instead of by the order the hits came in. The sort is sent without `track_scores`: its hits carry
+  their score anyway, and tracking it turned off Lucene's early termination, so a common-term search on a
+  1M-document index took 5-14 times as long (p50 26-70 ms against 5 ms, single-shard OpenSearch 2.19.7).
 - `top_k` did not bound what a search returns: `kg_search` with `top_k` 1 returned 49 records for `mix`, `hybrid` and
   `iterative`, 17 for `ppr` and 12 for `naive` (a strategy's own pools: LightRAG's per-type floors, iterative's
   rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
