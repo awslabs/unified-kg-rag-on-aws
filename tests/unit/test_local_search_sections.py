@@ -73,6 +73,49 @@ async def test_community_reports_section_queried(config: Config) -> None:
     assert report_calls and report_calls[0].query == "Acme"
 
 
+async def test_a_focus_naming_nothing_searches_by_the_query(config: Config) -> None:
+    # ARCH E9: the entity prompt's placeholder for a query that names no
+    # entity ("none") seeded the graph walk and was the text of the report,
+    # relationship and claim sections. It names no stored entity (the fake
+    # entity hit is "entities-1", no name) and no word of the query.
+    config.processing.claim_extraction.enabled = True
+    config.indexing.opensearch.build_relationship_vector_index = True
+    strategy, os_r, _ = _make_strategy(config)
+    os_cfg = config.indexing.opensearch
+
+    await strategy.asearch(
+        SearchQuery(query="what is the main topic", entity_focus=["none"])
+    )
+
+    searched = {q.index_prefixes[0]: [] for q in os_r.calls if q.index_prefixes}
+    for q in os_r.calls:
+        if q.index_prefixes:
+            searched[q.index_prefixes[0]].append(q.query)
+    # The focus was looked up once, then every section read the query.
+    assert searched[os_cfg.entities_index_prefix] == [
+        "none",
+        "what is the main topic",
+    ]
+    for prefix in (
+        os_cfg.community_reports_index_prefix,
+        os_cfg.relationships_index_prefix,
+        os_cfg.claims_index_prefix,
+    ):
+        assert searched[prefix][0] == "what is the main topic", prefix
+    assert [q.query for q in os_r.calls].count("none") == 1
+
+
+async def test_a_grounded_focus_is_looked_up_once(config: Config) -> None:
+    # "Acme" is a word of the query: the focus stays, and the entity chain
+    # reuses its lookup instead of searching the name again.
+    strategy, os_r, _ = _make_strategy(config)
+
+    await strategy.asearch(_query())
+
+    entities = config.indexing.opensearch.entities_index_prefix
+    assert [q.query for q in os_r.calls if q.index_prefixes == [entities]] == ["Acme"]
+
+
 @pytest.mark.parametrize("kinds", ["document", "seed_graph", ["DOCUMENT"]])
 async def test_a_source_kinds_filter_reads_no_community_report(
     config: Config, kinds: object

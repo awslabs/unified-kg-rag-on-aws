@@ -393,7 +393,9 @@ async def test_retrieve_entity_chain_weights_the_seeds_by_score() -> None:
     strat = _bare_strategy()
     weights: list[dict[str, float] | None] = []
 
-    async def candidates(query: SearchQuery) -> list[RetrievalResult]:
+    async def candidates(
+        query: SearchQuery, focus_hits: object = None
+    ) -> list[RetrievalResult]:
         return [_entity("e1", "Alvar", 1.0), _entity("e4", "Bexley", 0.7)]
 
     async def expand(query, seeds, *, seeds_pass=False, seed_weights=None):

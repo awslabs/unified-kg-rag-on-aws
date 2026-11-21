@@ -728,9 +728,9 @@ class PipelineContext(BaseModel):
         "request the model rejects for its content, a response that does not "
         "parse or was cut off), by stage name: only their documents' failures "
         "count toward indexing.max_document_failures, including when such a "
-        "stage fails the run, except claim extraction's: such a document "
-        "whose other stages succeeded is indexed without those claims "
-        "(incremental.run_failures). Any other error (an outage, "
+        "stage fails the run, except gleaning's and claim extraction's: such "
+        "a document whose other stages succeeded is indexed without that "
+        "gleaning or those claims (incremental.run_failures). Any other error (an outage, "
         "credentials, a quota, a setting) counts for none.",
     )
 
@@ -738,8 +738,9 @@ class PipelineContext(BaseModel):
         default_factory=list,
         description="Registry ids of the documents this run recorded FAILED "
         "(the indexing commit, or a stage that stopped the run on errors of "
-        "their own), not those indexed without some of their claims (recorded "
-        "FAILED once so the next run extracts them again); the run's "
+        "their own), not those indexed without some of their claims or "
+        "gleaning (recorded FAILED once so the next run extracts them "
+        "again); the run's "
         "failed_documents count.",
     )
 

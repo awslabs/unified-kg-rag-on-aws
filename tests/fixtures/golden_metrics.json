@@ -2781,8 +2781,8 @@
     "hybrid/auto": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
-      "attributable_fraction": 0.8085654077653976,
+      "answer_contains": 0.15789473684210525,
+      "attributable_fraction": 0.806117427349241,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -2798,7 +2798,7 @@
     "hybrid/drift": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 0.9014979308736959,
       "exact_match": 0.0,
       "hit_at_k": 0.0,
@@ -2812,7 +2812,7 @@
     "hybrid/global": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 1.0,
       "exact_match": 0.05263157894736842,
       "hit_at_k": 0.0,
@@ -2826,7 +2826,7 @@
     "hybrid/hybrid": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
+      "answer_contains": 0.21052631578947367,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -2843,7 +2843,7 @@
     "hybrid/iterative": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -2860,8 +2860,8 @@
     "hybrid/local": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
-      "attributable_fraction": 0.8947368421052632,
+      "answer_contains": 0.10526315789473684,
+      "attributable_fraction": 0.8922888616891065,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -2877,7 +2877,7 @@
     "hybrid/mix": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -2894,7 +2894,7 @@
     "hybrid/naive": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3684210526315789,
+      "answer_contains": 0.21052631578947367,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -2911,7 +2911,7 @@
     "hybrid/ppr": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.8925438596491229,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -2928,7 +2928,7 @@
     "hybrid/simple": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.8421052631578948,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -2945,7 +2945,7 @@
     "hybrid/structured": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3684210526315789,
+      "answer_contains": 0.21052631578947367,
       "attributable_fraction": 0.9271205131058252,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -2962,7 +2962,7 @@
     "hybrid/tree": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -2979,8 +2979,8 @@
     "lexical/auto": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
-      "attributable_fraction": 0.8553282646290741,
+      "answer_contains": 0.15789473684210525,
+      "attributable_fraction": 0.8220294540964814,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -2996,7 +2996,7 @@
     "lexical/drift": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 0.9087125073034259,
       "exact_match": 0.0,
       "hit_at_k": 0.0,
@@ -3010,7 +3010,7 @@
     "lexical/global": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 1.0,
       "exact_match": 0.05263157894736842,
       "hit_at_k": 0.0,
@@ -3024,7 +3024,7 @@
     "lexical/hybrid": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 0.7529431672229029,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3041,7 +3041,7 @@
     "lexical/iterative": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.7652291308611472,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3058,8 +3058,8 @@
     "lexical/local": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
-      "attributable_fraction": 0.9356402149022619,
+      "answer_contains": 0.15789473684210525,
+      "attributable_fraction": 0.9023414043696693,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -3075,7 +3075,7 @@
     "lexical/mix": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.7652291308611472,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3092,7 +3092,7 @@
     "lexical/naive": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.47368421052631576,
+      "answer_contains": 0.3157894736842105,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3109,7 +3109,7 @@
     "lexical/ppr": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.8925438596491229,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3126,7 +3126,7 @@
     "lexical/simple": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.9157894736842105,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3143,7 +3143,7 @@
     "lexical/structured": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.42105263157894735,
+      "answer_contains": 0.21052631578947367,
       "attributable_fraction": 0.9248098392835236,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3160,7 +3160,7 @@
     "lexical/tree": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
+      "answer_contains": 0.21052631578947367,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3177,7 +3177,7 @@
     "vector/auto": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 0.8097893979734759,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3194,7 +3194,7 @@
     "vector/drift": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 0.8977676750014572,
       "exact_match": 0.0,
       "hit_at_k": 0.0,
@@ -3208,7 +3208,7 @@
     "vector/global": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 1.0,
       "exact_match": 0.05263157894736842,
       "hit_at_k": 0.0,
@@ -3222,7 +3222,7 @@
     "vector/hybrid": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
+      "answer_contains": 0.21052631578947367,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3239,7 +3239,7 @@
     "vector/iterative": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3256,7 +3256,7 @@
     "vector/local": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
+      "answer_contains": 0.05263157894736842,
       "attributable_fraction": 0.8984088127294981,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3273,7 +3273,7 @@
     "vector/mix": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3290,7 +3290,7 @@
     "vector/naive": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3684210526315789,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3307,7 +3307,7 @@
     "vector/ppr": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3157894736842105,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.8925438596491229,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3324,7 +3324,7 @@
     "vector/simple": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.21052631578947367,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.768421052631579,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3341,7 +3341,7 @@
     "vector/structured": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3684210526315789,
+      "answer_contains": 0.15789473684210525,
       "attributable_fraction": 0.9271205131058252,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3358,7 +3358,7 @@
     "vector/tree": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.3684210526315789,
+      "answer_contains": 0.10526315789473684,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3377,8 +3377,8 @@
     "hybrid/auto": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
-      "attributable_fraction": 0.8159444612385727,
+      "answer_contains": 0.17391304347826086,
+      "attributable_fraction": 0.8098777271637497,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -3394,7 +3394,7 @@
     "hybrid/drift": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2608695652173913,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.9037026337329674,
       "exact_match": 0.0,
       "hit_at_k": 0.3333333333333333,
@@ -3408,7 +3408,7 @@
     "hybrid/global": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.17391304347826086,
+      "answer_contains": 0.08695652173913043,
       "attributable_fraction": 1.0,
       "exact_match": 0.08695652173913043,
       "hit_at_k": 0.6666666666666666,
@@ -3422,7 +3422,7 @@
     "hybrid/hybrid": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3439,7 +3439,7 @@
     "hybrid/iterative": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3456,8 +3456,8 @@
     "hybrid/local": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
-      "attributable_fraction": 0.9009100101112234,
+      "answer_contains": 0.17391304347826086,
+      "attributable_fraction": 0.8948432760364003,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -3473,7 +3473,7 @@
     "hybrid/mix": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3490,7 +3490,7 @@
     "hybrid/naive": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.13043478260869565,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3507,7 +3507,7 @@
     "hybrid/ppr": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.8713768115942029,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3524,7 +3524,7 @@
     "hybrid/simple": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.13043478260869565,
       "attributable_fraction": 0.8695652173913043,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3541,7 +3541,7 @@
     "hybrid/structured": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.30434782608695654,
+      "answer_contains": 0.13043478260869565,
       "attributable_fraction": 0.9206345713782785,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3558,7 +3558,7 @@
     "hybrid/tree": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3575,8 +3575,8 @@
     "lexical/auto": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
-      "attributable_fraction": 0.8607594247135162,
+      "answer_contains": 0.21739130434782608,
+      "attributable_fraction": 0.818084876477795,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -3592,7 +3592,7 @@
     "lexical/drift": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2608695652173913,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.9095192295271212,
       "exact_match": 0.0,
       "hit_at_k": 0.3333333333333333,
@@ -3606,7 +3606,7 @@
     "lexical/global": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.17391304347826086,
+      "answer_contains": 0.08695652173913043,
       "attributable_fraction": 1.0,
       "exact_match": 0.08695652173913043,
       "hit_at_k": 0.6666666666666666,
@@ -3620,7 +3620,7 @@
     "lexical/hybrid": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.768813175150275,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3637,7 +3637,7 @@
     "lexical/iterative": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.7807483609313605,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3654,8 +3654,8 @@
     "lexical/local": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
-      "attributable_fraction": 0.9433619208344329,
+      "answer_contains": 0.21739130434782608,
+      "attributable_fraction": 0.9006873725987118,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -3671,7 +3671,7 @@
     "lexical/mix": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.7807483609313605,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3688,7 +3688,7 @@
     "lexical/naive": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.13043478260869565,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3705,7 +3705,7 @@
     "lexical/ppr": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.8713768115942029,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3722,7 +3722,7 @@
     "lexical/simple": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.08695652173913043,
       "attributable_fraction": 0.9260869565217391,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3739,7 +3739,7 @@
     "lexical/structured": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.30434782608695654,
+      "answer_contains": 0.13043478260869565,
       "attributable_fraction": 0.9206345713782785,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3756,7 +3756,7 @@
     "lexical/tree": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.21739130434782608,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3773,8 +3773,8 @@
     "vector/auto": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
-      "attributable_fraction": 0.8129110942011613,
+      "answer_contains": 0.17391304347826086,
+      "attributable_fraction": 0.8149333388927689,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -3783,14 +3783,14 @@
       "mrr": 1.0,
       "ndcg_at_k": 1.0,
       "recall_at_k": 1.0,
-      "token_f1": 0.053830227743271224
+      "token_f1": 0.0672081541646759
      },
      "queries": 23
     },
     "vector/drift": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2608695652173913,
+      "answer_contains": 0.13043478260869565,
       "attributable_fraction": 0.9063748856468775,
       "exact_match": 0.0,
       "hit_at_k": 0.3333333333333333,
@@ -3804,7 +3804,7 @@
     "vector/global": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.17391304347826086,
+      "answer_contains": 0.08695652173913043,
       "attributable_fraction": 1.0,
       "exact_match": 0.08695652173913043,
       "hit_at_k": 0.6666666666666666,
@@ -3818,7 +3818,7 @@
     "vector/hybrid": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3835,7 +3835,7 @@
     "vector/iterative": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3852,8 +3852,8 @@
     "vector/local": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
-      "attributable_fraction": 0.8928210313447927,
+      "answer_contains": 0.17391304347826086,
+      "attributable_fraction": 0.8948432760364003,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -3862,14 +3862,14 @@
       "mrr": 1.0,
       "ndcg_at_k": 1.0,
       "recall_at_k": 1.0,
-      "token_f1": 0.053830227743271224
+      "token_f1": 0.0672081541646759
      },
      "queries": 23
     },
     "vector/mix": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.6597938144329897,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3886,7 +3886,7 @@
     "vector/naive": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.13043478260869565,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3903,7 +3903,7 @@
     "vector/ppr": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.8713768115942029,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3920,7 +3920,7 @@
     "vector/simple": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.30434782608695654,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 0.8043478260869565,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3937,7 +3937,7 @@
     "vector/structured": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.30434782608695654,
+      "answer_contains": 0.13043478260869565,
       "attributable_fraction": 0.9206345713782785,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3954,7 +3954,7 @@
     "vector/tree": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.34782608695652173,
+      "answer_contains": 0.17391304347826086,
       "attributable_fraction": 1.0,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,

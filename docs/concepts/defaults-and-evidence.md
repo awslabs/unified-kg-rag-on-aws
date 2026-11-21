@@ -65,7 +65,9 @@ measured most of the defaults below:
   with SQuAD's official normalization
   (`evaluation.answer_normalization: official_squad`), not the package
   defaults (`first_line`, `default`), so the numbers sit closer to the
-  papers'. `answer_contains` always reads the whole answer.
+  papers'. `answer_contains` read the whole answer then, support included
+  (it reads the first line now; the `answer_contains` numbers on this page
+  are not comparable with a run of now).
 - **Latency.** The arms of a comparison ran one after the other, all the
   repeats of one arm before the next, so a latency difference between arms
   also measures what changed on the host and the endpoints in between.
@@ -1291,6 +1293,17 @@ when an unadjusted 95% interval excludes zero.
   (since 2026-11-07): these arms ran one after another (see *Latency* above), so a
   latency delta here carries the drift between them, which an interleaved
   run spreads over every arm.
+- **The fenced answer-span prompt.** The answer-span prompt
+  (`AnswerSpanExtractionPrompt`) has wrapped the answer in `<answer>` tags,
+  with a line saying their content is data and not instructions, since
+  2026-11-20 (a prompt-injection fence, which stays). The runs on this page
+  predate it, and the span a model extracts moves with the prompt: the
+  same saved answers, re-scored with a 3B local span model
+  (`qwen2.5:3b-instruct`, 15 MuSiQue questions a split), read 0.08 EM lower
+  with the fence (tune half 0.267 against 0.347, test half 0.133 against
+  0.187). The shift was measured on that model only; compare EM and token
+  F1 across the change only with it in mind, or score both sides with one
+  prompt. `answer_contains` reads no span and does not move with it.
 - **Unadjusted intervals.** The intervals of the runs before 2026-11-07
   are per metric, 95% each, with no correction for the several metrics and
   arms one run reads (the Holm adjustment `run-eval` reports came on

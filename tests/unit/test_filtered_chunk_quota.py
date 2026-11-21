@@ -55,7 +55,9 @@ def _entity(eid: str, units: list[str]) -> RetrievalResult:
         score=1.0,
         source=eid,
         retriever_type="entity",
-        metadata={"id": eid, "text_unit_ids": units},
+        # A stored entity hit carries its name: the focus "e0" is a stored
+        # entity, not a placeholder (``linking.focus_names_anything``).
+        metadata={"id": eid, "name": eid, "text_unit_ids": units},
     )
 
 

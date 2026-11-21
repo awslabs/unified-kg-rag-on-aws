@@ -39,7 +39,7 @@ from unified_kg_rag.domain.retrieval.filters import (
     parse_filters,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
-from unified_kg_rag.domain.retrieval.linking import choose_links
+from unified_kg_rag.domain.retrieval.linking import choose_links, focus_names_anything
 from unified_kg_rag.domain.retrieval.ppr import summed_seed_weights
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import first_names, text_digest
@@ -81,6 +81,10 @@ class LocalSearchStrategy(PPRRankingMixin):
         )
         logger.debug("Local search focus entities: '%s'", ", ".join(query.entity_focus))
 
+        # A focus that names nothing (a placeholder such as "none") is no
+        # focus: every section then searches by the query itself.
+        query, focus_hits = await self._grounded_focus(query)
+
         # MS GraphRAG local search builds context from entities + the community
         # reports those entities belong to + in-network relationships + text
         # units (+ claims). The relationship and claim sections (and the
@@ -102,7 +106,9 @@ class LocalSearchStrategy(PPRRankingMixin):
             if by_membership
             else asyncio.ensure_future(self._retrieve_community_reports(query))
         )
-        chain_task = asyncio.ensure_future(self._retrieve_entity_chain(query))
+        chain_task = asyncio.ensure_future(
+            self._retrieve_entity_chain(query, focus_hits)
+        )
         tasks: list[asyncio.Future[Any]] = [
             relationships_task,
             claims_task,
@@ -190,16 +196,21 @@ class LocalSearchStrategy(PPRRankingMixin):
         return self._text_unit_ranking() == "ppr"
 
     async def _retrieve_entity_chain(
-        self, query: SearchQuery
+        self,
+        query: SearchQuery,
+        focus_hits: list[list[RetrievalResult]] | None = None,
     ) -> tuple[dict[str, list[RetrievalResult]], dict[str, Any]]:
         """Entities -> Neptune expansion -> ranked text units (the dependent chain).
+
+        ``focus_hits`` are the focus entities' own hits when
+        ``_grounded_focus`` looked them up already.
 
         Under ``text_unit_ranking: ppr`` the PageRank's seed searches (the
         passage hits and, with ``ppr_seed_relationships``, the relationship
         hits of the question) start first and run alongside the entities
         and the expansion; they are cancelled if the chain fails."""
         if not self._ranks_by_ppr():
-            return await self._entity_chain(query, None)
+            return await self._entity_chain(query, None, focus_hits)
         seeds = asyncio.ensure_future(
             gather_or_cancel(
                 [
@@ -211,14 +222,17 @@ class LocalSearchStrategy(PPRRankingMixin):
             )
         )
         async with cancel_on_exit([seeds]):
-            return await self._entity_chain(query, seeds)
+            return await self._entity_chain(query, seeds, focus_hits)
 
     async def _entity_chain(
         self,
         query: SearchQuery,
         ppr_seeds: asyncio.Future[list[list[RetrievalResult]]] | None,
+        focus_hits: list[list[RetrievalResult]] | None = None,
     ) -> tuple[dict[str, list[RetrievalResult]], dict[str, Any]]:
-        candidate_hits = await self._find_candidate_entities(query)
+        if focus_hits is None:
+            query, focus_hits = await self._grounded_focus(query)
+        candidate_hits = await self._find_candidate_entities(query, focus_hits)
         candidate_entity_ids = [str(hit.source) for hit in candidate_hits]
         logger.debug(
             "Found %s candidate entities: %s",
@@ -410,8 +424,35 @@ class LocalSearchStrategy(PPRRankingMixin):
             )
         return kept
 
-    async def _find_candidate_entities(
+    async def _grounded_focus(
         self, query: SearchQuery
+    ) -> tuple[SearchQuery, list[list[RetrievalResult]] | None]:
+        """``query`` and its focus entities' own hits (``None`` without a
+        focus), or ``query`` without its focus when the focus names
+        nothing: no name is a stored entity among its hits nor written in
+        the query (``linking.focus_names_anything``), as a placeholder the
+        entity prompt answered for a query that names no entity ("none")."""
+        focus = self._focus_names(query)
+        if not focus or not self.document_retriever:
+            return query, None
+        per_focus_hits = self.config.search.local_search.entity_candidates_per_focus
+        per_focus = await gather_bounded(
+            self.config.search.max_concurrency,
+            (self._entity_hits(query, name, per_focus_hits) for name in focus),
+        )
+        if focus_names_anything(focus, per_focus, query.query):
+            return query, per_focus
+        logger.info(
+            "Local search focus names no stored entity and no word of the "
+            "query: searching by the query (%s focus entities ignored)",
+            len(focus),
+        )
+        return query.model_copy(update={"entity_focus": []}), None
+
+    async def _find_candidate_entities(
+        self,
+        query: SearchQuery,
+        focus_hits: list[list[RetrievalResult]] | None = None,
     ) -> list[RetrievalResult]:
         """The entities-index hits that seed graph expansion (each with an id).
 
@@ -426,25 +467,24 @@ class LocalSearchStrategy(PPRRankingMixin):
         a generic focus word ("province") seeded unrelated entities. Without an
         entity focus the raw query text is looked up instead (as the
         claims/community-report/relationship sections do), its ``top_k``
-        hits the seeds, so local search still seeds graph expansion.
+        hits the seeds, so local search still seeds graph expansion; so is
+        it when the focus names nothing (``_grounded_focus``).
+        ``focus_hits`` are the focus entities' hits ``_grounded_focus``
+        found, when it ran.
         """
         if not self.document_retriever:
             return []
+        if focus_hits is None:
+            query, focus_hits = await self._grounded_focus(query)
         focus = self._focus_names(query)
-        if not focus:
+        if not focus or focus_hits is None:
             if not query.query:
                 return []
             return await self._entity_hits(query, query.query, query.top_k)
-        # Hits per focus entity among which its exact name is looked for.
-        per_focus_hits = self.config.search.local_search.entity_candidates_per_focus
-        per_focus = await gather_bounded(
-            self.config.search.max_concurrency,
-            (self._entity_hits(query, name, per_focus_hits) for name in focus),
-        )
         hybrid = self.config.search.hybrid
         return self.focus_seeds(
             focus,
-            per_focus,
+            focus_hits,
             self.seed_floor(
                 self.config.search.local_search.seed_score_ratio,
                 query.search_type,

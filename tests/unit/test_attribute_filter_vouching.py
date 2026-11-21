@@ -217,7 +217,9 @@ async def test_local_search_seeds_the_walk_as_passing(config: Config) -> None:
     strategy = _strategy(config, _Store(prefix, []), _graph(prefix))
     seen: list[bool] = []
 
-    async def candidates(query: SearchQuery) -> list[RetrievalResult]:
+    async def candidates(
+        query: SearchQuery, focus_hits: object = None
+    ) -> list[RetrievalResult]:
         return [_hit("seed")]
 
     async def expand(

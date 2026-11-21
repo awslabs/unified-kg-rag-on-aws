@@ -34,7 +34,12 @@ from unified_kg_rag.domain.models.config import SearchConfig
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import first_names
 
-from .answer_match_evaluator import SPAN_EFFORT_KEY, SPAN_MODEL_KEY, TOKENS_KEY
+from .answer_match_evaluator import (
+    CONTAINS_READS_KEY,
+    SPAN_EFFORT_KEY,
+    SPAN_MODEL_KEY,
+    TOKENS_KEY,
+)
 from .arms import label_strategy
 from .comparison import USAGE_SCHEMA, Run
 
@@ -238,6 +243,10 @@ def _answer_scoring(manifest: dict[str, Any] | None) -> Any:
         # Saved before the tokenization was recorded: token F1 read
         # whitespace words then, under every normalization.
         scoring = {**scoring, TOKENS_KEY: "whitespace"}
+    if isinstance(scoring, dict) and CONTAINS_READS_KEY not in scoring:
+        # Saved before it was recorded: answer_contains read the whole
+        # answer, support included.
+        scoring = {**scoring, CONTAINS_READS_KEY: "full"}
     return scoring
 
 
@@ -270,7 +279,9 @@ def check_answer_scoring(
     """Refuse runs whose exact match and token F1 read the answer
     differently (``answer_scoring``: ``evaluation.answer_span``,
     ``answer_normalization`` and the ``token_f1_tokens`` it implies; a run
-    saved before that was recorded tokenized by whitespace); returns
+    saved before that was recorded tokenized by whitespace), or whose
+    ``answer_contains`` did (``answer_contains_reads``; a run saved before
+    it was recorded read the whole answer); returns
     warnings for runs that do not record it. ``manifests`` are ``(label,
     run manifest)`` pairs.
 
@@ -321,9 +332,10 @@ def check_answer_scoring(
             "answer_normalization (a run that records token_f1_tokens "
             "'whitespace' under answer_normalization 'default' was scored "
             "before token F1 tokenized Chinese, Japanese and Korean by "
-            "character, and one that records 'script_aware' before it "
-            "dropped only Korean particles of their closed class: re-run "
-            "it)."
+            "character, one that records 'script_aware' before it "
+            "dropped only Korean particles of their closed class, and one "
+            "that records answer_contains_reads 'full' before answer_contains "
+            "read the answer's first line only: re-run it)."
         )
     warnings = []
     if SPAN_MODEL_KEY in drop:

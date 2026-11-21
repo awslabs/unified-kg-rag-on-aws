@@ -3083,6 +3083,7 @@ class IndexingStage(_RegistryStage):
                     written=written,
                     counted_failed_doc_ids=failures.counted,
                     claims_missing_doc_ids=failures.claims_missing,
+                    gleaning_missing_doc_ids=failures.gleaning_missing,
                     before_registry=record_build,
                 )
                 context.record_failed_documents(incremental.recorded_failed_doc_ids)

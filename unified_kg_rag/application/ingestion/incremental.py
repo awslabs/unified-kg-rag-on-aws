@@ -205,6 +205,17 @@ _CLAIMS_MISSING = (
     "indexed without the claims of some text units, whose claim extraction "
     "failed; the next run extracts them again"
 )
+# Indexed with the extraction of some of its units but not their gleaning
+# (it failed for an error of their own: output cut off or unparseable), nor
+# so their claims: recorded FAILED once, like claims, so the next run
+# extracts and gleans those units again (``_record_processed``).
+_GLEANING_MISSING = (
+    "indexed without the gleaning (and claims) of some text units, whose "
+    "gleaning failed; the next run extracts and gleans them again"
+)
+# The partial records: the document is indexed, uncounted; neither is a
+# failure of the run (recorded_failed_doc_ids).
+_PARTLY_INDEXED = frozenset({_CLAIMS_MISSING, _GLEANING_MISSING})
 _WRITE_AHEAD_INFO = (
     "indexing in progress (write-ahead record); a run that ends with this "
     "record re-extracts the document, or removes its artifacts if it is gone"
@@ -357,8 +368,10 @@ class IncrementalIndexer:
         # failing again for an error not their own (warn_retrying).
         self.recorded_failed_doc_ids: list[str] = []
         self.retrying_doc_ids: list[str] = []
-        # The documents the last commit indexed without some of their claims.
+        # The documents the last commit indexed without some of their claims,
+        # and without the gleaning of some of their units.
         self.claims_missing_doc_ids: list[str] = []
+        self.gleaning_missing_doc_ids: list[str] = []
 
     def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
         """Raise before any write when the stores lost the registry's documents.
@@ -633,6 +646,7 @@ class IncrementalIndexer:
         failed_doc_ids: Collection[str] = (),
         counted_failed_doc_ids: Collection[str] = (),
         claims_missing_doc_ids: Collection[str] = (),
+        gleaning_missing_doc_ids: Collection[str] = (),
         text_units: list[TextUnit] | None = None,
         entities: list[Entity] | None = None,
         relationships: list[Relationship] | None = None,
@@ -656,8 +670,9 @@ class IncrementalIndexer:
         included) count toward ``indexing.max_document_failures``; a failed
         write counts for none. Those in ``claims_missing_doc_ids`` (only
         their claim extraction failed, for an error of their own) are
-        indexed without those claims and counted for none
-        (:meth:`_record_processed`).
+        indexed without those claims and counted for none, and those in
+        ``gleaning_missing_doc_ids`` (only the gleaning of some of their
+        units failed so) without that gleaning (:meth:`_record_processed`).
 
         Entities and relationships are first merged with the stored graph state
         they touch; the communities and claims
@@ -809,6 +824,7 @@ class IncrementalIndexer:
             written=written,
             counted_failed_doc_ids=counted_failed_doc_ids,
             claims_missing_doc_ids=claims_missing_doc_ids,
+            gleaning_missing_doc_ids=gleaning_missing_doc_ids,
             settings_changed=settings_changed,
             before_registry=before_registry,
         ):
@@ -939,6 +955,7 @@ class IncrementalIndexer:
         written: Sequence[Any] | None = None,
         counted_failed_doc_ids: Collection[str] = (),
         claims_missing_doc_ids: Collection[str] = (),
+        gleaning_missing_doc_ids: Collection[str] = (),
         settings_changed: bool = False,
         before_registry: Callable[[Mapping[str, IndexingStats]], None] | None = None,
     ) -> bool:
@@ -1008,6 +1025,7 @@ class IncrementalIndexer:
                 write_failed,
                 counted_failed_doc_ids,
                 claims_missing_doc_ids,
+                gleaning_missing_doc_ids,
             )
             self._record_extraction_settings(bool(lineages), settings_changed)
             return True
@@ -1349,6 +1367,7 @@ class IncrementalIndexer:
         write_failed_doc_ids: Collection[str] = (),
         counted_failed_doc_ids: Collection[str] = (),
         claims_missing_doc_ids: Collection[str] = (),
+        gleaning_missing_doc_ids: Collection[str] = (),
     ) -> None:
         """Replace the run's PENDING records with PROCESSED or FAILED ones.
 
@@ -1360,6 +1379,11 @@ class IncrementalIndexer:
         claim records of its other units are reused); failing so again, it
         is recorded PROCESSED without them, so a lasting failure (a
         server-side output cap) re-indexes it once, not on every run.
+        Gleaning is optional alike: a document of
+        ``gleaning_missing_doc_ids`` (the gleaning of some of its units
+        failed so; their extraction is indexed, not their claims) is
+        recorded so (``_GLEANING_MISSING``), and the retry extracts and
+        gleans those units again (their record, not final, was not stored).
         """
         if failed_doc_ids:
             files = sorted(
@@ -1387,6 +1411,8 @@ class IncrementalIndexer:
         records: list[DocStatusRecord] = []
         claims_given_up: list[str] = []
         claims_missing: set[str] = set()
+        gleaning_given_up: list[str] = []
+        gleaning_missing: set[str] = set()
         for lineage in lineages:
             existing = prior.get(lineage.doc_id)
             content_hash = fingerprints.get(
@@ -1397,15 +1423,32 @@ class IncrementalIndexer:
                 error_info = _EXTRACTION_FAILED
             elif lineage.doc_id in write_failed_doc_ids:
                 error_info = _WRITE_FAILED
-            elif lineage.doc_id in claims_missing_doc_ids:
-                claims_missing.add(lineage.doc_id)
-                if _same_failure(
-                    existing, content_hash, self.extraction_fingerprint, _CLAIMS_MISSING
+            else:
+                for missing, doc_ids, info, given_up in (
+                    (
+                        gleaning_missing,
+                        gleaning_missing_doc_ids,
+                        _GLEANING_MISSING,
+                        gleaning_given_up,
+                    ),
+                    (
+                        claims_missing,
+                        claims_missing_doc_ids,
+                        _CLAIMS_MISSING,
+                        claims_given_up,
+                    ),
                 ):
-                    claims_given_up.append(lineage.file_path or lineage.doc_id)
-                else:
-                    error_info = _CLAIMS_MISSING
-            failed = error_info not in (None, _CLAIMS_MISSING)
+                    if lineage.doc_id not in doc_ids:
+                        continue
+                    missing.add(lineage.doc_id)
+                    if _same_failure(
+                        existing, content_hash, self.extraction_fingerprint, info
+                    ):
+                        given_up.append(lineage.file_path or lineage.doc_id)
+                    else:
+                        error_info = info
+                    break
+            failed = error_info is not None and error_info not in _PARTLY_INDEXED
             # Consecutive failures of this content at these extraction
             # settings; new content or other settings start over. A failure
             # that is not the document's own (an outage, credentials, a
@@ -1457,18 +1500,21 @@ class IncrementalIndexer:
         self.recorded_failed_doc_ids = [
             r.doc_id
             for r in records
-            if r.status is DocStatus.FAILED and r.error_info != _CLAIMS_MISSING
+            if r.status is DocStatus.FAILED and r.error_info not in _PARTLY_INDEXED
         ]
-        _warn_claims_missing(
-            [
-                r.file_path or r.doc_id
-                for r in records
-                if r.error_info == _CLAIMS_MISSING
-            ],
-            claims_given_up,
-        )
+        for what, output, info, given_up in (
+            ("Claim extraction", "claims", _CLAIMS_MISSING, claims_given_up),
+            ("Gleaning", "refinements", _GLEANING_MISSING, gleaning_given_up),
+        ):
+            _warn_partly_indexed(
+                what,
+                output,
+                [r.file_path or r.doc_id for r in records if r.error_info == info],
+                given_up,
+            )
         self.retrying_doc_ids = warn_retrying(records)
         self.claims_missing_doc_ids = sorted(claims_missing)
+        self.gleaning_missing_doc_ids = sorted(gleaning_missing)
         if unproductive:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
@@ -1774,8 +1820,8 @@ def dedup_preferences(
     it holds as FAILED gives way to any other: a FAILED document may have used
     up its retries (``indexing.max_document_failures``), so keeping it over
     its copy would leave neither indexed. A FAILED record of a document
-    indexed without some claims (``_CLAIMS_MISSING``) counts as indexed: its
-    graph is in the stores. A PENDING record (an interrupted run) is neither.
+    indexed without some claims or gleaning (``_PARTLY_INDEXED``) counts as
+    indexed: its graph is in the stores. A PENDING record (an interrupted run) is neither.
     The records are looked up under the spelling the diff keys by (for a run
     of ``changes``, symlinks followed): under another, none would be found.
     """
@@ -1809,7 +1855,7 @@ def dedup_preferences(
         record = stored.get(keys[id(document)])
         if record is None:
             return None
-        if record.status is DocStatus.FAILED and record.error_info == _CLAIMS_MISSING:
+        if record.status is DocStatus.FAILED and record.error_info in _PARTLY_INDEXED:
             return DocStatus.PROCESSED
         return record.status
 
@@ -3092,63 +3138,108 @@ class RunFailures(NamedTuple):
     # Only the claim extraction of some of their units failed, for an error
     # of their own: indexed without those claims, counted for none.
     claims_missing: set[str]
+    # Only the gleaning of some of their units failed, for an error of their
+    # own (and so their claims are missing too): indexed with those units'
+    # extraction, counted for none.
+    gleaning_missing: set[str]
+
+
+# The stages whose output a document is indexed without when they fail on
+# a unit for an error of its own: they refine or add to an extraction that
+# stands without them.
+_OPTIONAL_STAGES = (
+    PipelineStageType.GLEANING.value,
+    PipelineStageType.CLAIM_EXTRACTION.value,
+)
 
 
 def run_failures(context: PipelineContext, text_units: list[TextUnit]) -> RunFailures:
     """The run's :class:`RunFailures`, from the failed units its stages
-    recorded. Claims are optional: an error of a unit's own in claim
-    extraction (a request rejected for its content, output cut off or
+    recorded. Gleaning and claims are optional: an error of a unit's own
+    in either (a request rejected for its content, output cut off or
     unparseable, alike across documents too) leaves a document whose graph
-    was extracted indexed without that unit's claims. Any other claim
-    extraction failure (an outage, a record not stored) still fails it,
+    was extracted indexed without that unit's gleaning or claims. Any other
+    failure of theirs (an outage, a record not stored) still fails it,
     uncounted, as in the other stages."""
-    claims = PipelineStageType.CLAIM_EXTRACTION.value
     failed = context.failed_text_unit_ids
-    own_claims = set(context.item_failed_text_unit_ids.get(claims, []))
-    others = {
-        **{name: ids for name, ids in failed.items() if name != claims},
-        claims: set(failed.get(claims, [])) - own_claims,
+    own = {
+        name: set(context.item_failed_text_unit_ids.get(name, []))
+        for name in _OPTIONAL_STAGES
     }
-    claims_missing = documents_with_failed_units(
-        context, text_units, {claims: own_claims}
-    ) - documents_with_failed_units(context, text_units, others)
+    others = {
+        **{name: ids for name, ids in failed.items() if name not in own},
+        **{name: set(failed.get(name, [])) - own[name] for name in own},
+    }
+    failing = documents_with_failed_units(context, text_units, others)
+    gleaning_missing = (
+        documents_with_failed_units(
+            context,
+            text_units,
+            {PipelineStageType.GLEANING.value: own[PipelineStageType.GLEANING.value]},
+        )
+        - failing
+    )
+    claims_missing = (
+        documents_with_failed_units(
+            context,
+            text_units,
+            {
+                PipelineStageType.CLAIM_EXTRACTION.value: own[
+                    PipelineStageType.CLAIM_EXTRACTION.value
+                ]
+            },
+        )
+        - failing
+        - gleaning_missing
+    )
     return RunFailures(
-        failed=documents_with_failed_units(context, text_units) - claims_missing,
+        failed=documents_with_failed_units(context, text_units)
+        - claims_missing
+        - gleaning_missing,
         counted=documents_with_failed_units(
             context,
             text_units,
             {
                 name: ids
                 for name, ids in context.item_failed_text_unit_ids.items()
-                if name != claims
+                if name not in own
             },
         ),
         claims_missing=claims_missing,
+        gleaning_missing=gleaning_missing,
     )
 
 
-def _warn_claims_missing(retried: list[str], given_up: list[str]) -> None:
-    """Warn of the documents indexed without some of their claims: the next
-    run retries those of ``retried``, none retries those of ``given_up``."""
+def _warn_partly_indexed(
+    what: str, output: str, retried: list[str], given_up: list[str]
+) -> None:
+    """Warn of the documents indexed without the ``output`` the optional
+    stage ``what`` (claim extraction, gleaning) failed to make for some of
+    their units: the next run retries those of ``retried``, none retries
+    those of ``given_up``."""
 
     def files(names: list[str]) -> str:
         return first_names(sorted(names))
 
     if retried:
         logger.warning(
-            "Claim extraction failed on part of %d documents for an error of "
-            "their own (not counted toward indexing.max_document_failures): "
-            "indexed without those claims; the next run extracts them again: %s",
+            "%s failed on part of %d documents for an error of their own (not "
+            "counted toward indexing.max_document_failures): indexed without "
+            "those %s; the next run extracts them again: %s",
+            what,
             len(retried),
+            output,
             files(retried),
         )
     if given_up:
         logger.warning(
-            "Claim extraction failed again on part of %d documents: indexed "
-            "without those claims, which later runs do not extract again until "
-            "the content or the extraction settings change (a re-run with this "
-            "pipeline id still does): %s",
+            "%s failed again on part of %d documents: indexed without those "
+            "%s, which later runs do not extract again until the content or "
+            "the extraction settings change (a re-run with this pipeline id "
+            "still does): %s",
+            what,
             len(given_up),
+            output,
             files(given_up),
         )
 
@@ -3557,6 +3648,7 @@ def index_delta(
             failed_doc_ids=failures.failed,
             counted_failed_doc_ids=failures.counted,
             claims_missing_doc_ids=failures.claims_missing,
+            gleaning_missing_doc_ids=failures.gleaning_missing,
             text_units=text_units,
             entities=entities,
             relationships=relationships,

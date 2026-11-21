@@ -324,12 +324,43 @@ _STAGES = pytest.mark.parametrize(
     ],
     ids=["graph", "claims", "gleaning"],
 )
+_GRAPH = "knowledge graph extraction expert"
+# Graph extraction failing on the Zorbix documents beside a new document it
+# extracts: the stage completes and the commit records them. (Gleaning's
+# errors of a unit's own, which reached the commit so too, leave a document
+# indexed without that gleaning: test_optional_gleaning.)
+_GRAPH_BESIDE = _GRAPH + " (beside)"
+_BESIDE = ("d2.txt", "Carrier and Buyer trade parts.")
+
+
+def _phrase(stage: str) -> tuple[str, bool]:
+    """The system-prompt phrase of ``stage`` and whether a document the
+    stage extracts is added beside the failing ones."""
+    return stage.removesuffix(" (beside)"), stage.endswith(" (beside)")
+
+
+def _ingest(config: Any, providers: Any, source: Path, cache: Path, stage: str) -> Any:
+    """``e2e._ingest``, with ``_GRAPH_BESIDE`` d2 written anew first, so
+    every run's delta holds a document graph extraction extracts and the
+    run reaches the commit."""
+    beside = _phrase(stage)[1]
+    if beside:
+        (source / _BESIDE[0]).write_text(f"{_BESIDE[1]} Batch {cache.name}.")
+    context = e2e._ingest(config, providers, source, cache)
+    if beside:
+        assert context.status is PipelineStageStatus.COMPLETED, context.status
+    return context
+
+
 # The stages whose errors of a unit's own count against its document; claim
-# extraction's leave it indexed without the unit's claims.
+# extraction's and gleaning's leave it indexed without the unit's claims or
+# gleaning. Graph extraction alone in the delta stops the run before
+# indexing (record_item_failures); beside a document it extracts, the
+# commit records the failure.
 _COUNTED_STAGES = pytest.mark.parametrize(
     "stage",
-    ["knowledge graph extraction expert", "graph refinement specialist"],
-    ids=["graph", "gleaning"],
+    [_GRAPH, _GRAPH_BESIDE],
+    ids=["graph", "graph-at-commit"],
 )
 
 
@@ -430,25 +461,27 @@ def test_a_delta_of_only_documents_the_model_rejects_is_excluded(
     (source / "d1.txt").unlink()
     (source / "z1.txt").write_text(_FAILING)
     (source / "z2.txt").write_text("Zorbix and Depot trade parts.")
-    rejects["stage"] = stage
+    rejects["stage"] = _phrase(stage)[0]
     seen = []
     for run in range(4):
-        e2e._ingest(config, providers, source, tmp_path / f"run{run}")
+        _ingest(config, providers, source, tmp_path / f"run{run}", stage)
         counts = _counts(providers)
         seen.append((counts["z1.txt"], counts["z2.txt"], "d1.txt" in counts))
     assert [run[:2] for run in seen] == [(1, 1), (2, 2), (2, 2), (2, 2)], seen
     # Graph extraction failing on every unit fails the run, so the deletion
-    # waits for the exclusion; in the other stages it applies at once.
+    # waits for the exclusion; beside a document it extracts, it applies at
+    # once.
     assert seen[-1][2] is False, seen
 
 
 def _cut_alike(tmp: Path, stage: str, n: int = 2) -> tuple[Any, Any, Path, dict]:
     """Embedded config (claims and gleaning on, max_document_failures ``n``)
     and providers whose model, while ``mode["m"]`` is "cut", cuts every
-    response of ``stage`` (a system-prompt phrase) for Zorbix's text at the
-    output token limit (a server-side output cap, say), and answers HTTP
-    503 while it is "503"; d0 and d1 are indexed, then d1 is deleted and z1,
-    z2 (Zorbix's) are added."""
+    response of ``stage`` (a system-prompt phrase, ``_phrase``) for Zorbix's
+    text at the output token limit (a server-side output cap, say), and
+    answers HTTP 503 while it is "503"; d0 and d1 are indexed, then d1 is
+    deleted and z1, z2 (Zorbix's) are added (and d2, ``_GRAPH_BESIDE``)."""
+    stage = _phrase(stage)[0]
     config, _, source = _rejecting(tmp, {"stage": ""})
     config.indexing.max_document_failures = n
     server = FakeOllama(e2e._respond, "x", e2e.DIM)
@@ -503,7 +536,7 @@ def _cut_runs(
         mode["m"] = m
         if run == change:
             config.processing.graph_extraction.max_entities_per_chunk += 1
-        context = e2e._ingest(config, providers, source, tmp / f"run{run}")
+        context = _ingest(config, providers, source, tmp / f"run{run}", stage)
         records = {r.file_path: r for r in all_records(providers.build_doc_status())}
         z1 = records["z1.txt"]
         seen.append(
@@ -569,10 +602,9 @@ def test_other_extraction_settings_start_an_output_cut_streak_over(
 
 def test_a_reset_rebuild_counts_output_cut_alike(tmp_path: Path) -> None:
     # The rebuild records the documents itself (IncrementalIndexer.record):
-    # gleaning output cut alike on both documents counts there too.
-    seen = _cut_runs(
-        tmp_path, "graph refinement specialist", 3, ["cut", "cut"], reset=True
-    )
+    # graph extraction output cut alike on both documents (d0 extracted
+    # beside them, so the run reaches it) counts there too.
+    seen = _cut_runs(tmp_path, _GRAPH, 3, ["cut", "cut"], reset=True)
     assert [run[:2] for run in seen] == [(1, 0), (2, 0)], seen
 
 
@@ -608,8 +640,8 @@ def test_failed_documents_holds_a_commit_stopped_after_its_registry_write(
 ) -> None:
     # The commit recorded z1.txt FAILED, then its cleanup raised: the run's
     # failed_documents read 0, the documents being added to the result only
-    # once the commit returned.
-    rejects = {"stage": "graph refinement specialist", "text": "Zorbix"}
+    # once the commit returned. (Graph extraction completes on d0.)
+    rejects = {"stage": _GRAPH, "text": "Zorbix"}
     config, providers, source = _rejecting(tmp_path, rejects)
     source.mkdir()
     (source / "d0.txt").write_text(_FILES["d0.txt"])
@@ -686,9 +718,10 @@ def test_a_document_failing_runs_for_an_error_not_its_own_is_reported(
 
 _STOPS_OR_COMMITS = pytest.mark.parametrize(
     "stage",
-    ["knowledge graph extraction expert", "graph refinement specialist"],
+    [_GRAPH, _GRAPH_BESIDE],
     # Graph extraction failing on fz alone stops the run before indexing
-    # (record_item_failures); gleaning lets the commit record it.
+    # (record_item_failures); beside a document it extracts, the commit
+    # records it.
     ids=["stage-stops-the-run", "commit"],
 )
 
@@ -696,7 +729,9 @@ _STOPS_OR_COMMITS = pytest.mark.parametrize(
 def _outage(tmp: Path, stage: str, mode: dict[str, int]) -> tuple[Any, Any, Path]:
     """Embedded config (claims and gleaning on, max_document_failures 5) and providers
     whose model answers HTTP ``mode["status"]`` to the requests of ``stage``
-    (a system-prompt phrase) for Zorbix's text; d0 is indexed."""
+    (a system-prompt phrase, ``_phrase``) for Zorbix's text; d0 is indexed
+    (and d2 added, ``_GRAPH_BESIDE``)."""
+    stage = _phrase(stage)[0]
     config = e2e._config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     config.processing.gleaning.enabled = True
@@ -740,10 +775,10 @@ def test_an_own_error_after_an_outage_starts_retry_count_over(
     (source / "fz.txt").write_text(_FAILING)
     seen = []
     for run in range(2):
-        e2e._ingest(config, providers, source, tmp_path / f"o{run}")
+        _ingest(config, providers, source, tmp_path / f"o{run}", stage)
         seen.append((_fz(providers).failure_count, _fz(providers).retry_count))
     mode["status"] = 400
-    e2e._ingest(config, providers, source, tmp_path / "own")
+    _ingest(config, providers, source, tmp_path / "own", stage)
     seen.append((_fz(providers).failure_count, _fz(providers).retry_count))
     assert seen == [(0, 1), (0, 2), (1, 0)], seen
 
@@ -758,7 +793,7 @@ def test_new_content_starts_retry_count_over(tmp_path: Path, stage: str) -> None
     seen = []
     for run, text in enumerate([_FAILING, "Zorbix and Buyer trade bolts."]):
         (source / "fz.txt").write_text(text)
-        e2e._ingest(config, providers, source, tmp_path / f"c{run}")
+        _ingest(config, providers, source, tmp_path / f"c{run}", stage)
         seen.append(_fz(providers).retry_count)
     assert seen == [1, 1], seen
 
@@ -774,7 +809,7 @@ def test_new_content_starts_failure_count_over(tmp_path: Path, stage: str) -> No
     seen = []
     for run, text in enumerate([_FAILING, "Zorbix and Buyer trade bolts."]):
         (source / "fz.txt").write_text(text)
-        e2e._ingest(config, providers, source, tmp_path / f"c{run}")
+        _ingest(config, providers, source, tmp_path / f"c{run}", stage)
         seen.append((_fz(providers).failure_count, _fz(providers).retry_count))
         mode["status"] = 503
     assert seen == [(1, 0), (0, 1)], seen
@@ -796,7 +831,7 @@ def test_other_extraction_settings_start_failure_count_over(
     seen = []
     for run in range(2):
         config.processing.graph_extraction.max_entities_per_chunk += run
-        e2e._ingest(config, providers, source, tmp_path / f"s{run}")
+        _ingest(config, providers, source, tmp_path / f"s{run}", stage)
         seen.append(_fz(providers).failure_count)
     assert seen == [1, 1], seen
 
@@ -809,7 +844,7 @@ def test_a_failed_registry_write_records_no_failed_documents(
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 
     config, providers, source = _rejecting(
-        tmp_path, {"stage": "graph refinement specialist", "text": "Zorbix"}
+        tmp_path, {"stage": _GRAPH, "text": "Zorbix"}
     )
     source.mkdir()
     (source / "d0.txt").write_text(_FILES["d0.txt"])

@@ -183,3 +183,73 @@ def test_run_failures_leave_claims_optional(
         )
         == expected
     )
+
+
+_GLEANING = "gleaning"
+
+
+@pytest.mark.parametrize(
+    ("failed", "own", "expected"),
+    [
+        # Only gleaning failed, for an error of the unit's own (output cut
+        # off at the cap): indexed with that unit's extraction, counted for
+        # none. It counted and recorded the document FAILED.
+        ({_GLEANING: ["a1"]}, {_GLEANING: ["a1"]}, ((), (), (), ("a",))),
+        # A gleaning outage: failed, uncounted, as in any stage.
+        ({_GLEANING: ["a1"]}, {}, (("a",), (), (), ())),
+        # The graph failed too: failed and counted for the graph's error.
+        (
+            {_GRAPH: ["a2"], _GLEANING: ["a1"]},
+            {_GRAPH: ["a2"], _GLEANING: ["a1"]},
+            (("a",), ("a",), (), ()),
+        ),
+        # Gleaning and claims of one document failed so: the gleaning's
+        # record names it (its retry extracts the claims again too).
+        (
+            {_GLEANING: ["a1"], _CLAIMS: ["a2"]},
+            {_GLEANING: ["a1"], _CLAIMS: ["a2"]},
+            ((), (), (), ("a",)),
+        ),
+        # Another document's units fail apart.
+        (
+            {_GLEANING: ["a1"], _CLAIMS: ["b1"]},
+            {_GLEANING: ["a1"], _CLAIMS: ["b1"]},
+            ((), (), ("b",), ("a",)),
+        ),
+    ],
+)
+def test_run_failures_leave_gleaning_optional(
+    failed: dict[str, list[str]],
+    own: dict[str, list[str]],
+    expected: tuple[tuple[str, ...], ...],
+) -> None:
+    docs = {
+        name: document(f"/c/{name}.txt", [[("Vendor", "Depot", 1)]])
+        for name in ("a", "b")
+    }
+    units = [
+        TextUnit(id=f"{name}{i}", text="t", document_ids=[doc.document_id])
+        for name, doc in docs.items()
+        for i in (1, 2)
+    ]
+    context = PipelineContext.model_construct(
+        documents=list(docs.values()),
+        text_units=units,
+        translated_units=None,
+        failed_text_unit_ids=failed,
+        item_failed_text_unit_ids=own,
+    )
+    ids = {document_doc_id(doc): name for name, doc in docs.items()}
+    result = run_failures(context, units)
+    assert (
+        tuple(
+            tuple(sorted(ids[d] for d in group))
+            for group in (
+                result.failed,
+                result.counted,
+                result.claims_missing,
+                result.gleaning_missing,
+            )
+        )
+        == expected
+    )

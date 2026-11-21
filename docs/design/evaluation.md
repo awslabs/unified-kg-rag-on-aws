@@ -123,6 +123,14 @@ choices:
   (cached, falling back to the first line) or the whole answer. The choice is
   recorded in the manifest and each report, and a comparison warns when its
   runs differ.
+- **`answer_contains` reads the answer proper.** The answer prompt asks for
+  a one-sentence answer on the first line, then its support; the support
+  quotes the context, so it names the gold beside a wrong answer (11 of 72
+  hits on a 3B local model's answers). Containment reads the first line
+  that is no heading (`first_answer_line`, the same line `first_line` and a
+  number gold read), whatever `answer_span` says; a set gold reads as
+  before. The manifest records it (`answer_contains_reads`), so a run saved
+  when containment read the whole answer is not compared with one of now.
 - **A number item is read by one small rule.** `answer_type: number` asks
   whether the answer's first line (or extracted span) states the gold: a
   gold other than 0 when the line writes it anywhere, a gold of 0 when it

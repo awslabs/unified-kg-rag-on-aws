@@ -372,9 +372,10 @@ same content; editing the file or raising the limit retries it after that.
 Only an error of the document's own counts toward that limit (a response
 that does not parse or was cut off, a request the model rejects for its
 content); an outage or a bad setting fails every document alike and excludes
-none. Claims are optional: when only claim extraction failed, for
-an error of the unit's own, the document is indexed without those claims,
-counted for none, and the next run extracts them once more. Which errors
+none. Claims and gleaning are optional: when only claim extraction or
+gleaning failed, for an error of the unit's own (gleaning output cut off at
+the cap, say), the document is indexed without those claims or that
+gleaning, counted for none, and the next run tries them once more. Which errors
 count, resuming a failed stage and write failures:
 [Operator Runbook: Failed documents](../operations.md#failed-documents).
 

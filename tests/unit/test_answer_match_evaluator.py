@@ -809,6 +809,56 @@ class TestExtractedSpan:
         report = await _ascore(evaluator, "The clause does not apply.", "No")
         assert _values(report)["exact_match"] == 1.0
 
+    @pytest.mark.parametrize(
+        ("answer", "span", "gold", "first_line"),
+        [
+            # ARCH baseline: 34 of 150 answers were scored on "yes"/"no"
+            # though no gold was a yes/no answer.
+            (
+                "Yes, Tom Hood wrote it.\nSupport: [1]",
+                "yes",
+                "Tom Hood",
+                "Yes, Tom Hood wrote it.",
+            ),
+            (
+                "Vendor: the clause does not apply.",
+                "no",
+                "Vendor",
+                "Vendor: the clause does not apply.",
+            ),
+            ("네, 서울입니다.", "네", "서울", "네, 서울입니다."),
+        ],
+    )
+    async def test_a_yes_no_span_is_the_span_only_for_a_yes_no_gold(
+        self, mocker, config, answer: str, span: str, gold: str, first_line: str
+    ) -> None:
+        evaluator, _ = _extracting(mocker, config, span)
+        report = await _ascore(evaluator, answer, gold)
+        assert report.metadata["scored_span"] == first_line
+        assert report.metadata["answer_span_fallback"]
+        assert _values(report)["token_f1"] > 0.0
+        # The same span stays the span for a yes/no gold (the span cache
+        # holds the model's reply, not the gold's reading of it).
+        report = await _ascore(evaluator, answer, span)
+        assert report.metadata["scored_span"] == span
+        assert "answer_span_fallback" not in report.metadata
+        assert _values(report)["exact_match"] == 1.0
+
+    async def test_a_yes_no_alias_makes_a_yes_no_gold(self, mocker, config) -> None:
+        evaluator, _ = _extracting(mocker, config, "yes")
+        result = EvaluationResult(
+            query_id="q",
+            question="Is it signed?",
+            generated_answer="Yes, it is signed.",
+            ground_truth="signed",
+            metadata={"answer_aliases": ["yes"]},
+        )
+        report = await evaluator.aevaluate_single(
+            EvaluationQuery(query_id="q", question="Is it signed?"), result, "signed"
+        )
+        assert report.metadata["scored_span"] == "yes"
+        assert _values(report)["exact_match"] == 1.0
+
     async def test_no_reference_makes_no_model_call(self, mocker, config) -> None:
         evaluator, chain = _extracting(mocker, config, "Depot")
         report = await _ascore(evaluator, _DEPOT_ANSWER, "")
@@ -829,6 +879,39 @@ class TestExtractedSpan:
         setup = mocker.patch.object(answer_match_evaluator, "setup_chain")
         AnswerMatchEvaluator(config)
         setup.assert_not_called()
+
+
+class TestContainsReadsTheAnswerProper:
+    """``answer_contains`` reads the answer's first line, not the support
+    after it, which quotes the context (ARCH baseline: 11 of 72 hits named
+    the gold only there, beside a wrong answer)."""
+
+    @pytest.mark.parametrize(
+        ("answer", "gold", "expected"),
+        [
+            (
+                "Answer: The parent company is Apple Records.\n\n"
+                "Support: Apple Records is a division of Apple Corps Ltd.",
+                "Apple Corps",
+                0.0,
+            ),
+            ("## Answer\nApple Corps owns it.\n\nSupport: ...", "Apple Corps", 1.0),
+            # A yes/no gold by the first line's polarity, not the support's.
+            ("The clause does not apply.\nSupport: yes, it was signed.", "yes", 0.0),
+            ("Yes, it was signed.\nSupport: no clause says otherwise.", "yes", 1.0),
+        ],
+    )
+    @pytest.mark.parametrize("span", ["first_line", "full"])
+    def test_the_support_is_not_read(
+        self, config: Config, span: str, answer: str, gold: str, expected: float
+    ) -> None:
+        config.evaluation.answer_span = span
+        assert _values(_report(config, answer, gold, {}))["answer_contains"] == expected
+
+    def test_the_manifest_records_it(self, config: Config) -> None:
+        assert answer_match_evaluator.answer_scoring(config)[
+            "answer_contains_reads"
+        ] == ("first_line")
 
 
 class TestHotpotQARule:
