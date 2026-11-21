@@ -3126,7 +3126,7 @@
     "lexical/simple": {
      "failed": 0,
      "metrics": {
-      "answer_contains": 0.2631578947368421,
+      "answer_contains": 0.21052631578947367,
       "attributable_fraction": 0.9157894736842105,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
@@ -3325,7 +3325,7 @@
      "failed": 0,
      "metrics": {
       "answer_contains": 0.21052631578947367,
-      "attributable_fraction": 0.7631578947368421,
+      "attributable_fraction": 0.768421052631579,
       "citation_precision": 1.0,
       "citation_precision_passages": 1.0,
       "citation_recall": 1.0,
@@ -3732,7 +3732,7 @@
       "mrr": 1.0,
       "ndcg_at_k": 1.0,
       "recall_at_k": 1.0,
-      "token_f1": 0.041195519456389024
+      "token_f1": 0.03450655624568668
      },
      "queries": 23
     },

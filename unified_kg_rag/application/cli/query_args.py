@@ -218,8 +218,10 @@ def add_query_arguments(
         "--top-k",
         type=positive_int,
         default=10,
-        help="Set the maximum number of search results (times "
-        "--retrieval-multiplier; default 10)",
+        help="Set the most results a retrieval-only search returns (times "
+        "--retrieval-multiplier; default 10), cut by rank after fusion and "
+        "rerank. An answer's context may hold more: each strategy reads "
+        "wider pools of its own",
     )
     parser.add_argument(
         "--retrieval-multiplier",

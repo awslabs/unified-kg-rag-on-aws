@@ -473,3 +473,24 @@ def test_a_latin_term_in_korean_text_is_found(tmp_path: Path, analyzer: str) -> 
             _assert_same_lexical_ranking(sqlite, container, queries)
     for query, hits in zip(queries, theirs, strict=True):
         assert {str(r.source) for r in hits} == expected[query], query
+
+
+@pytest.mark.parametrize(
+    "search_type", [SearchType.LEXICAL, SearchType.VECTOR, SearchType.HYBRID]
+)
+def test_equal_scores_rank_by_id_on_both_stores(
+    tmp_path: Path, search_type: SearchType
+) -> None:
+    # Twelve units of one text score alike. OpenSearch ranked such a tie in
+    # its index (bulk write) order, so a cut through it kept other units
+    # after a rebuild, and other units than the embedded engine, which
+    # breaks a tie by id: an incremental index and a clean build of one
+    # corpus answered differently. Written in reverse id order here.
+    units = [TextUnit(id=f"t{i:02d}", text="widget supplier ledger") for i in range(12)]
+    with _indexed_pair(tmp_path, units[::-1], "standard") as pair:
+        found = {
+            h.kind: [str(r.source) for r in _search(h, search_type, ["widget"], 5)[0]]
+            for h in pair
+        }
+    expected = [f"t{i:02d}" for i in range(5)]
+    assert found == {"sqlite": expected, "container": expected}

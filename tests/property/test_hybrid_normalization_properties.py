@@ -56,8 +56,9 @@ def test_raising_a_hit_score_never_lowers_its_combined_score(
 
 @given(lexical=_hits, vector=_hits)
 def test_lexical_weight_one_reproduces_lexical_order(lexical, vector) -> None:
-    ranked = sorted(lexical, key=lambda hit: hit[1], reverse=True)
-    fused = combine_min_max([ranked, vector], [1.0, 0.0])
+    # The lexical order, equal scores by id (whatever order they came in).
+    ranked = sorted(lexical, key=lambda hit: (-hit[1], hit[0]))
+    fused = combine_min_max([lexical, vector], [1.0, 0.0])
     lexical_ids = {d for d, _ in ranked}
     # Lexical hits come first, in lexical order; vector-only hits score 0.
     assert [d for d, _ in fused[: len(ranked)]] == [d for d, _ in ranked]

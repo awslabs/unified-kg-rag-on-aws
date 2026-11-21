@@ -936,6 +936,22 @@ def test_sort_orders_by_each_field_in_turn_missing_last(engine) -> None:
     assert {hit["_score"] for hit in response["hits"]["hits"]} == {1.0}
 
 
+def test_a_sort_on_the_score_ranks_as_the_relevance_order(engine) -> None:
+    # The retriever sends a scored search's order as OpenSearch takes it:
+    # by score, equal scores by id; the engine's own ranking is that order.
+    engine.bulk_index(INDEX, [{"id": f"x{i}", "rank": i % 3} for i in range(9)])
+    query = {"terms": {"rank": [0, 1]}}
+    sort = [{"_score": {"order": "desc"}}, {"id": {"order": "asc"}}]
+    response = _search(engine, query, size=4, body={"sort": sort})
+    hits = response["hits"]["hits"]
+    assert [hit["_id"] for hit in hits] == _ids(engine, query, size=4)
+    assert [hit["sort"] for hit in hits] == [
+        [hit["_score"], hit["_id"]] for hit in hits
+    ]
+    ascending = [{"_score": {"order": "asc"}}, {"id": {"order": "desc"}}]
+    assert _ids(engine, query, size=2, body={"sort": ascending})[0] != hits[0]["_id"]
+
+
 def test_a_sorted_search_parses_its_sort_once(engine, monkeypatch) -> None:
     # Parsed per comparison it took most of a sorted page walk's time.
     from unified_kg_rag.adapters.local.search_engine import query as query_module

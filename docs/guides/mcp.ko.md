@@ -46,7 +46,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 
 | 도구 | 하는 일 | 모델 호출 |
 |---|---|---|
-| `kg_search` | 검색만 합니다. 질의(어느 언어든)에 대한 근거 콘텐츠를 순위대로 돌려주며, `strategy`, `search_type`, `top_k`, `filters`는 `run-rag --mode search`와 같습니다 | 전략의 질의 처리, 질의 임베딩, 재순위화 |
+| `kg_search` | 검색만 합니다. 질의(어느 언어든)에 대한 근거 콘텐츠를 순위대로 최대 `top_k`개 돌려주며, `strategy`, `search_type`, `top_k`, `filters`는 `run-rag --mode search`와 같습니다 | 전략의 질의 처리, 질의 임베딩, 재순위화 |
 | `kg_answer` | RAG 답변 전체와 답변 거절 필드(`abstained`, `abstention_reason`)를 먼저, 그다음 답변의 근거 레코드와 `usage`. `records`: `cited`(기본값: 답변이 인용한 출처와 모델 작성 섹션. `global`이나 `drift` 답변처럼 하나도 인용하지 않으면 앞의 `mcp.uncited_records`개, `records_kept: top`), `all`(답변 모델이 본 모든 출처. 답변이 인용할 수 있는 모델 작성 섹션인 global 검색의 핵심 요점과 DRIFT의 중간 답변이 먼저), `none`. 실제 적용된 값은 `records_kept`. `degraded`는 답변이 빠뜨린 단계(부분 답변: 각 `step`, `reason`, `error_type`), `citations_unresolved`는 실패한 계보(lineage) 읽기입니다. 후속 질문이면 지금까지의 대화를 `history`로 넘깁니다(아래 참고) | 위의 호출, `history`가 있으면 후속 질문 재작성, 답변 생성 |
 | `kg_get_entity` | `id`, `iri`, `name`으로 엔터티를 찾습니다(이름은 먼저 정확히 일치하는 것을 찾고(전략이 이름을 연결하는 방식대로 대소문자, 아랍어 알레프 형태, `ё`/`е` 차이는 무시), 없으면 가장 비슷한 이름을 찾고 `match: search`로 표시) | 없음 |
 | `kg_neighbors` | 한 엔터티에서 `max_hops` 안에 있는 엔터티와 그 사이의 관계 | 없음 |
@@ -136,7 +136,7 @@ id, 시드 그래프의 계보 유닛)나 호출의 `filters`가 제외한 청�
 | `mcp.tools` | 여섯 개 모두 | 제공할 도구. `kg_answer`를 빼면 답변 모델을 호출하지 않음 |
 | `mcp.allowed_namespaces` | `[]` | 호출이 추가로 지정할 수 있는 네임스페이스 |
 | `mcp.strategies` | 모든 전략 | `kg_search`와 `kg_answer`가 실행할 수 있는 전략. 목록에 `auto`가 있으면 `auto`도 목록 안에서만 라우팅하고, 네임스페이스가 목록의 전략을 하나도 제공하지 않으면 모델 호출 전에 거부 |
-| `mcp.max_top_k` | `20` | 검색의 `top_k`, `kg_get_entity`의 `limit`, `kg_get_chunks`의 `ids` |
+| `mcp.max_top_k` | `20` | 검색의 `top_k`(`kg_search`가 돌려주는 레코드 수의 상한. `kg_answer`의 답변이 읽는 문맥은 전략마다 더 넓으며 `records: all`이 그 목록입니다), `kg_get_entity`의 `limit`, `kg_get_chunks`의 `ids` |
 | `mcp.max_hops`, `mcp.max_neighbors` | `2`, `50` | `kg_neighbors` 탐색 |
 | `mcp.max_query_chars` | `2000` | 질의나 엔터티 이름 |
 | `mcp.max_text_chars`, `mcp.max_response_chars` | `2000`, `60000` | 레코드 하나의 텍스트, 응답 하나의 레코드 |

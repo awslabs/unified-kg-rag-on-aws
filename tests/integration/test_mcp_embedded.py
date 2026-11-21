@@ -155,6 +155,27 @@ async def test_kg_search_returns_chunks_with_their_documents(
     assert result.usage["llm_calls"] >= 1
 
 
+@pytest.mark.parametrize("strategy", ["mix", "hybrid", "naive", "iterative", "ppr"])
+async def test_top_k_bounds_what_a_search_returns_not_the_answers_context(
+    tools: KnowledgeGraphTools, strategy: str
+) -> None:
+    # kg_search's top_k ("results to return", at most mcp.max_top_k)
+    # returned every result of a strategy's own pools: LightRAG's per-type
+    # floors (40 entities and relationships, 20 chunks), iterative's rounds,
+    # ppr's passages and entities. The search is cut by rank; the pools the
+    # answer reads are not.
+    question = "Who stores the widgets for Vendor?"
+    wide = await tools.search(question, strategy=strategy, top_k=20)
+    assert len(wide.records) > 2, [r.kind for r in wide.records]
+    for top_k in (1, 2):
+        result = await tools.search(question, strategy=strategy, top_k=top_k)
+        assert [r.source_id for r in result.records] == [
+            r.source_id for r in wide.records[:top_k]
+        ]
+    answer = await tools.answer(question, strategy=strategy, top_k=1, records="all")
+    assert len(answer.records) > 1
+
+
 async def test_kg_answer_answers_with_its_sources(tools: KnowledgeGraphTools) -> None:
     result = await tools.answer("Who stores the widgets for Vendor?", strategy="mix")
     assert result.answer == ANSWER

@@ -475,7 +475,9 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
     ) -> list[Document]:
         """Sync ``invoke``: runs :meth:`aretrieve` on a new event loop, so it
         cannot be called from inside a running one (use ``ainvoke`` there)."""
-        return self._to_documents(asyncio.run(self.aretrieve(SearchQuery(query=query))))
+        return self._to_documents(
+            asyncio.run(self.aretrieve(self._langchain_query(query)))
+        )
 
     async def _aget_relevant_documents(
         self,
@@ -484,7 +486,12 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         run_manager: AsyncCallbackManagerForRetrieverRun,
     ) -> list[Document]:
         """``ainvoke``: awaits :meth:`aretrieve` on the caller's event loop."""
-        return self._to_documents(await self.aretrieve(SearchQuery(query=query)))
+        return self._to_documents(await self.aretrieve(self._langchain_query(query)))
+
+    def _langchain_query(self, query: str) -> SearchQuery:
+        """The search a LangChain ``invoke`` of ``query`` runs: of the
+        config's ``search.search_type``, as a query that names none."""
+        return SearchQuery(query=query, search_type=self._config.search.search_type)
 
     @staticmethod
     def _to_documents(results: list[RetrievalResult]) -> list[Document]:

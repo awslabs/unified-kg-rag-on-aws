@@ -249,8 +249,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - Retrieval `ndcg_at_k` (binary relevance, log2 discount), and several cutoffs: `evaluation.retrieval_k` takes a
   list, the first keeping the `*_at_k` names, each further k adding `hit_at_<k>`, `recall_at_<k>`, `ndcg_at_<k>`.
 - `search.search_type`, the search type of a query that names none (hybrid), so a `run-eval --arm` compares hybrid
-  with lexical or vector in one paired run. The console's questions and the MCP tools read it too when they name
-  none (they sent hybrid).
+  with lexical or vector in one paired run. The console's questions, the MCP tools and the LangChain retriever
+  interface (a retriever's `invoke` / `ainvoke`) read it too when they name none (they sent hybrid).
 - Embedding usage for every provider (`embedding_calls`, `embedding_input_tokens`, `embedding_estimated_calls`;
   `usage_schema` 4) and `models.prices.<id>.embedding_per_million_tokens`, which every USD figure adds. The console's
   dashboard sums and prices the embedding role's and model's rows too, and names an embedding model without a price.
@@ -387,6 +387,15 @@ Bugs present in 0.3.0.
 - The guardrail's client made 4 requests per screening call, not 3: it set botocore's `max_attempts`, which counts
   retries only, where every other client of the package sets `total_max_attempts`. A stalled guardrail held a query for
   up to about 160 s (10 s connect + 30 s read per request); it is now about 120 s.
+- Equal scores ranked in OpenSearch's index order, so a cut through a tie kept other results after a rebuild (an
+  incremental index and a clean full build of the same corpus answered 3 to 9 of 36 questions differently on the
+  containers, 1 on the embedded stores) and other results than the embedded engine, which ranks a tie by id. A search
+  scored by relevance now sorts by score, then id, on OpenSearch, and the hybrid fusion (`combine_min_max`) ranks equal
+  scores by id instead of by the order the hits came in.
+- `top_k` did not bound what a search returns: `kg_search` with `top_k` 1 returned 49 records for `mix`, `hybrid` and
+  `iterative`, 17 for `ppr` and 12 for `naive` (a strategy's own pools: LightRAG's per-type floors, iterative's
+  rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
+  results to `top_k` (times `retrieval_multiplier`) by rank; an answer's context keeps the strategy's pools.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
   out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items
