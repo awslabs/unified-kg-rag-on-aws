@@ -171,6 +171,23 @@ so an inline `# gitleaks:allow` added later does not clear it. A test that needs
 `userinfo_url` (`tests/fixtures/url_credentials.py`); a document writes the password as a placeholder (`<password>`).
 `tests/unit/test_no_literal_url_credentials.py` fails on a literal in any tracked file.
 
+gitleaks (default rules) finds no secret in the tree or the history: its false positives are listed by fingerprint in
+[`.gitleaksignore`](./.gitleaksignore), each with what it matched. Scan a clone, not the work tree (`gitleaks dir`
+also reads untracked files such as `__pycache__/`), with the image pinned by digest:
+
+```bash
+git clone --quiet . /tmp/gitleaks-scan
+docker run --rm -v /tmp/gitleaks-scan:/repo:ro -w /repo \
+  zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+  git . --log-opts=HEAD --redact --no-banner   # the history; then `dir .` for the tree
+```
+
+(`--log-opts=HEAD` reads the checked-out branch's commits; without it gitleaks reads every ref the clone has.)
+
+A new finding that is not a secret gets its fingerprint (from `--report-format json`) and a comment in
+`.gitleaksignore`. A tree fingerprint holds the line number, so an edit above a listed line moves it: replace the
+entry.
+
 ### Pins Dependabot does not move
 
 [Dependabot](./.github/dependabot.yml) updates both uv locks, the console's npm lock (`console/web`), the SHA-pinned
@@ -363,6 +380,24 @@ unit test fails when a page is stale):
   when most deployments set it.
 - [docs/reference/cli.md](./docs/reference/cli.md): every CLI flag has a user-facing `help=`. After adding or
   changing a flag, run `uv run python scripts/gen_cli_reference.py`.
+
+### Deprecating a public name
+
+A public name is one a user writes: a name of the root package (`from unified_kg_rag import ...`), a field or keyword
+of one, a CLI flag, a configuration key or its `UKR__` variable. Renaming or replacing one keeps the old name working
+as a deprecated alias for at least one minor release:
+
+- **What is deprecated.** An alias that maps to its replacement in one place (`DEPRECATED_KEYS` for configuration
+  keys, `domain/models/namespace.py` for the namespace's old names); an old and a new name given different values are
+  refused. Behaviour that goes with no replacement is a *Breaking change*, not a deprecation.
+- **How users are warned.** Each use warns, naming the replacement: a `DeprecationWarning` at the caller's line for
+  Python (`shared.utils.deprecation.warn_deprecated`), a WARNING when the configuration loads for a key or variable,
+  a stderr line for a CLI flag. The release's `CHANGELOG.md` lists each alias under *Deprecated*, with the release
+  that removes it, and *Upgrading* says what to change.
+- **When it is removed.** In the next minor release after the one that deprecates it (deprecated in 0.4, removed in
+  0.5.0), listed under that release's *Breaking changes*. `REMOVED_IN` in `shared/utils/deprecation.py` names that
+  release, and `tests/unit/test_deprecation_policy.py` fails once `__version__` reaches it: remove the aliases then,
+  or move the release and say why in the changelog. The names deprecated now are removed in 0.5.0.
 
 ### Releasing
 

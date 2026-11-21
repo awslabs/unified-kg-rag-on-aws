@@ -751,12 +751,55 @@ def _head_joined_by_hand(source: Source) -> Iterator[tuple[int, str]]:
                 yield node.lineno, ast.unparse(node)[:80]
 
 
+# The logger methods whose arguments after the first are written into the line.
+_LOG_METHODS = frozenset(
+    {"debug", "info", "warning", "error", "exception", "critical", "log"}
+)
+
+
+def _plural_head(node: ast.AST) -> bool:
+    """``xs[:k]`` of a name that reads as a list (``errors``, ``stats.ids``):
+    a head written whole is the list's repr. ``entity_id[:8]`` or
+    ``text[:200]`` cuts a string."""
+    if not _head(node):
+        return False
+    assert isinstance(node, ast.Subscript)
+    value = node.value
+    name = (
+        value.id
+        if isinstance(value, ast.Name)
+        else value.attr if isinstance(value, ast.Attribute) else ""
+    )
+    return name.endswith("s") and not name.endswith("ss")
+
+
+def _head_written_whole(source: Source) -> Iterator[tuple[int, str]]:
+    """A list's first ``k`` items written as the list itself, its repr
+    (``['a', 'b']``), with no word of the rest: an argument a logger call
+    writes into the line, or an f-string field."""
+    for node in ast.walk(source.tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _LOG_METHODS
+        ):
+            written = node.args[1:]
+        elif isinstance(node, ast.FormattedValue):
+            written = [node.value]
+        else:
+            continue
+        if any(_plural_head(arg) for arg in written):
+            yield node.lineno, ast.unparse(node)[:80]
+
+
 # A hand-written "the first N, and N more" of a list of names: the count of
-# the rest in an f-string, a bare "and others", or the first N joined by hand.
+# the rest in an f-string, a bare "and others", the first N joined by hand,
+# or the first N written as a list.
 _NAME_TRUNCATION = any_of(
     _rest_counted_by_hand,
     lines_matching(re.compile(r"' and others'")),
     _head_joined_by_hand,
+    _head_written_whole,
 )
 
 GUARDS = [
@@ -1122,12 +1165,6 @@ GUARDS = [
                 "the known names a refused plan may use, in the error the "
                 "planner's repair prompt shows the model: model-visible text",
             ),
-            "adapters/storage/opensearch_indexer.py::"
-            "OpenSearchIndexer._prepare_documents": (
-                1,
-                "pending: the vector indexer's rework (ARCH CD-2) owns this "
-                "file; its 'e.g.' list moves to first_names with it",
-            ),
         },
     ),
 ]
@@ -1250,6 +1287,13 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (_NAME_TRUNCATION, 'm = ", ".join(x[:10]) + ", ..."\n', 1),
         (_NAME_TRUNCATION, 'm = "; ".join(e[:3])\n', 1),
         (_NAME_TRUNCATION, 'm = ", ".join(f"{r}" for r in rs[:10])\n', 1),
+        # The first N written as the list itself (RV6-6).
+        (_NAME_TRUNCATION, 'logger.warning("%s errors: %s", t, stats.errors[:2])\n', 1),
+        (_NAME_TRUNCATION, 'raise E(f"failed: {stats.errors[:1]}")\n', 1),
+        (_NAME_TRUNCATION, 'logger.info("%s of %s", ids[:5], n)\n', 1),
+        # A string cut, not a list: an id prefix, an excerpt.
+        (_NAME_TRUNCATION, 'logger.debug("entity %s", entity_id[:8])\n', []),
+        (_NAME_TRUNCATION, 'm = f"{text[:200]} ({address[:20]})"\n', []),
         # A path or a sentence, not a list: another separator, or a tail cut.
         (_NAME_TRUNCATION, 'k = ".".join(parts[:i])\n', []),
         (_NAME_TRUNCATION, 'm = ", ".join(sections[:-1])\n', []),

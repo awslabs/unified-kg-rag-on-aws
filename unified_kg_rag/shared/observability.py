@@ -76,8 +76,11 @@ _NAMESPACE = "kg_rag."
 SESSION_ID = "session.id"
 USER_ID = "user.id"
 # The ids one span attribute (a retrieval's source ids, a query's cited
-# ids) or one list of a query's audit record keeps: a bound on the record's
-# size, as trace backends cap an attribute's (its count stays complete).
+# ids) or one list of a query's audit record keeps (its count stays
+# complete). A size choice, not a backend's limit: OpenTelemetry's SDK caps
+# how many attributes a span has (128), not a list attribute's length, and
+# no trace backend's list limit is followed. It bounds a span's and a
+# record's size whatever a query retrieves.
 MAX_RECORDED_IDS = 50
 
 SpanKind = Literal["internal", "client"]

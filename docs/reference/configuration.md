@@ -1410,7 +1410,7 @@ Each takes the value of the key it replaces, except:
 
 ## Deprecated keys
 
-These keys still load, into the key or keys that replace them, with a WARNING. A key that governed several callers loads into each; one set beside a replacement to another value fails the load, naming both.
+These keys still load, into the key or keys that replace them, with a WARNING, until 0.5.0 removes them. A key that governed several callers loads into each; one set beside a replacement to another value fails the load, naming both.
 
 | Deprecated key | Loads into |
 |---|---|

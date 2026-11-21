@@ -69,26 +69,28 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    ([Deprecated keys](docs/reference/configuration.md#deprecated-keys) lists where each one goes) and
    `evaluation.prices` to `models.prices`. Python code that reads or sets them, or reads
    `EvaluationResult.enable_thinking`, needs the change now (*Breaking changes*); replace the deprecated Python names
-   (`on_answer_chunk`, `RAGInput.enable_thinking`, `TransientRetryConfig`) before they are removed.
+   (`on_answer_chunk`, `RAGInput.enable_thinking`, `TransientRetryConfig`) before 0.5.0 removes them.
 2. A CDK deployment's Korean indices were built with `cjk`, and the stacks now map `ko` to `cjk_script_split` (*Fixed*):
    an incremental run stops before any write (`'<field>' uses 'cjk' (needs 'cjk_script_split')`) until one run with
    `indexing.reset: true` rebuilds them ([Re-ingest](docs/operations.md#re-ingest)); deploy with
-   `-c opensearch_korean_analyzer=cjk` to keep them until then. A namespace indexed incrementally keeps the name
-   matches 0.3.0's MinHash index made among the names it holds: a run
-   matches its delta's names with the new index; its community reports keep 0.3.0's depths, which global search reads
-   one or more levels too coarse beside the depths a later run writes (*Breaking changes*); and its documents have no
-   path filters (*Added*), so a query with `attr_file` or `attr_folder` is refused there. Run with
-   `indexing.reset: true` (on every backend) to match the whole corpus again, write every report at its depth and
-   stamp the path filters. With
-   `processing.deduplicate` on, deduplication decides otherwise both ways (*Fixed*): the numbers rule keeps template
-   documents 0.3.0 dropped as copies, which the next run indexes as new documents, and the exact index finds
+   `-c opensearch_korean_analyzer=cjk` to keep them until then.
+3. A namespace indexed incrementally keeps the name matches 0.3.0's MinHash index made among the names it holds: a run
+   matches its delta's names with the new index. Run with `indexing.reset: true` (on every backend) to match the whole
+   corpus again.
+4. A namespace indexed incrementally keeps its community reports at 0.3.0's depths, which global search reads one or
+   more levels too coarse beside the depths a later run writes (*Breaking changes*). Run with `indexing.reset: true`
+   (on every backend) to write every report at its depth.
+5. The documents of a namespace indexed incrementally have no path filters (*Added*), so a query with `attr_file` or
+   `attr_folder` is refused there. Run with `indexing.reset: true` (on every backend) to stamp them.
+6. With `processing.deduplicate` on, deduplication decides otherwise both ways (*Fixed*): the numbers rule keeps
+   template documents 0.3.0 dropped as copies, which the next run indexes as new documents, and the exact index finds
    near-copies 0.3.0 missed, so a run drops more of them and an incremental run deletes the copies 0.3.0 indexed
    beside their originals (its WARNING names them; `indexing.max_deletion_share` stops a run deleting past its share
    until confirmed, and its question counts these copies apart from files gone from the corpus). Raise
    `processing.deduplicate_similarity_threshold` to 0.97, which reads about as 0.3.0's 0.9 did, to keep them.
-3. A build record written by 0.3.0 has no `answer_fingerprints`: a report or description summary setting changed since
+7. A build record written by 0.3.0 has no `answer_fingerprints`: a report or description summary setting changed since
    that build is named as a rebuild reason (`answer_settings`) only after the next full build records them.
-4. The `text_chunking` and `description_summarization` prompts changed (*Fixed*): what they made re-keys, and no reset
+8. The `text_chunking` and `description_summarization` prompts changed (*Fixed*): what they made re-keys, and no reset
    is needed (a `custom_prompts` human override of either keeps its keys). With `chunker_type: intelligent`, the
    default, the stored chunk-boundary answers no longer match: the next run asks the chunking model again once per
    pre-chunk worth a call (the boundary calls `run-ingestion --estimate` counts) for every document it chunks (each
@@ -96,9 +98,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    embedded again. The last full build's description summaries read as made under other settings (`answer_settings`):
    incremental runs keep them, and the next full build summarizes every entity and relationship over the threshold
    again (one call each).
-5. Name the namespace `namespace` where you set it (*Deprecated*): `--namespace` for `--suffix`,
+9. Name the namespace `namespace` where you set it (*Deprecated*): `--namespace` for `--suffix`,
    `processing.document_parsing.namespace` (`UKR__PROCESSING__DOCUMENT_PARSING__NAMESPACE`) for `index_value`,
-   `RAGInput.namespace` for `suffix`, `run-eval --arm ...,namespace=` for `suffix=`. The old names still work.
+   `RAGInput.namespace` for `suffix`, `run-eval --arm ...,namespace=` for `suffix=`. The old names still work until
+   0.5.0.
 
 ### Added
 
@@ -342,8 +345,15 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   component on its own, packed in rows largest first, as the console's Graph page did, and the Graph page draws
   `graph.visualization.interactive.max_nodes` nodes (it drew 600 whatever that said). Its default is 600 (from 2000):
   laying out 600 nodes takes about 1.4 s, 2000 about 15 s. Set it to 2000 for the former interactive page.
+- A full build on a vector store that cannot page its items (`StoreInspection.scan_items` left at its default, as a
+  custom backend may) skips the visualization export with one WARNING saying why, as the `summary_tree` stage skips its
+  tree; it logged `Visualization data export failed: [configuration] ...` on every build. The store conformance suites
+  also run on a custom backend that `UKR_TEST_BACKEND` names, without editing the test fixtures ([extend
+  guide](docs/guides/extend.md#custom-backends-run-without-aws)).
 
 ### Deprecated
+Each name below warns and still works, and is removed in 0.5.0
+([deprecation policy](CONTRIBUTING.md#deprecating-a-public-name)).
 
 - The namespace's old names warn and still work: `--suffix`, `RAGInput.suffix`,
   `processing.document_parsing.index_value` (file key, `UKR__` variable and Python attribute),

@@ -54,6 +54,11 @@ class ExportWriteError(DataProcessingError, OSError):
     own_text = True
 
 
+class ExportUnsupportedError(ConfigurationError):
+    """The vector store cannot page its items (``StoreInspection.scan_items``
+    left at its "cannot" default): no export can be read from it."""
+
+
 # Ids one graph-store read takes (as the incremental merge reads them).
 _READ_BATCH = 500
 
@@ -63,7 +68,7 @@ def _scan(
 ) -> list[dict[str, Any]]:
     pages = vector.scan_items(kind, suffix)
     if pages is None:
-        raise ConfigurationError(
+        raise ExportUnsupportedError(
             "The vector store cannot page its items: no visualization data "
             "can be read from it"
         )
@@ -127,7 +132,7 @@ def write_visualization_data(
     communities written.
 
     Raises:
-        ConfigurationError: The vector store cannot page its items.
+        ExportUnsupportedError: The vector store cannot page its items.
         StoreConnectionError: A store cannot be reached.
         ExportWriteError: ``path`` (or its folder) cannot be written.
     """
@@ -250,7 +255,7 @@ def current_visualization_data(
     written, ``None`` for an export reused.
 
     Raises:
-        ConfigurationError: The vector store cannot page its items.
+        ExportUnsupportedError: The vector store cannot page its items.
         StoreConnectionError: A store cannot be reached.
     """
     built_at, _ = stored_export(providers, suffix)

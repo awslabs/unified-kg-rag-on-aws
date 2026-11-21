@@ -17,6 +17,10 @@ so one test states a store contract once and runs it on each:
 - ``container+custom-ids`` / ``aws+custom-ids`` (graph suites only,
   :data:`GRAPH_BACKENDS`): the same stores with
   ``indexing.neptune.vertex_ids: custom``.
+- one more backend, a custom one, named by ``UKR_TEST_BACKEND``
+  (``module:attribute`` of an :class:`ExtraBackend`): its stores come from
+  the ``Providers`` it builds, so a backend author runs the suites on it
+  without editing this file.
 - ``aws``: Neptune and OpenSearch Service (``pytest.mark.aws``). The config is
   ``UKR_TEST_CONFIG`` if set, else the defaults; ``UKR__AWS__NEPTUNE__ENDPOINT`` and
   ``UKR__AWS__OPENSEARCH__ENDPOINT`` override the endpoints. Skipped without both
@@ -31,9 +35,11 @@ model is called on any backend.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -71,6 +77,44 @@ CAPABILITIES = {
     "container": _FULL,
     "aws": _FULL,
 }
+
+
+@dataclass(frozen=True)
+class ExtraBackend:
+    """A custom backend the suites run on too: ``UKR_TEST_BACKEND`` names
+    one (``my_package.conformance:BACKEND``).
+
+    ``providers(config, embedding_factory)`` builds the ``Providers`` its
+    stores and retrievers come from (``vector_indexer_factory``,
+    ``graph_indexer_factory``, ``retriever_builders``), with
+    ``embedding_factory``'s embeddings; ``configure(config, tmp_path)``
+    sets what it reads before that (a path under ``tmp_path``).
+    ``capabilities`` are those it has of :data:`CAPABILITIES`' (a test
+    needing another skips it; ``RETRIEVERS`` builds the harness's
+    retrievers)."""
+
+    name: str
+    providers: Callable[[Config, Any], Providers]
+    capabilities: frozenset[str] = frozenset()
+    configure: Callable[[Config, Path], None] | None = None
+
+
+def extra_backend(spec: str | None) -> ExtraBackend | None:
+    """The :class:`ExtraBackend` ``spec`` (``module:attribute``) names."""
+    if not spec:
+        return None
+    module, _, attribute = spec.partition(":")
+    backend = getattr(importlib.import_module(module), attribute)
+    if not isinstance(backend, ExtraBackend):
+        raise TypeError(f"UKR_TEST_BACKEND={spec} is not an ExtraBackend")
+    if backend.name.partition("+")[0] in CAPABILITIES:
+        raise ValueError(f"UKR_TEST_BACKEND={spec}: '{backend.name}' is taken")
+    return backend
+
+
+EXTRA_BACKEND = extra_backend(os.getenv("UKR_TEST_BACKEND"))
+if EXTRA_BACKEND is not None:
+    CAPABILITIES[EXTRA_BACKEND.name] = EXTRA_BACKEND.capabilities
 
 # Vector kinds -> the ``indexing.opensearch`` prefix attribute of their index.
 _VECTOR_PREFIXES = {
@@ -166,9 +210,16 @@ class StoreHarness:
             self.graph_indexer = FakeGraphStore(config)
             self.vector_indexer = FakeVectorStore(config.indexing.opensearch)
             return
-        self.providers = Providers(config, embedding_factory=self.embedding_factory)
+        extra = EXTRA_BACKEND is not None and kind == EXTRA_BACKEND.name
+        self.providers = (
+            EXTRA_BACKEND.providers(config, self.embedding_factory)
+            if EXTRA_BACKEND is not None and extra
+            else Providers(config, embedding_factory=self.embedding_factory)
+        )
         self.graph_indexer = self.providers.build_graph_indexer()
         self.vector_indexer = self.providers.build_vector_indexer()
+        if extra and RETRIEVERS not in self.capabilities:
+            return
         self.graph_retriever = lambda: self.providers.build_retriever(
             RetrieverRole.GRAPH
         )
@@ -226,6 +277,8 @@ class StoreHarness:
         ``graph.communities``).
         """
         scope = suffix or DEFAULT_SUFFIX
+        if self.kind not in ("fake", "sqlite", "container", "aws"):
+            return self._listed_ids(kind, scope)
         if kind in _GRAPH_KINDS:
             return self._graph_ids(kind, scope)
         if self.kind == "fake":
@@ -248,6 +301,19 @@ class StoreHarness:
             },
         )
         return {hit["_id"] for hit in response["hits"]["hits"]}
+
+    def _listed_ids(self, kind: str, suffix: str) -> set[str]:
+        """An :class:`ExtraBackend`'s ids, through its vector store's
+        ``StoreInspection.scan_items`` (skipped where it cannot page them:
+        the graph kinds, or a store left at the "cannot" default)."""
+        pages = (
+            None
+            if kind in _GRAPH_KINDS
+            else self.vector_indexer.scan_items(kind, suffix)
+        )
+        if pages is None:
+            pytest.skip(f"{self.kind} cannot list its {kind} ids")
+        return {str(item["id"]) for page in pages for item in page}
 
     def _graph_ids(self, kind: str, suffix: str) -> set[str]:
         if self.kind == "fake":
@@ -360,6 +426,11 @@ def clear_extraction_records(vector_indexer: Any, suffixes: list[str]) -> None:
 def _harness_config(kind: str, tmp_path: Path) -> Config:
     if kind == "fake":
         return Config()
+    if EXTRA_BACKEND is not None and kind == EXTRA_BACKEND.name:
+        config = Config()
+        if EXTRA_BACKEND.configure is not None:
+            EXTRA_BACKEND.configure(config, tmp_path)
+        return config
     if kind == "sqlite":
         config = Config()
         config.providers.graph.kind = "sqlite"
@@ -383,6 +454,11 @@ BACKENDS = [
     pytest.param("sqlite", id="sqlite"),
     pytest.param("container", id="container"),
     pytest.param("aws", id="aws", marks=pytest.mark.aws),
+    *(
+        [pytest.param(EXTRA_BACKEND.name, id=EXTRA_BACKEND.name)]
+        if EXTRA_BACKEND is not None
+        else []
+    ),
 ]
 
 # A Neptune-only variant of a backend: ``<kind>+<variant>``.

@@ -139,7 +139,7 @@ choices:
   [evaluation output](../reference/evaluation-output.md#answer_match).
 - **Run manifest.** Ingestion records an `IndexBuildRecord` (pipeline id,
   mode, build time, documents, extraction fingerprint and settings, package
-  version, community counters) in the vector index mappings' `_meta` (`VectorIndexer.record_build`),
+  version, community counters) in the vector index mappings' `_meta` (`BuildRecordStore.record_build`),
   read back per queried suffix. The config hash covers only the settings that
   shape answers (§12), so it is equal across environments.
 - **Benchmarks.** `prepare-benchmark` (`evaluation/benchmarks/musique.py`)

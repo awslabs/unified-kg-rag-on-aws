@@ -67,6 +67,7 @@ from unified_kg_rag.ports.indexer import (
 )
 from unified_kg_rag.shared import DataProcessingError, NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils import ERRORS_SHOWN, first_names
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -1023,7 +1024,7 @@ class IndexingManager:
                     "ids failed; they keep citing the old ids, which stay "
                     "stored until a later run retries: %s",
                     suffix,
-                    stats.errors[:1],
+                    first_names(stats.errors, ERRORS_SHOWN, separator="; "),
                 )
             if stats.total_items or stats.failed_items:
                 results[f"vector_report_findings_{suffix}"] = stats
@@ -1267,7 +1268,8 @@ class IndexingManager:
         stats = self.vector_indexer.write_extraction_records({key: note}, suffix=suffix)
         if stats.failed_items:
             raise DataProcessingError(
-                f"Writing the note '{key}' of '{suffix}' failed: {stats.errors[:1]}"
+                f"Writing the note '{key}' of '{suffix}' failed: "
+                f"{first_names(stats.errors, ERRORS_SHOWN, separator='; ')}"
             )
 
     def _delete_note(self, key: str, suffix: str) -> None:
@@ -1516,7 +1518,11 @@ class IndexingManager:
             logger.warning("Failed items: %s", total_failed)
             for data_type, stats in results.items():
                 if stats and stats.errors:
-                    logger.warning("%s errors: %s", data_type, stats.errors[:2])
+                    logger.warning(
+                        "%s errors: %s",
+                        data_type,
+                        first_names(stats.errors, ERRORS_SHOWN, separator="; "),
+                    )
 
         for task_name, stats in results.items():
             if stats and stats.total_items > 0:

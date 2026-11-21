@@ -38,6 +38,7 @@ from unified_kg_rag.domain.models.config import (
     deprecated_targets,
 )
 from unified_kg_rag.domain.models.evidence import EVIDENCE_KINDS, EVIDENCE_MEANINGS
+from unified_kg_rag.shared.utils.deprecation import REMOVED_IN
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = REPO_ROOT / "docs" / "reference" / "configuration.md"
@@ -351,8 +352,9 @@ def render() -> str:
         "## Deprecated keys",
         "",
         "These keys still load, into the key or keys that replace them, with a "
-        "WARNING. A key that governed several callers loads into each; one set "
-        "beside a replacement to another value fails the load, naming both.",
+        f"WARNING, until {REMOVED_IN} removes them. A key that governed several "
+        "callers loads into each; one set beside a replacement to another value "
+        "fails the load, naming both.",
         "",
         "| Deprecated key | Loads into |",
         "|---|---|",

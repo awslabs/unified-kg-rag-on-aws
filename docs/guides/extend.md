@@ -441,7 +441,10 @@ dispatch edit. The ports, their default adapters and the local ones (the
 abstract writes (`index_*` and `upsert_*` of text units, entities,
 relationships, claims and community reports, `delete_by_id`,
 `delete_document_artifacts`) and `clear()`: that is a store a full build
-writes and every strategy reads. `VectorIndexer` inherits the five concern
+and an incremental run write. The strategies read through the retrievers,
+not the indexer, so the backend also needs a `RetrieverRole.DOCUMENT`
+builder (the retriever row above, `Providers(retriever_builders=...)`).
+`VectorIndexer` inherits the five concern
 ports, so the store already answers each with its "cannot" default; override
 a concern's methods to support it, one port at a time:
 
@@ -450,16 +453,29 @@ a concern's methods to support it, one port at a time:
 | `ExtractionRecordStore` | re-using each text unit's extraction across runs and documents (§4.1) | every text unit is extracted on every run |
 | `SummaryTreeStore` | the `raptor` / `tree` strategies (§6.5); `scan_text_unit_pages` also samples the stored text of an incremental run's unchanged documents for the corpus-language check | the summary_tree stage skips with a warning |
 | `BuildRecordStore` | the build record: which run built the namespace, under which settings and with which artifacts, checked before a run and named in `run-eval`'s manifest | no record (the run reports it `unsupported`), so no check that reads it refuses a run |
-| `StoreInspection` | `run-describe` and the export (§5.8); `holds_any_text_unit`, which tells a seed-only build without a registry that the index is empty | `run-describe` and the export refuse the namespace; that build asks to be confirmed |
+| `StoreInspection` | `run-describe` and the export (§5.8); `holds_any_text_unit`, which tells a seed-only build without a registry that the index is empty | `run-describe` and the export refuse the namespace; a full build's visualization export (`graph.visualization.export_data`) skips with a warning; that build asks to be confirmed |
 | `SchemaAnnotationStore` | applying a schema edit's annotations in place (both indexers) | only a reset applies them |
 
 The application passes each caller the port it uses (the summary-tree stage
 a `SummaryTreeStore`, the extraction store an `ExtractionRecordStore`), so a
-method's contract is in its port's docstring. Run the conformance suites a
-backend passes (`tests/integration/test_vector_store_conformance.py`,
-`test_summary_tree_conformance.py`) on it, and pin its method shapes to each
-port it implements as `tests/unit/test_fake_port_signatures.py` pins the
-packaged stores.
+method's contract is in its port's docstring. Run the conformance suites
+(`tests/integration/test_vector_store_conformance.py`,
+`test_summary_tree_conformance.py`) on it without editing them: an
+`ExtraBackend` (`tests/fixtures/store_backends.py`) names the backend and
+builds the `Providers` its stores and retrievers come from, and
+`UKR_TEST_BACKEND=<module>:<attribute>` adds it to the suites' backends
+(`tests/fixtures/toy_vector_backend.py` registers the smallest one):
+
+```bash
+UKR_TEST_BACKEND=my_backend.conformance:BACKEND \
+  uv run pytest tests/integration/test_vector_store_conformance.py -k my-backend
+```
+
+A test of a concern the backend leaves at its default fails, as it states
+that concern's contract; a test needing a capability it does not declare
+(`ExtraBackend.capabilities`) skips. Pin its method shapes to each port it
+implements as `tests/unit/test_fake_port_signatures.py` pins the packaged
+stores.
 
 **Errors from a custom backend** are classified by type, never by message
 (§8.1): raise a `ConnectionError` or `ConfigurationError` subclass (the typed

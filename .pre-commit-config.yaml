@@ -40,7 +40,7 @@ repos:
       - id: no-literal-url-credentials
         name: no literal URL credentials
         language: pygrep
-        entry: '[A-Za-z][A-Za-z0-9+.-]*://[^\s:/?#\[\]@''\"`]*:(?![{$<%(])[^\s:/?#\[\]@''\"`]+@'
+        entry: '[A-Za-z][A-Za-z0-9+.-]*://[^\s:/?#\[\]@''\"`]*:(?![{$<%(])[^\s/@''\"`\[\]]+@'
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0

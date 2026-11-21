@@ -93,7 +93,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.logging import log_error, log_failure, warn_once
 from unified_kg_rag.shared.store_lookups import StoreLookupCache, lookup_cache
-from unified_kg_rag.shared.utils.common import as_error_code, compute_hash
+from unified_kg_rag.shared.utils.common import as_error_code, compute_hash, first_names
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
 
@@ -2975,10 +2975,10 @@ class OpenSearchIndexer(VectorIndexer):
 
         if embedding_failed_ids:
             logger.warning(
-                "Skipped %s of %s items with missing embeddings (e.g. %s)",
+                "Skipped %s of %s items with missing embeddings: %s",
                 len(embedding_failed_ids),
                 len(items),
-                ", ".join(str(i) for i in embedding_failed_ids[:5]),
+                first_names(str(i) for i in embedding_failed_ids),
             )
         return docs, failed_ids
 

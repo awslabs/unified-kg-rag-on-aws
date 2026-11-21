@@ -92,6 +92,10 @@ def _planted(user: str, password: str, rest: str, scheme: str = "https") -> str:
         _planted("", "pw", "redis.example:6379", "redis"),
         _planted("app_user", "kJ8mN2pQ9rT5", "db.example.internal", "postgres"),
         f'url = "{_planted("user", "token", "example.org/o.ttl")}"',
+        # A password holding ':', '#' or '?', as GitLab's rule reports it.
+        _planted("svc", "pa:ss1word", "db.example"),
+        _planted("svc", "pa#ss1word", "db.example"),
+        _planted("svc", "pa?ss1word", "db.example"),
     ],
 )
 def test_the_guard_matches_a_literal_credential(line: str) -> None:

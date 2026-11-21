@@ -1,0 +1,24 @@
+# Findings of gitleaks' default rules (v8.30.1) that are not secrets, one
+# fingerprint each: `gitleaks dir` reports <path>:<rule>:<line> for the tree,
+# `gitleaks git` <commit>:<path>:<rule>:<line> for the history. How to run
+# the scan: CONTRIBUTING.md, "Checks to run before pushing".
+#
+# generic-api-key on the console's "Tokens per question" label (the key
+# `evaluate.tokensPerQuery`):
+console/web/src/i18n/locales/de.json:generic-api-key:416
+console/web/src/i18n/locales/en.json:generic-api-key:416
+console/web/src/i18n/locales/es.json:generic-api-key:433
+console/web/src/i18n/locales/it.json:generic-api-key:433
+console/web/src/i18n/locales/pt.json:generic-api-key:433
+console/web/src/i18n/locales/zh.json:generic-api-key:399
+0ec646c166d45d7e3c4424bac677f1cd0d6e9950:console/web/src/i18n/locales/de.json:generic-api-key:291
+0ec646c166d45d7e3c4424bac677f1cd0d6e9950:console/web/src/i18n/locales/en.json:generic-api-key:291
+0ec646c166d45d7e3c4424bac677f1cd0d6e9950:console/web/src/i18n/locales/es.json:generic-api-key:308
+0ec646c166d45d7e3c4424bac677f1cd0d6e9950:console/web/src/i18n/locales/it.json:generic-api-key:308
+0ec646c166d45d7e3c4424bac677f1cd0d6e9950:console/web/src/i18n/locales/pt.json:generic-api-key:308
+0ec646c166d45d7e3c4424bac677f1cd0d6e9950:console/web/src/i18n/locales/zh.json:generic-api-key:274
+# generic-api-key on the tokenizer name `claude-opus-4.7`:
+unified_kg_rag/domain/languages/profile.py:generic-api-key:19
+unified_kg_rag/ports/model_factory.py:generic-api-key:187
+cefa8a5b84896398a8e73b921b5b27a4f39ae051:unified_kg_rag/domain/languages/profile.py:generic-api-key:19
+cefa8a5b84896398a8e73b921b5b27a4f39ae051:unified_kg_rag/ports/model_factory.py:generic-api-key:187
