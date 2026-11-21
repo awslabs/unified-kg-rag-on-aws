@@ -47,7 +47,7 @@ def _make_strategy(config: Config):
 
 
 def _query(**kw) -> SearchQuery:
-    return SearchQuery(query="what is the claim", entity_focus=["Alice"], **kw)
+    return SearchQuery(query="what did Alice claim", entity_focus=["Alice"], **kw)
 
 
 def _doc_index_prefixes(os_r: FakeRetriever) -> list[str]:

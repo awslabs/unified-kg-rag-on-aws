@@ -66,13 +66,19 @@ def test_items_are_stripped_non_empty_and_unique(text: str) -> None:
     assert len(items) == len(set(items))
 
 
-def test_the_entity_prompt_asks_for_an_empty_answer_when_there_is_none() -> None:
+def test_the_entity_prompt_asks_for_an_empty_answer_naming_no_placeholder() -> None:
     """The prompt never said what to answer for a query that names no
     entity, and a model answered "none", which was then searched for as a
     focus entity (ARCH E9). It asks for an empty answer, which splits into
-    no entity, so the strategies search by the query itself."""
+    no entity, so the strategies search by the query itself. It names no
+    placeholder word: told not to write "none", a 3B model wrote "none" for
+    8 of 30 questions that name entities. (A placeholder the model writes
+    anyway is read as no focus: ``linking.focus_names_anything``.)"""
     from unified_kg_rag.domain.prompts.retrieval import EntityExtractionPrompt
 
-    assert "return an empty answer" in EntityExtractionPrompt.system_prompt_template
+    prompt = EntityExtractionPrompt.system_prompt_template
+    assert "names no entity at all, leave the answer empty" in prompt
+    lowered = prompt.casefold()
+    assert '"none"' not in lowered and "n/a" not in lowered
     assert split_entity_list("") == []
     assert split_entity_list("  \n") == []

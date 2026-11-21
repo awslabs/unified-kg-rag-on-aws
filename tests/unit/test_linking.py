@@ -15,6 +15,7 @@ from unified_kg_rag.domain.models import RetrievalResult
 from unified_kg_rag.domain.retrieval.linking import (
     choose_links,
     covers,
+    focus_names_anything,
     hit_name,
     link_key,
     name_terms,
@@ -336,3 +337,32 @@ def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> No
     lookalike = f"Zorblax {mention.split()[-1]}"
     assert choose_links(lookalike, hits, policy="rank") == []
     assert [h.source for h in choose_links(mention, hits, policy="cover")] == ["e1"]
+
+
+@pytest.mark.parametrize(
+    ("focus", "hits", "text", "names"),
+    [
+        # A placeholder for "no entity" is no stored name and no query word,
+        # in any language (no word list).
+        (["none"], [[_hit("Nonesuch Ltd", 0.4)]], "What is the main topic?", False),
+        (["Empty"], [[]], "Summarize the key points.", False),
+        (["없음"], [[_hit("Vendor", 0.3)]], "이 문서의 주요 주제는?", False),
+        # One grounded name keeps the whole focus.
+        (["Vendor", "none"], [[_hit("vendor", 0.9)], []], "q", True),
+        # A stored entity the query does not spell (translated, implicit).
+        (["Buyer Corp"], [[_hit("BUYER CORP.", 0.8)]], "구매사는 누구인가?", True),
+        # A word of the query that no entity is: kept as written.
+        (["key points"], [[]], "Summarize the key points.", True),
+        # Han without spaces is read by its bigrams.
+        (["东芝"], [[]], "东芝电子的总部在哪里", True),
+        # A hit without a source links nothing.
+        (["Vendor"], [[_hit("Vendor", 0.9, source="")]], "q", False),
+    ],
+)
+def test_a_focus_names_something_stored_or_written_in_the_query(
+    focus: list[str],
+    hits: list[list[RetrievalResult]],
+    text: str,
+    names: bool,
+) -> None:
+    assert focus_names_anything(focus, hits, text) is names

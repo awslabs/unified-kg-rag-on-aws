@@ -173,7 +173,9 @@ async def test_no_membership_falls_back_to_similar_reports(config: Config) -> No
     # document filter's walk, a failed graph walk) names no community.
     strategy, documents = _strategy(config, [_entity("a", None)])
 
-    result = await strategy.asearch(SearchQuery(query="q", entity_focus=["Acme"]))
+    result = await strategy.asearch(
+        SearchQuery(query="who is Acme", entity_focus=["Acme"])
+    )
 
     (similar,) = _report_calls(config, documents)
     assert similar.query == "Acme"
@@ -224,7 +226,9 @@ async def test_similarity_is_the_default(config: Config) -> None:
     strategy, documents = _strategy(config, _MEMBERS)
     config.search.local_search.report_selection = "similarity"
 
-    result = await strategy.asearch(SearchQuery(query="q", entity_focus=["Acme"]))
+    result = await strategy.asearch(
+        SearchQuery(query="who is Acme", entity_focus=["Acme"])
+    )
 
     (similar,) = _report_calls(config, documents)
     assert similar.query == "Acme"
@@ -253,7 +257,7 @@ async def test_a_caller_filter_without_the_member_communities_reads_similar_ones
     strategy, documents = _strategy(config, _MEMBERS)
 
     result = await strategy.asearch(
-        SearchQuery(query="q", entity_focus=["Acme"], filters=filters)
+        SearchQuery(query="who is Acme", entity_focus=["Acme"], filters=filters)
     )
 
     assert result.metadata["report_selection"] == selection
@@ -281,7 +285,7 @@ async def test_any_of_groups_judge_the_members_too(
     # no level-0 community read the member reports and found none.
     strategy, _ = _strategy(config, _MEMBERS)
     result = await strategy.asearch(
-        SearchQuery(query="q", entity_focus=["Acme"], any_of=any_of)
+        SearchQuery(query="who is Acme", entity_focus=["Acme"], any_of=any_of)
     )
     assert result.metadata["report_selection"] == selection
 

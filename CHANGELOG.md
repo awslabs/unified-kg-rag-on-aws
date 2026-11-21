@@ -701,7 +701,10 @@ Bugs present in 0.3.0.
   summary-tree texts) could return text over the limit (15 of 300 mixed-script samples, by up to 202 tokens); it keeps
   the longest prefix that fits, by binary search as the local counter does.
 - The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
-  searched for as a focus entity; it asks for an empty answer, so the strategies search by the query.
+  searched for as a focus entity. Local search now reads a focus that names no stored entity and no word of the query
+  (a placeholder such as "none" or "Empty", in any language) as no focus and searches by the query, and the prompt
+  asks for an empty answer without naming a placeholder: a wording that named "none" made a 3B model answer "none"
+  for 8 of 30 MuSiQue questions that do name entities.
 - The embedded engine's `cjk` analyzer (the `ja` and `zh` default) did not fold width or drop stop words as
   OpenSearch's does: fullwidth "ＡＢＣ" and halfwidth "ｶﾀｶﾅ" did not match "abc" and "カタカナ". It follows OpenSearch 2.19's
   chain (checked with `_analyze`); queries see it at once (the engine analyzes stored text when it loads). A live
