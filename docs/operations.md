@@ -1190,9 +1190,19 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   A server-side output cap on claims thus re-indexes such documents once and
   excludes none. Both runs warn with the files. Any other claim extraction
   failure (an outage, a record not stored) fails the document, uncounted, as
-  in the other stages. Gleaning is not treated so: a unit whose gleaning
-  failed has no final graph record to store, so its document must be
-  extracted again.
+  in the other stages.
+- **Gleaning is optional too.** When only the gleaning of some of a
+  document's units failed, for an error of their own (output cut off at the
+  output cap, unparseable, a request rejected for its content), the
+  document is indexed with those units' extraction, without their gleaning
+  (and claims), and counted for none. It is recorded `FAILED` once
+  (`error_info`: `indexed without the gleaning (and claims) of some text
+  units ...`, not in `failed_documents`), so the next run extracts and
+  gleans those units again (a unit whose gleaning failed has no final record
+  to store); failing so again, it is recorded `PROCESSED` with their
+  extraction, and later runs do not try again until its content or the
+  extraction settings change. Both runs warn with the files. A gleaning
+  outage fails the document, uncounted, as in the other stages.
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of
   its own, output that failed alike on several documents included (see

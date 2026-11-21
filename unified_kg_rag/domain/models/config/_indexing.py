@@ -854,9 +854,9 @@ class IndexingConfig(ConfigSection):
         "changes or this value is raised. Output that fails alike on several "
         "documents (a server-side output cap) counts so too, once a run; "
         "changed extraction settings start the count over. A unit's own "
-        "claim extraction error never counts: the document is indexed "
-        "without those claims. A claim extraction outage fails the document "
-        "uncounted, as any outage does.",
+        "claim extraction or gleaning error never counts: the document is "
+        "indexed without those claims or that gleaning. A claim extraction "
+        "or gleaning outage fails the document uncounted, as any outage does.",
         json_schema_extra=evidence("operational"),
     )
     max_document_attempts: int = Field(

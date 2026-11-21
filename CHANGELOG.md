@@ -703,6 +703,12 @@ Bugs present in 0.3.0.
 - Bedrock's token-limit cut (`BedrockTokenCounter.truncate_to_token_limit`: embedding inputs, ragas contexts,
   summary-tree texts) could return text over the limit (15 of 300 mixed-script samples, by up to 202 tokens); it keeps
   the longest prefix that fits, by binary search as the local counter does.
+- A gleaning call cut at the output cap (or unparseable) recorded its document FAILED and counted it toward
+  `indexing.max_document_failures`, although the document's extraction was indexed: the 3B local baseline's registry
+  held 35% of the corpus FAILED while 13% lacked an extraction. Gleaning is optional, as claims are: such a document is
+  recorded FAILED once under an `error_info` that says it is indexed without that gleaning (not in
+  `failed_documents`, counted for none), the next run extracts and gleans those units again, and failing so again it
+  is recorded PROCESSED. A gleaning outage still fails the document, uncounted.
 - `answer_contains` (the headline `answer_match` metric) read the whole answer, so a wrong first-line answer whose
   support quoted the context scored 1 (11 of 72 hits on the 3B local baseline's answers). It reads the answer's first
   line that is no heading, the one-sentence answer the answer prompt asks for; number and set golds read as before.

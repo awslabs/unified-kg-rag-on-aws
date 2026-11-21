@@ -324,12 +324,16 @@ def test_a_rerun_pipeline_id_does_not_record_a_stage_it_no_longer_runs(
     source = tmp_path / "corpus"
     _write_corpus(source, {"d5.txt": _FAILING})
     states = []
+    infos: list[str] = []
     for gleaning in (True, False):
         config.processing.gleaning.enabled = gleaning
         e2e._ingest(config, providers, source, tmp_path / "P1")
         (record,) = all_records(providers.build_doc_status())
         states.append((record.status.value, record.failure_count))
-    assert states == [("failed", 1), ("processed", 0)], states
+        infos.append(record.error_info or "")
+    # Gleaning alone failed: indexed, recorded FAILED once, uncounted.
+    assert states == [("failed", 0), ("processed", 0)], states
+    assert infos[0].startswith("indexed without the gleaning"), infos
 
 
 def test_an_explicit_resume_point_is_kept_past_a_failed_stage(
