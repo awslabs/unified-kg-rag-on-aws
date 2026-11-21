@@ -402,7 +402,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - One layout and one node cap for a drawn graph: `run-visualization`'s interactive page lays out each connected
   component on its own, packed in rows largest first, as the console's Graph page did, and the Graph page draws
   `graph.visualization.interactive.max_nodes` nodes (it drew 600 whatever that said). Its default is 600 (from 2000):
-  laying out 600 nodes takes about 1.4 s, 2000 about 15 s. Set it to 2000 for the former interactive page.
+  laying out 600 nodes takes about 1.4 s, 2000 about 15 s, on a sparse graph (2.1-2.9 s on a dense one). Set it to
+  2000 for the former interactive page.
 - A full build on a vector store that cannot page its items (`StoreInspection.scan_items` left at its default, as a
   custom backend may) skips the visualization export with one WARNING saying why, as the `summary_tree` stage skips its
   tree; it logged `Visualization data export failed: [configuration] ...` on every build. The store conformance suites
@@ -412,8 +413,6 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `ExtractionRecordStore` is left at its default logs one WARNING at its first recovery note: the notes of a removal
   and a commit (`pending-strip`, `pending-commit`, `pending-writes`, `stripped-summaries`, `outdated-reports`) live in
   that store, so a run stopped mid-removal or mid-commit cannot resume them.
-  laying out 600 nodes takes about 1.4 s, 2000 about 15 s, on a sparse graph (2.1-2.9 s on a dense one). Set it to
-  2000 for the former interactive page.
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0
