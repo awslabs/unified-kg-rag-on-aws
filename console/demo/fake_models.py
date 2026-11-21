@@ -7,7 +7,10 @@ and ``/api/embed``), so ``providers.llm.kind: ollama`` pointed at it runs
 ingestion, every search strategy and the LLM-free evaluators end to end
 offline. Answers are built from the prompt itself: the extraction prompt
 gets the demo corpus' entities that its passage names, the answer prompt
-the context sentences that share the most words with the question. It is
+the context sentences that share the most words with the question, and the
+retrieval steps that read the question (keywords, report ratings, the
+iterative controller, DRIFT's primer and actions) answer from its words and
+the entities their context names, so each strategy's own path runs. It is
 for screenshots, recordings and tests of the console, not a model: real
 quality needs a real model (``--models bedrock`` or ``--models ollama``).
 
@@ -19,6 +22,7 @@ Run it on its own::
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import math
@@ -86,6 +90,12 @@ _STOP = frozenset(
 def tokens(text: str) -> list[str]:
     """Lower-cased words, and character bigrams of Hangul, Kana and Han
     runs (which have no spaces to split on)."""
+    return list(_tokens(text))
+
+
+@functools.lru_cache(maxsize=65536)
+def _tokens(text: str) -> tuple[str, ...]:
+    # The same context sentences are read by many prompts of a run.
     found: list[str] = []
     for word in _WORD.findall(text.lower()):
         word = word.strip(".,'")
@@ -95,7 +105,7 @@ def tokens(text: str) -> list[str]:
             found.extend(word[i : i + 2] for i in range(len(word) - 1))
         else:
             found.append(word)
-    return found
+    return tuple(found)
 
 
 def embed(text: str, dimensions: int) -> list[float]:
@@ -106,7 +116,11 @@ def embed(text: str, dimensions: int) -> list[float]:
         digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
         index = int.from_bytes(digest[:4], "little") % dimensions
         vector[index] += 1.0 if digest[4] % 2 else -1.0
-    norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+    if not any(vector):
+        # The tokens' signs cancelled out: cosine similarity rejects a zero
+        # vector, so such a text gets the vector of no words.
+        return embed("", dimensions)
+    norm = math.sqrt(sum(v * v for v in vector))
     return [v / norm for v in vector]
 
 
@@ -247,6 +261,67 @@ def best_sentences(
     return unique
 
 
+def _overlap(question: str, text: str) -> int:
+    """How many of ``question``'s tokens ``text`` has."""
+    return len(set(tokens(question)) & set(tokens(text)))
+
+
+def _leads(question: str, text: str, skip: str = "") -> list[str]:
+    """The entities named in ``text``'s sentences closest to ``question``
+    that neither ``question`` nor ``skip`` names, in the order of those
+    sentences: the entities a next search would start from."""
+    known = {n.lower() for n in _names_in(question + "\n" + skip)}
+    found = [
+        name
+        for sentence, _ in best_sentences(question, text, 3)
+        for name in _names_in(sentence)
+        if name.lower() not in known
+    ]
+    return list(dict.fromkeys(found))
+
+
+def keywords(question: str) -> dict[str, list[str]]:
+    """LightRAG's keywords: the entities the question names (low level) and
+    up to three of its other words (high level, the relationship search)."""
+    names = _names_in(question)
+    named = set(tokens(" ".join(names)))
+    words = [t for t in dict.fromkeys(tokens(question)) if t not in named]
+    return {"high_level_keywords": words[:3], "low_level_keywords": names}
+
+
+def controller(human: str) -> str:
+    """The iterative controller: the context sentences closest to the
+    question are its facts; an entity they name that the question does not,
+    not searched yet, is the bridge to search next. Sufficient when there
+    is none."""
+    question = _between(human, 'QUESTION: "', '"\n')
+    searched = _between(human, "<searched>", "</searched>")
+    context = _between(human, "<context>", "</context>")
+    facts = [s for s, _ in best_sentences(question, context, 3)]
+    bridges = _leads(question, context, searched)[:1]
+    return json.dumps(
+        {
+            "sufficient": not bridges,
+            "known_facts": facts,
+            "bridge_entities": bridges,
+            "next_queries": bridges,
+        }
+    )
+
+
+def drift_step(question: str, text: str, asked: str = "") -> dict[str, Any]:
+    """A DRIFT primer or action answer: the sentences of ``text`` closest to
+    the overall question, a score of 20 per question token the best one has,
+    and one follow-up, the next entity they name (``_leads``)."""
+    picked = [s for s, _ in best_sentences(question, text, 3)]
+    best = max((_overlap(question, s) for s in picked), default=0)
+    return {
+        "answer": " ".join(picked),
+        "score": min(100, 20 * best),
+        "follow_up_queries": _leads(question, text, asked)[:1],
+    }
+
+
 def _map_report(human: str, sentence: str) -> list[str]:
     """The id of the report of a global map prompt that holds
     ``sentence``, as the map prompt asks a point to name it."""
@@ -366,7 +441,12 @@ def respond(system: str, human: str) -> tuple[str, bool]:
         return "<claims></claims>", False
     # The prompt wraps after "information": match within one line.
     if "deciding whether the provided information" in system:
-        return json.dumps({"reason": "It names the parties.", "rating": 4}), False
+        # The 0-5 scale of the prompt: one point per question token the
+        # report has.
+        question = _between(human, 'Question: "', '"\n')
+        summary = _between(human, "<community_summary>", "</community_summary>")
+        rating = min(5, _overlap(question, summary))
+        return json.dumps({"reason": "It names the parties.", "rating": rating}), False
     if "community analysis" in system:
         return community_report(human), False
     if "summaries of a summary tree" in system:
@@ -389,16 +469,8 @@ def respond(system: str, human: str) -> tuple[str, bool]:
     if "specialized entity extraction expert" in system:
         return ", ".join(_names_in(human)) or "none", False
     if "expert keyword extractor" in system:
-        names = _names_in(human)
-        return (
-            json.dumps(
-                {
-                    "high_level_keywords": ["supply chain", "delivery terms"],
-                    "low_level_keywords": names or ["lidar"],
-                }
-            ),
-            False,
-        )
+        question = _between(human, 'Query: "', '"\n') or human
+        return json.dumps(keywords(question), ensure_ascii=False), False
     if "KEY POINTS from the reports" in system:
         question = _between(human, 'User Question: "', '"')
         reports = _between(human, "<community_reports>", "</community_reports>")
@@ -412,22 +484,43 @@ def respond(system: str, human: str) -> tuple[str, bool]:
         ]
         return json.dumps({"points": points}), False
     if "DRIFT search primer" in system:
+        step = drift_step(
+            _between(human, 'USER QUERY: "', '"\n'),
+            _between(human, "<community_reports>", "</community_reports>"),
+        )
         return (
             json.dumps(
                 {
-                    "intermediate_answer": "See the reports.",
-                    "score": 50,
-                    "follow_up_queries": [],
-                }
+                    "intermediate_answer": step["answer"] or "See the reports.",
+                    "score": step["score"],
+                    "follow_up_queries": step["follow_up_queries"],
+                },
+                ensure_ascii=False,
             ),
             False,
         )
     if "DRIFT action step" in system:
-        return json.dumps({"response": "", "score": 0, "follow_up_queries": []}), False
+        follow_up = _between(human, 'FOLLOW-UP QUESTION: "', '"\n')
+        step = drift_step(
+            _between(human, 'OVERALL QUESTION: "', '"\n'),
+            _between(human, "<context>", "</context>"),
+            follow_up,
+        )
+        return (
+            json.dumps(
+                {
+                    "response": step["answer"],
+                    "score": step["score"],
+                    "follow_up_queries": step["follow_up_queries"],
+                },
+                ensure_ascii=False,
+            ),
+            False,
+        )
     if "hypothetical answer" in system:
         return "A hypothetical report about the parties the question names.", False
     if "You control the retrieval" in system:
-        return json.dumps({"sufficient": True, "known_facts": []}), False
+        return controller(human), False
     if "answers questions from knowledge graph context" in system or (
         "questions about a dataset by synthesizing" in system
     ):

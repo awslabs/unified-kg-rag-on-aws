@@ -221,12 +221,13 @@ jobs:
           tests/integration/test_seed_properties_embedded.py
 
   golden-metrics:
-    # Retrieval and answer scores of every strategy and search type on the
-    # synthetic structural and bridge corpora, with deterministic fake models
-    # on the embedded stores, against tests/fixtures/golden_metrics.json:
-    # any change of a gated score fails (docs/guides/evaluate.md "Golden
-    # metrics"; scripts/gen_golden_metrics.py regenerates the baseline).
-    # About 2 minutes of tests on one core, 1.5 on four workers.
+    # Retrieval and answer scores, and each answer's fingerprint, of every
+    # strategy and search type on the synthetic structural and bridge
+    # corpora, with deterministic fake models on the embedded stores, against
+    # tests/fixtures/golden_metrics.json: any change of a gated score or
+    # fingerprint fails (docs/guides/evaluate.md "Golden metrics";
+    # scripts/gen_golden_metrics.py regenerates the baseline).
+    # About 3 minutes of tests on one core, 1.2 on four workers.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

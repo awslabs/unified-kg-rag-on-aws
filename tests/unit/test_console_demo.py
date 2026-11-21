@@ -126,12 +126,19 @@ def test_the_fake_models_answer_every_prompt_kind() -> None:
         'Query: "What are the overall themes?"',
     )
     assert routed == "global"
-    rating, _ = fake.respond(
-        "You are a helpful assistant responsible for deciding whether the provided "
-        "information is useful",
-        "x",
-    )
-    assert json.loads(rating)["rating"] == 4
+
+    # The rating counts the question's words the report has (0-5).
+    def rate(summary: str) -> int:
+        rating, _ = fake.respond(
+            "You are a helpful assistant responsible for deciding whether the "
+            "provided information is useful",
+            'Question: "Who inspects Globex Sensors?"\n\nInformation:\n'
+            f"<community_summary>\n{summary}\n</community_summary>",
+        )
+        return int(json.loads(rating)["rating"])
+
+    assert rate("Orion Labs inspects Globex Sensors.") == 3
+    assert rate("Umbra Freight delivers to Kestrel Depot.") == 0
     verdict = json.loads(fake.judge("Answer 1:\nlong long answer\n\nAnswer 2:\nshort"))
     assert verdict["comprehensiveness"]["winner"] == "1"
     assert verdict["directness"]["winner"] == "2"

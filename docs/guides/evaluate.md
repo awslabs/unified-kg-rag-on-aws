@@ -617,19 +617,39 @@ that without a model or AWS: it ingests the repository's synthetic corpora
 on the embedded SQLite stores with deterministic fake models and runs
 `run-eval` with every strategy and every `--search-type` (`hybrid`,
 `lexical` and `vector`), scored by the LLM-free evaluators only
-(`retrieval`, `answer_match`, `graph_aware`). Each score must equal the
-committed baseline, `tests/fixtures/golden_metrics.json`.
+(`retrieval`, `answer_match`, `graph_aware`). Each score, and each answer's
+fingerprint, must equal the committed baseline,
+`tests/fixtures/golden_metrics.json`.
 
 - **Data.** The `structural` benchmark (`prepare-benchmark structural
-  --size small --seed 0`, generated at run time, 42 questions) and the
-  English, Korean, Japanese and Chinese bridge questions of
-  `tests/fixtures/bridge_corpus.py` (one each; only the passage citing both
-  facts' people answers it).
+  --size small --seed 0`, generated at run time, 42 questions), a deep
+  variant of it and the English, Korean, Japanese and Chinese bridge
+  questions of `tests/fixtures/bridge_corpus.py` (one each; only the
+  passage citing both facts' people answers it). The deep case is the
+  `medium` world (128 text units, 88 entities) with communities split over
+  5 members, so the community hierarchy has depths -1 to 2 and the RAPTOR
+  tree two levels with more leaves than a tree search reads. It runs the
+  first question of each template and split (24) under `hybrid`.
 - **Models.** `FakeOllama` answering with the console demo's responder:
   extraction finds the corpus' names, the answer is the context sentences
-  that share the most words with the question. Embeddings hash words and
+  that share the most words with the question. The steps of a strategy's
+  own path answer from the question too: LightRAG's high-level keywords are
+  the question's words besides the names it gives, a report's relevance
+  rating counts the question's words it has, the iterative controller asks
+  for the next entity its best context sentences name until it searched
+  it, and DRIFT's primer and actions each follow up one such entity. No
+  answer is chosen with the expected one in view. Embeddings hash words and
   Hangul, Kana and Han bigrams. The reranker is off, so the ranking scored
   is the retrieval's own.
+- **Fingerprints.** The retrieval metrics are near 1.0 for most strategies,
+  so a mean can stay put while the ranking or the context changes. Each
+  answer is therefore also pinned: a digest of the ranked sources and one
+  of the context read and the answer written. A failure names the
+  question and which of the two moved.
+- **Settings off by default.** The deep case runs `global` twice more: with
+  `search.global_search.use_dynamic_selection` on, and with
+  `max_reports_per_level` 4, which makes the cut step down to the coarser
+  level above depth 0.
 - **Splits.** The gate compares the structural benchmark's `test` half and
   the whole of the unsplit bridge set. The `tune` half's differences are
   printed and never fail the job: it is for development (see
@@ -643,7 +663,8 @@ committed baseline, `tests/fixtures/golden_metrics.json`.
 - **What it does not measure.** Answer quality: the fake answers are
   extractive. A change of prompt shows up only in a real-model run.
 
-Run it locally (about two minutes on one core; `-n` spreads its 15 tests):
+Run it locally (about three minutes on one core; `-n` spreads its 20 tests,
+one per case, search type and split):
 
 ```bash
 GOLDEN_METRICS=1 uv run pytest tests/integration/test_golden_metrics.py -n 4

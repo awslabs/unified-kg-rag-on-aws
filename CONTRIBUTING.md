@@ -234,9 +234,9 @@ its reason and an expiry.
   `test_embedded_e2e.py` run against the local containers in `docker/compose.local.yaml` when `LOCAL_STORES=1` is
   set (`LOCAL_STORES_GREMLIN_PORT` / `LOCAL_STORES_OPENSEARCH_PORT` point them at other ports).
 - `tests/integration/test_golden_metrics.py` (the `golden-metrics` CI job) runs when `GOLDEN_METRICS=1` is set: every
-  strategy's scores on the synthetic corpora must equal `tests/fixtures/golden_metrics.json`. A change that moves them
-  on purpose regenerates it with `uv run python scripts/gen_golden_metrics.py` and commits the new baseline
-  ([Evaluation: Golden metrics](docs/guides/evaluate.md#golden-metrics-the-ci-regression-gate)).
+  strategy's scores and answer fingerprints on the synthetic corpora must equal `tests/fixtures/golden_metrics.json`. A
+  change that moves them on purpose regenerates it with `uv run python scripts/gen_golden_metrics.py` and commits the
+  new baseline ([Evaluation: Golden metrics](docs/guides/evaluate.md#golden-metrics-the-ci-regression-gate)).
 - Every test file passes when run on its own: the `test-isolation` CI job runs each unit, integration and property
   test file in a process of its own (`python scripts/check_test_isolation.py tests/unit tests/integration
   tests/property`), so a file that passes only after another bound a lazy import or filled a cache fails there.

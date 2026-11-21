@@ -302,9 +302,13 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   refused (401, saying whether it was missing, sent more than once or malformed). Only behind a proxy that replaces
   (removes or overwrites, never appends to) any copy a client sends.
 - A `golden-metrics` CI job: every strategy and search type answers the synthetic structural and bridge datasets on
-  fake models, and the LLM-free scores of the held-out `test` half must equal `tests/fixtures/golden_metrics.json`,
-  which `scripts/gen_golden_metrics.py` regenerates
-  ([Golden metrics](docs/guides/evaluate.md#golden-metrics-the-ci-regression-gate)).
+  fake models, and the LLM-free scores and each answer's fingerprint (its ranked sources, the context it read and the
+  answer) of the held-out `test` half must equal `tests/fixtures/golden_metrics.json`, which
+  `scripts/gen_golden_metrics.py` regenerates
+  ([Golden metrics](docs/guides/evaluate.md#golden-metrics-the-ci-regression-gate)). A deep case (a community
+  hierarchy of depths -1 to 2, a two-level RAPTOR tree) and fake models that answer each strategy's own steps from
+  the question (LightRAG keywords, report ratings, iterative follow-ups, DRIFT follow-ups) cover every methodology's
+  own path, dynamic community selection and the global cut's step-down included.
 - Path filters: ingestion stamps each document's path relative to the corpus root as the document filter `file`, and
   each folder holding it as `folder`, so `attr_file` and `attr_folder` scope a question to a file or a folder at any
   depth on every store, from a directory corpus too (only `InputDocument.filters` gave a document filters before).

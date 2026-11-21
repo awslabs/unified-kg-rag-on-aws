@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """The golden-metrics regression gate (docs/guides/evaluate.md "Golden
 metrics"): every search strategy and search type answers the synthetic
-structural and bridge datasets on fake models, and every score of a gated
-partition (the structural benchmark's held-out ``test`` half, the whole of
-the unsplit bridge datasets) must equal the committed baseline
-(``tests/fixtures/golden_metrics.json``). The ``tune`` half's differences
-are printed, not gated.
+structural and bridge datasets on fake models, and every score and answer
+fingerprint of a gated partition (the structural benchmarks' held-out
+``test`` half, the whole of the unsplit bridge datasets) must equal the
+committed baseline (``tests/fixtures/golden_metrics.json``). The ``tune``
+half's differences are printed, not gated.
 
-About two minutes on one core (each case and search type is a test of its
-own, so ``-n`` spreads them), so skipped unless ``GOLDEN_METRICS=1`` (the
-``golden-metrics`` CI job sets it)::
+About three minutes on one core (each case, search type and split is a
+test of its own, so ``-n`` spreads them), so skipped unless
+``GOLDEN_METRICS=1`` (the ``golden-metrics`` CI job sets it)::
 
     GOLDEN_METRICS=1 uv run pytest tests/integration/test_golden_metrics.py
 
@@ -35,26 +35,35 @@ pytestmark = [
     pytest.mark.usefixtures("_no_aws"),
     pytest.mark.skipif(
         os.getenv("GOLDEN_METRICS") != "1",
-        reason="set GOLDEN_METRICS=1 (about two minutes)",
+        reason="set GOLDEN_METRICS=1 (about three minutes)",
     ),
 ]
 
 
 @pytest.mark.timeout(600)
 @pytest.mark.parametrize(
-    "search_type", golden_metrics.SEARCH_TYPES, ids=lambda t: t.value
+    ("case", "search_type", "split"),
+    golden_metrics.RUNS,
+    ids=[
+        "-".join([case, search_type.value, *([split] if split else [])])
+        for case, search_type, split in golden_metrics.RUNS
+    ],
 )
-@pytest.mark.parametrize("case", golden_metrics.CASES)
 def test_the_scores_equal_the_golden_baseline(
-    tmp_path: Path, case: str, search_type: SearchType
+    tmp_path: Path, case: str, search_type: SearchType, split: str | None
 ) -> None:
+    splits = (split,) if split else None
     measured = {
         "schema_version": golden_metrics.SCHEMA_VERSION,
         "cases": {
-            case: golden_metrics.measure_case(case, tmp_path / case, (search_type,))
+            case: golden_metrics.measure_case(
+                case, tmp_path / case, (search_type,), splits
+            )
         },
     }
-    baseline = golden_metrics.select(golden_metrics.read_baseline(), case, search_type)
+    baseline = golden_metrics.select(
+        golden_metrics.read_baseline(), case, search_type, split
+    )
     gated, reported = golden_metrics.compare(baseline, measured)
     for line in reported:
         print(f"tune (not gated): {line}")
