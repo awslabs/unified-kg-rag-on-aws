@@ -23,7 +23,7 @@ Each store accepts the fields its indexer writes:
 | Entities | `id`, `name` (`name.keyword`), `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
 | Relationships | `id`, `source_id`, `target_id`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
 | Claims | `id`, `subject_id`, `object_id`, `type`, `status`, `start_date`, `end_date`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Community reports | `id`, `community_id`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| Community reports | `id`, `community_id`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `min_cut_depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Graph entity vertices (Neptune, SQLite) | `id`, `name` (`name.keyword`), `type`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attributes.<key>` |
 
 `name` matches an entity's whole name exactly, on every store (the entities
@@ -112,7 +112,7 @@ falsely (`10/08/2024` sorts before every ISO date, so `{"lte":
 
 **Value typing.** Boolean and numeric fields take their type's values: `in_schema` a
 boolean; `rank`, `confidence`, `weight` and `rating` a number; `n_tokens`,
-`level`, `depth` and `max_cut_depth` an integer. A string for one of them
+`level`, `depth`, `min_cut_depth` and `max_cut_depth` an integer. A string for one of them
 (every `--filters` and `set-filter` value is one, and a dataset or
 `RAGInput.filters` may hold one) is converted before the search, in a list
 and in range bounds too, so every store matches it as it matches the typed
@@ -155,7 +155,7 @@ Neptune with `search.lightrag_search.enable_graph_expansion`); `local` and
 reports (and text units with `search.global_search.text_unit_slots`,
 scoped to the selected reports' communities); `simple` every index the
 pipeline builds. `global` refuses the keys it scopes its own searches by:
-`depth` and `max_cut_depth` (with
+`depth`, `min_cut_depth` and `max_cut_depth` (with
 `search.global_search.use_dynamic_selection`, `depth` and
 `community_id`), and `community_ids` with `text_unit_slots`. `id`,
 `source_id` and `target_id` narrow what `local`, `drift`, `mix` and

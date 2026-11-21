@@ -55,7 +55,15 @@ read stops it before anything is indexed
   run cannot write again (the model failed) may still state what the deleted
   document said: it is flagged `outdated` where it is read (a query's source
   metadata), its namespace lists a rebuild reason
-  ([Rebuild due](#rebuild-due)), and the next run tries again.
+  ([Rebuild due](#rebuild-due)), and the next run tries again. A corpus run
+  cannot delete the last document: a source directory with no file left
+  fails at `document_parsing` ("No supported source files found"), so an
+  unmounted volume never empties the index. Delete it with
+  `DataIngestionPipeline.delete_documents([relative path],
+  source_scope=<the directory's scope>)`
+  ([Python library: Documents from memory](./python-library.md#documents-from-memory)),
+  or retire its scope from a run over another directory
+  (`--retire-source-scope`, [Moving a corpus](#moving-a-corpus)).
 - **Change the extraction settings** (a tuned `custom_prompts` set,
   `entity_types`, an extraction, gleaning or chunking model, chunk sizes,
   translation, resolution): the next run re-extracts the unchanged documents
@@ -221,6 +229,7 @@ cost (`remedy: next_run`).
 |---|---|---|
 | `communities` | The community counters crossed an `indexing.community_compaction` threshold (the WARNING above) | `reset` |
 | `outdated_reports` | The build record lists reports kept after the text they were written from was removed, which a run could not write again (`outdated_reports`, whatever `on_drift_recommendation`) | `next_run`: a model call per report |
+| `community_depths` | The last full build was written by a release before 0.4.0, whose report depths count from the coarsest root: global search's `community_depth` cut reads its reports one or more levels too coarse beside those incremental runs write | `reset`: it writes every report at its depth |
 | `answer_settings` | The community reports or description summaries the last full build wrote were made under other settings (their model, prompt, language, summarization switched on) than the config's: incremental runs write their delta's alone | `reset`: a model call per report or summary |
 | `extraction_settings` | The extraction settings changed since the last run (the changed paths in `settings`) | `next_run`: it extracts every document again |
 | `methodologies` | The config builds a corpus-wide artifact the namespace lacks | `next_run`: it rebuilds the namespace from the stored extractions |

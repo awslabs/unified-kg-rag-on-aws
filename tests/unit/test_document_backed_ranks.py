@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.search_strategies.local_search import LocalSearchSt
 from unified_kg_rag.adapters.storage import neptune_codec
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_lineage
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
@@ -451,7 +452,13 @@ def _community_stage(mocker, communities: list[Community], failed: list[str]):
 
     detector = mocker.MagicMock()
     detector.generate_community_objects.return_value = communities
-    detector.generate_reports.return_value = ([], failed)
+
+    def generate(asked: list[Community], **_: Any) -> tuple[list, list[str]]:
+        # No stored answer: every report is asked of the model.
+        detector.requested_report_count = len(asked)
+        return [], failed
+
+    detector.generate_reports.side_effect = generate
     detector.get_community_metrics.return_value = None
     mocker.patch.object(ps, "CommunityDetector", return_value=detector)
     config = Config()
@@ -514,7 +521,7 @@ def test_the_failure_rate_counts_the_evidenced_communities_only(mocker) -> None:
     # the gate's 5%; 2 of all four would be 18% likely, within it.
     stage, context, _ = _community_stage(mocker, communities, failed=["leaf", "other"])
     stage.config.indexing.max_failure_rate = 0.2
-    with pytest.raises(PipelineStageError, match="for 2 of 2 communities"):
+    with pytest.raises(PipelineStageError, match="for 2 of the 2 reports asked"):
         stage._execute_core(context)
 
 
@@ -603,7 +610,9 @@ def test_report_lineage_keeps_seed_documents_and_the_seed_filter() -> None:
             },
         ),
     ]
-    CommunityDetector._attach_report_lineage([report], [community], units)
+    attach_report_lineage(
+        [report], {community.id: list(community.text_unit_ids or [])}, units
+    )
     assert report.document_ids == ["d1", "seed_graphs/procure/0000-of-0001.jsonl"]
     assert (report.attributes or {})["filters"] == {
         "region": "north",

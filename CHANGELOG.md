@@ -41,9 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   k the coarser levels a corpus produced. A cut at depth D now holds upstream's level-D communities (on LFR graphs of
   500 to 2,000 entities: 13/17/39 at depth 0, as upstream's level 0; 72/116/230 at depth 1, upstream's level 1 holding
   75/126/235 at its `max_cluster_size` 10), so the default depth 2 maps the reports it mapped before on those graphs
-  (the 99-report cap steps it to the same cut, which `global_cut_depth` may name one lower); with
+  (the 99-report cap steps it to the same cut, which `global_cut_depth` may name one lower). A cut over the cap steps
+  down past depth 0 into the coarser levels (a negative `global_cut_depth`), as it stepped down to the root before:
+  each report stores `min_cut_depth`, the shallowest cut it belongs to (`CommunityReport.min_cut_depth`), so a
+  coarser cut holds the first-pass communities no coarser one groups too. On larger graphs the depth-0 cut outgrows
+  the cap (on planted graphs at the defaults: 132 reports at 6,000 entities, 120 at 9,000), so the default query maps a
+  coarser cut there, not the 99 depth-2 reports most similar to the query. With
   `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
-  coarser roots. Stored reports keep their depth until a reset (*Upgrading*).
+  coarser roots. Stored reports keep their depth, and step down to depth 0 only, until a reset (*Upgrading*); a
+  namespace whose last full build an earlier release wrote gets a `community_depths` rebuild reason (remedy `reset`)
+  in `run-describe`, the console, MCP and the run's `rebuild_due`.
 - The CLIs log to stderr in text mode too, so stdout holds only a run's output (`run-rag ... > answer.txt` keeps the
   answer alone); `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
   stderr (`2>&1` keeps both on one stream).
@@ -427,22 +434,29 @@ Bugs present in 0.3.0.
   not parse) recorded its documents `FAILED` uncounted, so every incremental run processed them again and, at
   temperature 0, failed the same way. It now counts toward `indexing.max_document_failures`, as an extraction's own
   error does (an outage still counts for none).
-- Community detection failed a small delta on noise: its gate compared the share of reports without one to
-  `indexing.max_failure_rate`, so a 5-document delta failed with 4 of 11 reports cut off where its full build passed
-  with 6 of 59 at the same chance per report. The gate now reads the rate as that chance and fails when more reports
-  failed than it explains (a one-sided binomial test at 5%): 4 of 11 passes at 0.2, 6 of 11 fails, and many reports
-  fail close to the rate itself. Write failures keep the share gate.
+- Community detection failed a small run on the chance count of a few reports: its gate compared the share of reports
+  without one to `indexing.max_failure_rate`, so a 5-document delta failed with 4 of 11 reports cut off (36%). The
+  gate now reads the rate as the tolerated chance per report, a design choice no run has measured (the delta and its
+  full build, which passed with 6 of 59, do not show one chance: Fisher's exact test gives p = 0.044), and fails when
+  more reports failed than it explains (a one-sided binomial test at 5%), counting the reports asked of the model this
+  run (a report that took its stored answer is no trial, so new reports that all fail cannot hide behind reused ones):
+  4 of 11 passes at 0.2, 6 of 11 fails, and many reports fail close to the rate itself. Write failures keep the share
+  gate.
 - A community report written partly from a deleted or edited document was kept for the other documents' text units
   and served as it was: local, global and DRIFT answers could state the removed text, cited to the remaining
   documents, and once the run ended nothing said so (`rebuild_due_reasons` 0: the WARNING and the drift metric were
   the only trace). The incremental run now writes such a report again from its community's remaining members, by the
   summary tree's rule (a parent's too; a community without a member left loses its report), as a full build's
   detector reads them, one model call each in the indexing stage's usage and the run's budget (none when the input
-  is unchanged: the answer is kept in the extraction store). One it cannot write again stays
+  is unchanged: the answer is kept in the extraction store). One it cannot write again, and a parent that rolls up a
+  child whose report failed in the same run (written without it, it would never be asked again), stays
   flagged `outdated` in the stores (a query reads it in the report's source metadata, and on a global key point drawn
   from it), listed in the build record (`outdated_reports`) and named by every reader of the record as an
   `outdated_reports` rebuild reason (remedy `next_run`; the console words it apart from re-clustering) whatever
-  `on_drift_recommendation` says, until a later run writes it.
+  `on_drift_recommendation` says, until a later run writes it. A note in the extraction store lists the flagged
+  reports until the build record does: a run killed after the removal deleted the documents' registry records, before
+  its refresh, left them flagged and listed nowhere, and the next run now writes them again. A flagged report's text
+  units, documents and path filters no longer name what was removed, so a filter on a deleted file stops matching it.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a
   chunk, LangChain left the response open, holding a model client connection: on an Ollama or OpenAI-compatible server

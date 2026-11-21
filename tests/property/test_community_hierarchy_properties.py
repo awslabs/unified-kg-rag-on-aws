@@ -26,10 +26,10 @@ from unified_kg_rag.domain.ingestion.community_clustering import (
     small_component_nodes,
 )
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
-    LEAF_CUT_DEPTH,
-    community_depths,
+    attach_report_hierarchy,
+    max_cut_depth,
 )
-from unified_kg_rag.domain.models import Community
+from unified_kg_rag.domain.models import Community, CommunityReport
 from unified_kg_rag.domain.models.config import CommunityDetectionConfig
 
 pytestmark = pytest.mark.property
@@ -145,13 +145,19 @@ def test_levels_and_cuts_cover_every_clustered_entity_once(
         )
         for c in communities.values()
     ]
-    depths = community_depths(records)
-    for depth in range(max(depths.values()) + 2):
-        # The cut global search maps at ``community_depth`` = depth.
+    reports = [
+        CommunityReport(id=f"r-{r.id}", name=r.id, community_id=r.id) for r in records
+    ]
+    attach_report_hierarchy(reports, records)
+    depths = [r.depth for r in reports if r.depth is not None]
+    # Every cut global search maps or steps down to, the coarser ones at
+    # negative depths included (and one past each end).
+    for depth in range(min(depths) - 1, max(depths) + 2):
         cut = [
-            communities[cid].nodes
-            for cid, d in depths.items()
-            if d <= depth <= (d if communities[cid].children_ids else LEAF_CUT_DEPTH)
+            communities[r.community_id].nodes
+            for r in reports
+            if r.min_cut_depth is not None
+            and r.min_cut_depth <= depth <= (max_cut_depth(r) or 0)
         ]
         _assert_covers_once(cut, clustered)
 

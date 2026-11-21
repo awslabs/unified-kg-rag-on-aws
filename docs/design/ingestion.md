@@ -349,7 +349,18 @@ gets its models and stores from the run's `Providers` bundle.
   `graphrag/graphs/hierarchical_leiden.py:29-40`), one more per split below
   them, and negative above them (-1 for the first coarser level, so no cut
   at a depth of 0 or more holds a coarser community;
-  `community_clustering._set_depths`, `Hierarchy.first_pass_levels`). Leaf communities
+  `community_clustering._set_depths`, `Hierarchy.first_pass_levels`).
+  `max_levels` caps the first pass too, from the top: a first-pass
+  community whose splits reach `max_levels` levels is dropped and its
+  pieces become first-pass communities at depth 0
+  (`community_clustering._truncate`), where graspologic's
+  `hierarchical_leiden` has no cap. Depth 0 is then finer than upstream's
+  level 0: at the defaults (20, 5) it matched graspologic's level 0 on the
+  four test graphs, at `max_cluster_size` 10 and `max_levels` 3 a planted
+  graph of 2,400 entities had 58 depth-0 communities against 51, and at
+  `max_levels` 2 the LFR graphs 96 and 86 against 23 and 25. Trees get
+  deeper with the corpus, as the resolution limit grows the communities;
+  raise `max_levels` when depth 0 should stay upstream's level 0. Leaf communities
   under `min_community_size` merge into their strongest neighbour, and a
   split community is the union of the pieces it keeps.
   A connected component smaller than `min_community_size` (an isolated

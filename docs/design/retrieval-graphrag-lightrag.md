@@ -255,15 +255,20 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
 #### 6.1.1 Global search (`global_search.py`)
 
 **Which reports.** Each report carries its place in the hierarchy (`level`
-bottom-up, `depth` from the root, parent and children, `max_cut_depth`). The
-cut at depth `D` is every community at depth `D` plus the leaves that stop
-above it (`depth <= D <= max_cut_depth`), MS GraphRAG's roll-up that covers
-every entity once. The depth counts as MS GraphRAG's `community_level`:
-from the first Leiden pass over the whole graph (upstream's level 0,
+bottom-up, `depth` from the first Leiden pass, parent and children,
+`min_cut_depth`, `max_cut_depth`). The cut at depth `D` is every community at
+depth `D` plus the leaves that stop above it and the roots that start below
+it (`min_cut_depth <= D <= max_cut_depth`: a leaf's `max_cut_depth` is
+unbounded, a root's `min_cut_depth` too, and any other community's is one
+below its parent's depth), MS GraphRAG's roll-up that covers every entity
+once. The depth counts as MS GraphRAG's `community_level`: from the first
+Leiden pass over the whole graph (upstream's level 0,
 `graphrag/graphs/hierarchical_leiden.py:29-40`; `read_indexer_reports`
 keeps `level <= community_level`, `query/indexer_adapters.py:87-89,219-225`),
 and the coarser levels built above that pass (§4.3) have negative depths, in
-no cut. On LFR graphs of 500, 1,000 and 2,000 entities the depth-0 cut held
+no cut at a depth of 0 or more. A cut at a negative depth, which only the
+cap's step-down below reaches, holds a coarser level's communities and the
+first-pass communities no coarser one groups (an isolated component). On LFR graphs of 500, 1,000 and 2,000 entities the depth-0 cut held
 13/17/39 reports (upstream's level 0: 13/17/37) and the depth-1 cut
 72/116/230 (upstream's level 1: 75/126/235, at its `max_cluster_size` 10);
 the default depth 2, capped at 99 reports, maps 72/17/39, as it did when the
@@ -279,17 +284,28 @@ as upstream starts at level 0
   `max_result_window` - 1, so the probe fits one request; 99 by default) so a
   cut of exactly the cap is complete. A larger cut gives way to the deepest
   shallower cut that fits (`global_cut_depth`), covering the same entities in
-  broader reports; MS GraphRAG has no cap and maps the whole cut. Only when even the root cut does not fit, or at once under a filter on a report key (`community_id`, `level`, `rating`: a shallower report passes it on its own, not through its members), does a hybrid search,
+  broader reports: past depth 0 into the coarser levels (a negative
+  `global_cut_depth`), as long as the stores hold one (a one-report probe
+  per coarser step). MS GraphRAG has no cap and maps the whole cut; the
+  coarser levels are this hierarchy's own. The depth-0 cut outgrows the cap
+  with the corpus: on planted graphs at the default settings it held 60,
+  132 and 120 reports at 2,400, 6,000 and 9,000 entities, where the coarsest
+  cut held 5, 7 and 6
+  (`tests/unit/test_global_search_logic.py::test_a_large_corpus_cut_over_the_cap_steps_to_a_coarser_level`).
+  Only when even the coarsest cut does not fit, or at once under a filter on a report key (`community_id`, `level`, `rating`: a shallower report passes it on its own, not through its members), does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.
-  The cap counts reports, which bounds the map calls.
+  The cap counts reports, which bounds the map calls. Reports written before
+  `min_cut_depth` was stored step down to depth 0 only, until
+  `indexing.reset: true` writes them again.
 - **Dynamic selection** (`use_dynamic_selection`) — MS GraphRAG's
-  `DynamicCommunitySelection`: rate the root reports for relevance, follow
-  the children of the relevant ones to the leaves, and rate the whole next
-  depth when a depth yields none, down to `community_depth` (MS GraphRAG's
-  `max_level`, which bounds only this fallback). The walk starts at the roots
-  as upstream's does but follows relevant reports to the leaves, where
-  upstream's stops at `community_level`. Ratings run
+  `DynamicCommunitySelection`: rate the depth-0 reports (the first Leiden
+  pass) for relevance, follow the children of the relevant ones to the
+  leaves, and rate the whole next depth when a depth yields none, down to
+  `community_depth` (MS GraphRAG's `max_level`, which bounds only this
+  fallback). The walk starts at depth 0 as upstream's starts at level 0, not
+  at the coarser levels above it, but follows relevant reports to the
+  leaves, where upstream's stops at `community_level`. Ratings run
   `search.max_concurrency` at a time. A rating is upstream's JSON
   (`{"reason": ..., "rating": 0-5}`, `RATE_QUERY`), divided by 5 and
   compared with `relevance_threshold` (0.2: upstream's rating of 1 or more);
@@ -355,7 +371,7 @@ The deliberate differences (a file is relative to the `graphrag/` package):
 | MS GraphRAG | Here | Why | Evidence |
 |---|---|---|---|
 | Relationships grouped by source and target (`index/operations/extract_graph`) | typed, directed relationship ids | two relationship types between a pair stay two facts | design |
-| Leiden: one pass, `max_cluster_size` 10, one trial of one iteration, only the largest component (`use_lcc`) | the same first pass, communities over 20 split again, coarser levels above it, 3 trials with 2 extra iterations, small components skipped | report size against corpus size; the best partition of 3 seeded runs | first pass: `test_community_hierarchy_quality.py`; the rest unmeasured (§4.3) |
+| Leiden: one pass, `max_cluster_size` 10, one trial of one iteration, only the largest component (`use_lcc`); no level cap | the same first pass, communities over 20 split again, coarser levels above it, 3 trials with 2 extra iterations, small components skipped; `max_levels` (5) caps the first pass's splits from the top, so a deeper split tree loses its top and depth 0 is finer than upstream's level 0 | report size against corpus size; the best partition of 3 seeded runs | first pass: `test_community_hierarchy_quality.py`; the cap: §4.3; the rest unmeasured (§4.3) |
 | A reversed pair keeps the last row's weight (`index/operations/cluster_graph.py`) | every relationship between a pair adds its weight | the pair's total strength | unmeasured |
 | Each entity hands the report context one relationship, its first (`graph_context/context_builder.py`); entities without one are left out (`sort_context.py`) | every relationship among the community's entities, in `sort_context`'s order; the unlinked entities last | a report describes the community's relationships | recorded answers: upstream's reports saw 217 of the 380 relationships of 30 communities |
 | Report context 8,000 tokens with communities of at most 10 | 4,000 tokens, communities of at most 20 | cost | unmeasured |
@@ -367,7 +383,7 @@ The deliberate differences (a file is relative to the `graphrag/` package):
 | Local: no walk past the entities' relationships | graph expansion to `search.graph_expansion.max_hops` (3) | multi-hop chains | unmeasured |
 | Local: 20 entities, every in-network relationship plus 10 per entity of the others (`query/context_builder/local_context.py`), shares of 12,000 tokens (`text_unit_prop` 0.5, `community_prop` 0.15) | type quotas (10 entities, 10 relationships at `top_k` 10) and type shares of 30,000 tokens (§7) | one budget model for every strategy | unmeasured |
 | Local reports: the entities' communities at `community_level` | the reports most similar to the query entities | answers | [measured](../concepts/defaults-and-evidence.md#local-report-selection) |
-| Global: the whole cut, shuffled | at most 99 reports, by rank | bounded map calls; repeatable | unmeasured |
+| Global: the whole cut, shuffled | at most 99 reports in rank order: a larger cut gives way to the deepest shallower cut that fits (into the coarser levels above the first pass), and only when none fits, or under a report-key filter, to the 99 of the configured cut most similar to the query | bounded map calls; repeatable | unmeasured |
 | Global: a reduce call over the key points | the key points and up to 4,000 tokens of the reports they cite, no reduce call | answers | [measured](../concepts/defaults-and-evidence.md#global-evidence-cap) |
 | Dynamic selection stops at `community_level` | follows relevant reports to the leaves | — | unmeasured |
 | DRIFT: 20 follow-ups, 3 rounds; a random primer template; open follow-ups shuffled | 10 and 2; the most important report; best-scored first | cost (27 calls at most, not 67); repeatable | unmeasured |

@@ -4,12 +4,17 @@
 ``indexing.max_failure_rate`` tolerates.
 
 The rate is read as the tolerated chance that one item fails (a report the
-model cut off, a write the store rejected). Comparing the observed share
-with it made the gate depend on how many items a run has: a five-document
-delta failed its community detection with 4 of 11 reports cut off (36%)
-where the full build of the same corpus passed with 6 of 59 (10%), at the
-same per-report chance (the ARCH baseline's local run). Counts that small
-cannot tell noise from a cause.
+model cut off, a write the store rejected): a design choice, not a
+measurement. Compared with the observed share, the rate failed a run on
+the chance count of a few items: one failure among 3 is a 33% share. On the
+ARCH baseline's local run a five-document delta failed its community
+detection with 4 of 11 reports cut off (36%), where the full build of the
+same corpus passed with 6 of 59 (10%). Those two runs do not show one
+chance per report (Fisher's exact test on them gives p = 0.044, two-sided:
+a delta's reports come from small subgraphs of another shape); they show
+only that the share gate read 4 of 11 as more than the rate allows, which
+a chance of 0.2 per report makes 16% likely. No held-out run has measured
+the per-report failure chance.
 
 The gate is a one-sided exact binomial test instead: it fails when, at the
 tolerated chance, at least that many failures among that many items would

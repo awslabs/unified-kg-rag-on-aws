@@ -164,7 +164,7 @@ FIELD_KINDS: Mapping[str, FieldKind] = {
     "lineage_complete": FieldKind.BOOLEAN,
     **dict.fromkeys(("rank", "confidence", "weight", "rating"), FieldKind.NUMBER),
     **dict.fromkeys(
-        ("n_tokens", "n_leaves", "level", "depth", "max_cut_depth"),
+        ("n_tokens", "n_leaves", "level", "depth", "min_cut_depth", "max_cut_depth"),
         FieldKind.INTEGER,
     ),
     SOURCE_KINDS_FIELD: FieldKind.SOURCE_KINDS,
@@ -347,6 +347,7 @@ ITEM_FILTER_FIELDS: Mapping[str, FilterFields] = {
                 "document_ids",
                 "level",
                 "depth",
+                "min_cut_depth",
                 "max_cut_depth",
                 "parent_community_id",
                 "child_community_ids",

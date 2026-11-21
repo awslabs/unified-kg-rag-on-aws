@@ -155,7 +155,15 @@ class CommunityDetectionConfig(ConfigSection):
     max_levels: int = Field(
         default=5,
         ge=1,
-        description=("Maximum depth of the " "community hierarchy."),
+        description=(
+            "The most levels the community hierarchy holds: the first Leiden "
+            "pass's splits and the coarser levels above it together. A "
+            "first-pass community whose splits reach this many levels is "
+            "dropped from the top, its pieces taking depth 0 (graspologic's "
+            "hierarchical_leiden has no cap), so depth 0 is then finer than "
+            "MS GraphRAG's level 0; at the defaults (max_cluster_size 20) the "
+            "first pass of the test graphs keeps every level."
+        ),
         json_schema_extra=evidence("unmeasured"),
     )
     trials: int = Field(

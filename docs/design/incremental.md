@@ -569,8 +569,16 @@ rebuild, the only path that re-partitions the whole graph
 report: the summary tree's rule (§6.5) applies, a summary citing a removed
 text unit is made again from what remains. The removal finds the reports
 citing a removed unit and keeping others (a report cites its members' units,
-so a parent's are its children's: the chain up to the root is found), flags
-them outdated in the vector store and lists them in the run state; the
+so a parent's are its children's: the chain up to the root is found), notes
+them with the entities it strips in the extraction store (the
+`outdated-reports` note), writes their lineage again without the removed
+units (their text units, documents and path filters are those of the units
+they still cite, so a filter on a deleted file stops matching them; their
+text stays until the refresh), flags them outdated in the vector store and
+lists them in the run state. The removal deletes the removed documents' registry
+records before the commit: a run killed in between leaves the note, which
+its successor's refresh reads, and the note goes once a build record lists
+what stays flagged. The
 commit, once its writes succeeded, writes each again (`report_refresh`,
 `IncrementalIndexer._refresh_reports`) from what the stores then hold, as a
 full build's detector reads it: the stored entities whose level-0
@@ -584,9 +592,14 @@ extraction store by its input, as a full build's, so an unchanged input
 costs no call; otherwise one call per report, in the indexing stage's usage
 (and so the run's `processing.max_run_*` budget, which prices the report
 role for the indexing stage). A community left without a document-backed
-member loses its report. A report the run cannot write again (the model
-failed, a read failed, a report below it is missing) stays flagged and in
-the build record (`IndexBuildRecord.outdated_reports`, a `communities`
+member loses its report. The graph store's community vertex is written
+again with the members the refresh read (their text units, size and names),
+whatever its report's outcome. A report the run cannot write again (the model
+failed, a read failed, a report below it is missing, or, with
+`enable_sub_community_rollup`, one below it got no report this run: written
+without that child's roll-up, the parent would never be asked again once
+the child is) stays flagged and in
+the build record (`IndexBuildRecord.outdated_reports`, an `outdated_reports`
 rebuild reason with remedy `next_run`), and the next run, a run with
 nothing to index included, tries again. A property test checks that the
 model is asked with what a full build's detector packs for the same

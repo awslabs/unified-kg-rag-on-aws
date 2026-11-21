@@ -1122,9 +1122,10 @@ A document is recorded `FAILED` in five cases:
   below);
 - a base-level community covering one of its text units got no report (a
   failed parent-level report only logs a WARNING and counts in
-  `reports_failed`; with more reports failed than a chance of
-  `indexing.max_failure_rate` per report explains, a one-sided binomial test
-  at 5%, community detection fails). A report that failed for an error of its
+  `reports_failed`; with more of the reports asked of the model this run
+  failed than a chance of `indexing.max_failure_rate` per report explains, a
+  one-sided binomial test at 5%, community detection fails: a report that
+  took its stored answer is no trial). A report that failed for an error of its
   own (cut off, output that does not parse, a request rejected for its
   content) counts toward `indexing.max_document_failures`, as an
   extraction's does;

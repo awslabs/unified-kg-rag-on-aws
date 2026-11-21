@@ -1379,6 +1379,7 @@ class TestStoredReportAnswers:
         cd, batch = self._detector({"e1": "one", "e2": "two"})
         first, failed = cd.generate_reports(self._communities(), records=records)
         assert batch.asked == ["c1", "c2"] and failed == []
+        assert cd.requested_report_count == 2
         keys = [r.attributes[REPORT_RECORD_ATTRIBUTE] for r in first]
         assert set(records.stored["default"]) == set(keys) and len(set(keys)) == 2
 
@@ -1387,12 +1388,16 @@ class TestStoredReportAnswers:
         cd, batch = self._detector({"e1": "one", "e2": "two"})
         again, _ = cd.generate_reports(self._communities(), records=records)
         assert batch.asked == []
+        # RV1-B1: a stored answer asks the model nothing, so it is no trial
+        # of the stage's failure gate.
+        assert cd.requested_report_count == 0
         assert [r.model_dump() for r in again] == [r.model_dump() for r in first]
 
         # A member's description changed: only its community is asked again.
         cd, batch = self._detector({"e1": "one", "e2": "two, revised"})
         changed, _ = cd.generate_reports(self._communities(), records=records)
         assert batch.asked == ["c2"]
+        assert cd.requested_report_count == 1
         assert changed[0].model_dump() == first[0].model_dump()
         assert changed[1].attributes[REPORT_RECORD_ATTRIBUTE] not in keys
 

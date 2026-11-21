@@ -49,7 +49,14 @@ SQLite 파일입니다(`providers.doc_status.kind: sqlite`. [로컬 모드](./lo
   (리포트마다 모델 호출 하나, 입력이 같으면 호출 없음). 실행이 다시 쓰지 못한 리포트(모델
   실패)는 삭제된 문서의 내용을 여전히 서술할 수 있습니다. 이런 리포트는 읽히는 곳(질의
   출처의 메타데이터)에서 `outdated`로 표시되고, 그 네임스페이스에는 재구축 이유가 남으며
-  ([재구축이 필요한 때](#재구축이-필요한-때)), 다음 실행이 다시 시도합니다.
+  ([재구축이 필요한 때](#재구축이-필요한-때)), 다음 실행이 다시 시도합니다. 코퍼스
+  실행으로는 마지막 문서를 지울 수 없습니다. 파일이 하나도 남지 않은 원본 디렉터리는
+  `document_parsing` 단계에서 실패하므로("No supported source files found") 마운트되지
+  않은 볼륨이 인덱스를 비우는 일은 없습니다. 마지막 문서는 상대 경로와 디렉터리의 범위를 넘겨
+  `DataIngestionPipeline.delete_documents([relative path], source_scope=<the directory's scope>)`로
+  지우거나([Python library: Documents from memory](./python-library.md#documents-from-memory), 영문),
+  다른 디렉터리를 대상으로 한 실행에서 그 범위를 은퇴시킵니다(`--retire-source-scope`,
+  [코퍼스 옮기기](#코퍼스-옮기기)).
 - **추출 설정 변경**(튜닝한 `custom_prompts`, `entity_types`, 추출·글리닝·청킹 모델,
   청크 크기, 번역, 엔티티 병합(resolution)): 다음 실행은 다른 설정으로 추출된 변경 없는 문서를 다시
   추출하고, 그 수와 바뀐 설정을 WARNING으로 남깁니다. 설정은 필드별로 비교하므로 새
@@ -184,6 +191,7 @@ re-clustering: 24 incremental runs since the last full clustering
 |---|---|---|
 | `communities` | 커뮤니티 카운터가 `indexing.community_compaction` 임곗값을 넘음(위의 WARNING) | `reset` |
 | `outdated_reports` | 작성 근거인 텍스트가 제거된 뒤에도 남았는데 실행이 다시 쓰지 못한 리포트를 빌드 레코드가 나열함(`outdated_reports`, `on_drift_recommendation`과 무관) | `next_run`: 리포트마다 모델 호출 하나 |
+| `community_depths` | 마지막 전체 빌드를 0.4.0 이전 릴리스가 썼음. 그 리포트 깊이는 가장 거친 루트부터 세므로, 전역 검색의 `community_depth` 단면이 증분 실행이 쓴 리포트 옆에서 그 리포트를 한 단계 이상 거칠게 읽음 | `reset`: 모든 리포트를 제 깊이로 다시 씀 |
 | `answer_settings` | 마지막 전체 빌드가 쓴 커뮤니티 리포트나 설명 요약이 구성과 다른 설정(모델, 프롬프트, 언어, 요약 켜짐)으로 만들어짐. 증분 실행은 델타의 것만 씀 | `reset`: 리포트나 요약마다 모델 호출 하나 |
 | `extraction_settings` | 마지막 실행 이후 추출 설정이 바뀜(바뀐 경로는 `settings`) | `next_run`: 모든 문서를 다시 추출 |
 | `methodologies` | 구성이 네임스페이스에 없는 코퍼스 전체 산출물을 빌드함 | `next_run`: 저장된 추출 결과로 네임스페이스를 다시 빌드 |

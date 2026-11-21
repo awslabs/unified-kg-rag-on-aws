@@ -16,6 +16,7 @@ writes it.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -164,14 +165,22 @@ def _two_documents(
 
 @pytest.mark.timeout(600)
 def test_a_report_written_from_a_deleted_document_is_written_again(
-    tmp_path: Path, store_harness: StoreHarness
+    tmp_path: Path, store_harness: StoreHarness, caplog: pytest.LogCaptureFixture
 ) -> None:
     config, providers, model, source, both = _two_documents(tmp_path, store_harness)
     calls = len(model.report_inputs)
+    units_before = _unit_ids(config, providers)
 
     (source / "b.txt").unlink()
-    second = e2e._ingest(config, providers, source, tmp_path / "run2")
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        second = e2e._ingest(config, providers, source, tmp_path / "run2")
     assert second.status is PipelineStageStatus.COMPLETED, e2e._errors(second)
+    # RV7-4: the removal said the reports stay flagged until a reset, then
+    # the run wrote them again. It says what happens, and nothing is left
+    # to warn of.
+    assert _logged(caplog, logging.INFO, "flagged outdated until the run writes")
+    assert not _logged(caplog, logging.WARNING, "outdated")
 
     after = _reports(config, providers)
     kept = [i for i in both if i in after]
@@ -187,6 +196,15 @@ def test_a_report_written_from_a_deleted_document_is_written_again(
         assert "Vendor" in report["summary"]
         assert REPORT_OUTDATED_FIELD not in report
         assert all(u in _unit_ids(config, providers) for u in report["text_unit_ids"])
+    # RV3-I4: the graph store's community vertices no longer cite the
+    # deleted document's text units either.
+    dead = sorted(units_before - _unit_ids(config, providers))
+    assert dead
+    graph = providers.build_graph_indexer()
+    try:
+        assert not graph.find_ids_citing(dead, suffix="default", communities=True)
+    finally:
+        graph.close()
     record = _record(providers)
     assert record["outdated_reports"] == []
     assert rebuild_reasons(record, config) == []
@@ -203,13 +221,22 @@ def test_a_report_written_from_a_deleted_document_is_written_again(
         assert REPORT_OUTDATED_FIELD not in source_entry["metadata"]
 
 
+def _logged(caplog: pytest.LogCaptureFixture, level: int, text: str) -> list[str]:
+    """The messages at ``level`` naming ``text``."""
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == level and text in r.getMessage()
+    ]
+
+
 def _unit_ids(config: Config, providers: Any) -> set[str]:
     return set(_scan(providers, "text_units"))
 
 
 @pytest.mark.timeout(600)
 def test_a_report_that_cannot_be_written_again_stays_recorded_and_flagged(
-    tmp_path: Path, store_harness: StoreHarness
+    tmp_path: Path, store_harness: StoreHarness, caplog: pytest.LogCaptureFixture
 ) -> None:
     config, providers, model, source, both = _two_documents(tmp_path, store_harness)
     # The rebuild reason does not wait for a drift recommendation.
@@ -217,14 +244,23 @@ def test_a_report_that_cannot_be_written_again_stays_recorded_and_flagged(
 
     (source / "b.txt").unlink()
     model.fail_reports = True
+    caplog.clear()
     second = e2e._ingest(config, providers, source, tmp_path / "run2")
     assert second.status is PipelineStageStatus.COMPLETED, e2e._errors(second)
 
     after = _reports(config, providers)
     kept = sorted(i for i in both if i in after)
     assert kept
+    # The run's end warns of what really stays flagged.
+    (left,) = _logged(caplog, logging.WARNING, "stay flagged outdated")
+    assert left.startswith(f"{len(kept)} community reports in 'default'")
+    units = _unit_ids(config, providers)
     for report_id in kept:
         assert after[report_id][REPORT_OUTDATED_FIELD] is True
+        # RV3-I5: its lineage is narrowed to what remains, so a filter on the
+        # deleted file no longer matches it.
+        assert set(after[report_id]["text_unit_ids"]) <= units
+        assert after[report_id]["attr_file"] == "a.txt"
     record = _record(providers)
     assert record["outdated_reports"] == kept
     # Every reader of the record names it, the run's metrics too.

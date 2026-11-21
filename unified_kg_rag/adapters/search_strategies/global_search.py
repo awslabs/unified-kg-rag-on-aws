@@ -36,7 +36,11 @@ from unified_kg_rag.adapters.store_errors import (
     is_bad_request,
     is_fatal_retrieval_error,
 )
-from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
+from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    CUT_FIELDS,
+    coarser_cut_filter,
+    cut_filter,
+)
 from unified_kg_rag.domain.ingestion.report_references import REPORT_OUTDATED_FIELD
 from unified_kg_rag.domain.models import (
     Config,
@@ -236,9 +240,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # The report selection's scope (the cut, or the dynamic browse's
         # depths and children) and the text units' communities.
         c = self.global_search_config
-        keys = (
-            {"depth", "community_id"} if c.use_dynamic_selection else set(cut_filter(0))
-        )
+        keys = {"depth", "community_id"} if c.use_dynamic_selection else set(CUT_FIELDS)
         if c.text_unit_slots:
             keys.add("community_ids")
         return frozenset(keys)
@@ -478,8 +480,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
         A cut with more reports than the cap gives way to the deepest
         shallower cut that fits, which still covers every entity, in fewer,
-        broader reports. Only when even the depth-0 cut does not fit are the
-        reports of the configured cut most similar to the query mapped, and
+        broader reports: past depth 0 (the first Leiden pass) into the
+        coarser levels built above it, at negative depths, as long as the
+        stores hold one (``_has_coarser_cut``). Only when even the coarsest
+        cut does not fit are the reports of the configured cut most similar
+        to the query mapped, and
         at once under a filter on a report key (``community_id``, ``level``,
         ``rating``; a key the reports index declares, not a document filter
         or a text-unit key such as ``n_tokens``): a shallower cut's reports
@@ -509,7 +514,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 query, cut_filter(depth), label
             )
             reports, used = first, depth
-            while not complete and step_down and used > 0:
+            while (
+                not complete
+                and step_down
+                and (used > 0 or await self._has_coarser_cut(query, used - 1))
+            ):
                 used -= 1
                 reports, complete = await self._browse_reports(
                     query, cut_filter(used), label
@@ -537,6 +546,34 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             span.set_attributes({"kg_rag.reports": len(reports), "kg_rag.cut": used})
         logger.info("Global search cut at depth %s: %s reports", used, len(reports))
         return reports
+
+    async def _has_coarser_cut(self, query: SearchQuery, depth: int) -> bool:
+        """Whether the stores hold a report at ``depth`` or above that a
+        cut there selects (``coarser_cut_filter``): a coarser level above
+        the first pass. Whatever the caller's filters, which narrow the
+        cut, not the hierarchy."""
+        retriever = self.document_retriever
+        if retriever is None:
+            return False
+        probe = SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=1,
+            retrieval_multiplier=1,
+            index_prefixes=[
+                self.config.indexing.opensearch.community_reports_index_prefix
+            ],
+            suffix=query.suffix,
+            filters=coarser_cut_filter(depth),
+        )
+        found = await self._safe_aretrieve(retriever, probe, "Coarser community cut")
+        # Read off the hit, not trusted to the filter: a step past a level
+        # no report holds would never end.
+        return any(
+            (d := safe_float_parse((r.metadata or {}).get("depth"))) is not None
+            and d <= depth
+            for r in found
+        )
 
     async def _select_dynamically(
         self,

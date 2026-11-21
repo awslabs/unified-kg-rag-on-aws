@@ -37,7 +37,12 @@ that copied nothing, a wrong prefix), or every file is of a type no loader
 reads (see the question above). The message lists the supported extensions,
 and the warnings before it name the skipped files. Check the directory and
 its contents, then re-run. A run whose corpus is seed graphs alone does not
-fail here ([Seed graphs: Lifecycle](./guides/seed-graphs.md#lifecycle)).
+fail here ([Seed graphs: Lifecycle](./guides/seed-graphs.md#lifecycle)). To
+delete the last document of a corpus, which an empty directory cannot do,
+call `DataIngestionPipeline.delete_documents` with its relative path and
+the directory's `source_scope`, or retire the scope with
+`--retire-source-scope` from a run over another directory
+([Incremental indexing: Workflows](./guides/incremental.md#workflows)).
 
 ### Why do Bedrock calls hang in a private VPC?
 

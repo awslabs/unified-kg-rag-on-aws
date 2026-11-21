@@ -781,7 +781,22 @@ class IncrementalIndexer:
         ):
             # From the stored state the commit left: what the strip derived
             # and the delta merged is written.
-            self._refresh_reports(refresh_reports, community_reports or [])
+            left = self._refresh_reports(refresh_reports, community_reports or [])
+        else:
+            left = {
+                suffix: ids
+                for suffix, ids in self.indexing_manager.outdated_reports.items()
+                if ids
+            }
+        for suffix, ids in sorted(left.items()):
+            logger.warning(
+                "%d community reports in '%s' cite removed text and stay "
+                "flagged outdated: the next run writes them again (rebuild "
+                "reason outdated_reports; indexing.reset: true rebuilds every "
+                "report)",
+                len(ids),
+                suffix,
+            )
         self.community_drift = self._measure_drift(
             entities, communities, unclustered_entities
         )
@@ -806,13 +821,14 @@ class IncrementalIndexer:
         self,
         refresh: ReportRefresh,
         written: Sequence[CommunityReport],
-    ) -> None:
+    ) -> dict[str, set[str]]:
         """Write again, per suffix, the stored reports outdated by this
         run's removals or listed outdated in the stored build record, but
         the ones the run deleted or wrote (the delta's reports). Those
         written again or deleted leave the run's outdated reports and are
         taken out of the record's (``IndexingManager.refreshed_reports``);
-        the others stay, for the next run."""
+        the others stay, for the next run, and are returned by suffix."""
+        left: dict[str, set[str]] = {}
         m = self.indexing_manager
         delta_reports: dict[str, set[str]] = defaultdict(set)
         for report in written:
@@ -820,6 +836,9 @@ class IncrementalIndexer:
         for suffix in sorted({*m.outdated_reports, self.suffix}):
             try:
                 stored = m.vector_indexer.read_build_record(suffix) or {}
+                # The reports a removal flagged and its run, killed before
+                # its build record, never listed (note_outdated_reports).
+                noted, candidates = m.read_outdated_note(suffix)
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the run's own still refresh
@@ -831,7 +850,13 @@ class IncrementalIndexer:
                     suffix,
                     error=e,
                 )
-                stored = {}
+                stored, noted, candidates = {}, set(), set()
+            if noted:
+                # One the run does not settle stays listed in its build
+                # record, which takes the note over.
+                m.outdated_reports[suffix] = (
+                    m.outdated_reports.get(suffix, set()) | noted
+                )
             listed = stored.get("outdated_reports")
             ids = (
                 m.outdated_reports.get(suffix, set())
@@ -839,10 +864,15 @@ class IncrementalIndexer:
             ) - (m.deleted_reports.get(suffix, set()) | delta_reports[suffix])
             if not ids:
                 continue
-            done = refresh(suffix, ids, m.stripped_entities.get(suffix, set()))
+            done = refresh(
+                suffix, ids, m.stripped_entities.get(suffix, set()) | candidates
+            )
             settled = done.written | done.deleted
             m.outdated_reports[suffix] = m.outdated_reports.get(suffix, set()) - settled
             m.refreshed_reports.setdefault(suffix, set()).update(settled)
+            if ids - settled:
+                left[suffix] = ids - settled
+        return left
 
     def _measure_drift(
         self,

@@ -28,7 +28,10 @@ from tests.fixtures.store_backends import (
     backends,
     open_harness,
 )
-from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
+from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    ROOT_CUT_DEPTH,
+    cut_filter,
+)
 from unified_kg_rag.domain.ingestion.report_references import (
     REPORT_FINDINGS_FIELD,
     REPORT_OUTDATED_FIELD,
@@ -2254,15 +2257,19 @@ def test_a_cut_holds_no_coarser_report_above_the_first_pass(
 ) -> None:
     # A1-1: the depth counts from the first Leiden pass; a coarser level
     # above it is stored at a negative depth, which no cut at a depth of 0
-    # or more holds, on every store.
+    # or more holds, on every store. RV1-A1: a cut at a negative depth holds
+    # it, and a first-pass community no coarser one groups ("alone").
     (report,) = _reports(None)
 
-    def placed(rid: str, depth: int, children: list[str]) -> CommunityReport:
+    def placed(
+        rid: str, depth: int, children: list[str], shallowest: int
+    ) -> CommunityReport:
         return report.model_copy(
             update={
                 "id": rid,
                 "community_id": rid,
                 "depth": depth,
+                "min_cut_depth": shallowest,
                 "child_community_ids": children,
             }
         )
@@ -2272,10 +2279,11 @@ def test_a_cut_holds_no_coarser_report_above_the_first_pass(
         "community_reports",
         "upsert",
         [
-            placed("coarse", -1, ["root"]),
-            placed("root", 0, ["leaf-a", "leaf-b"]),
-            placed("leaf-a", 1, []),
-            placed("leaf-b", 1, []),
+            placed("coarse", -1, ["root"], ROOT_CUT_DEPTH),
+            placed("root", 0, ["leaf-a", "leaf-b"], 0),
+            placed("leaf-a", 1, [], 1),
+            placed("leaf-b", 1, [], 1),
+            placed("alone", 0, [], ROOT_CUT_DEPTH),
         ],
     )
     assert harness.vector_retriever is not None
@@ -2299,5 +2307,6 @@ def test_a_cut_holds_no_coarser_report_above_the_first_pass(
             await retriever.aclose()
         return {str(hit.source) for hit in hits}
 
-    assert asyncio.run(cut(0)) == {"root"}
-    assert asyncio.run(cut(1)) == asyncio.run(cut(2)) == {"leaf-a", "leaf-b"}
+    assert asyncio.run(cut(0)) == {"root", "alone"}
+    assert asyncio.run(cut(1)) == asyncio.run(cut(2)) == {"leaf-a", "leaf-b", "alone"}
+    assert asyncio.run(cut(-1)) == asyncio.run(cut(-2)) == {"coarse", "alone"}

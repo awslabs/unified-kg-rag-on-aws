@@ -2421,7 +2421,10 @@ class CommunityDetectionStage(_RegistryStage):
         self.store.close()
 
     def _check_report_failures(
-        self, communities: list[Community], failed_community_ids: list[str]
+        self,
+        communities: list[Community],
+        failed_community_ids: list[str],
+        requested: int | None = None,
     ) -> list[str]:
         """Text units of the base-level communities left without a report.
 
@@ -2439,23 +2442,25 @@ class CommunityDetectionStage(_RegistryStage):
         most of the corpus on the next run for one report. More failures
         than a chance of ``indexing.max_failure_rate`` per report
         explains (``failure_rate_exceeded``) fail the stage (the reports are
-        the community-report index's items). Seed units are
+        the community-report index's items): of the ``requested`` reports
+        the model was asked for this run (every community when ``None``), as
+        a report that took its stored answer made no call that could fail.
+        Seed units are
         left out: a failed report never imports a seed graph's shard again
         (its statements need no model call).
         """
         if not failed_community_ids:
             return []
         max_failure_rate = self.config.indexing.max_failure_rate
-        failure_rate = len(failed_community_ids) / max(len(communities), 1)
-        if failure_rate_exceeded(
-            len(failed_community_ids), len(communities), max_failure_rate
-        ):
+        trials = len(communities) if requested is None else requested
+        failed_count = len(failed_community_ids)
+        if failure_rate_exceeded(failed_count, trials, max_failure_rate):
             raise PipelineStageError(
-                f"Community report generation failed for "
-                f"{len(failed_community_ids)} of {len(communities)} communities "
-                f"({failure_rate:.0%}, more than a {max_failure_rate:.0%} chance "
-                f"per report explains: indexing.max_failure_rate). Check the "
-                "report model errors above.",
+                f"Community report generation failed for {failed_count} of the "
+                f"{trials} reports asked of the model this run "
+                f"({failed_count / trials:.0%}; {len(communities)} communities), "
+                f"more than a {max_failure_rate:.0%} chance per report explains "
+                "(indexing.max_failure_rate). Check the report model errors above.",
                 own_text=True,
             )
         failed_ids = set(failed_community_ids)
@@ -2829,7 +2834,7 @@ class CommunityDetectionStage(_RegistryStage):
             evidenced, set(self.detector.item_failed_community_ids)
         )
         context.failed_text_unit_ids[self.name] = self._check_report_failures(
-            evidenced, failed_community_ids
+            evidenced, failed_community_ids, self.detector.requested_report_count
         )
 
         communities_count = len(context.communities)
@@ -3468,6 +3473,10 @@ class IndexingStage(_RegistryStage):
             written = vector_indexer.record_build(
                 record.model_copy(update=update), suffix
             )
+            if written is not None and "outdated_reports" in update:
+                # The record lists what stays flagged: the removal's note of
+                # its reports has served (note_outdated_reports).
+                manager.clear_outdated_note(suffix)
             if written is None:
                 if keeps_build_records(vector_indexer):
                     records = None

@@ -24,10 +24,7 @@ from unified_kg_rag.adapters.llm.retry import (
 )
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_processor import (
-    coerce_llm_text,
-    merge_attributes,
-)
+from unified_kg_rag.domain.ingestion.base_processor import coerce_llm_text
 from unified_kg_rag.domain.ingestion.cache_keys import (
     community_report_fingerprint,
     index_language,
@@ -40,7 +37,10 @@ from unified_kg_rag.domain.ingestion.community_clustering import (
     small_component_nodes,
     with_usable_weights,
 )
-from unified_kg_rag.domain.ingestion.community_hierarchy import community_report_id
+from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    attach_report_lineage,
+    community_report_id,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     REPORT_RECORD_ATTRIBUTE,
     record_key,
@@ -166,6 +166,10 @@ class CommunityDetector:
         # and the documents of each text unit, which tell them.
         self.item_failed_community_ids: list[str] = []
         self._unit_documents: dict[str, list[str]] = {}
+        # The reports the last generate_reports asked of the model (a
+        # report that took its stored answer asked nothing): the trials
+        # the stage's failure gate counts.
+        self.requested_report_count = 0
 
         if self.community_detection_config.report_generation.enabled:
             parser = create_robust_xml_output_parser(
@@ -351,7 +355,7 @@ class CommunityDetector:
         entity. Copying the first node's map gave every report that entity's
         document filters, so an attribute filter kept or dropped reports by an
         arbitrary entity's documents; a report's filters come from its own
-        text units (``_attach_report_lineage``).
+        text units (``attach_report_lineage``).
         """
         key = Constants.INDEX.value
         attributes: Any = None
@@ -370,17 +374,32 @@ class CommunityDetector:
             return {key: attributes[key]}
         return {}
 
+    def community_attributes(
+        self, member_ids: list[str], relationship_ids: list[str]
+    ) -> dict[str, Any]:
+        """The attributes a community over ``member_ids`` (sorted) and its
+        ``relationship_ids`` carries, from the graph the detector reads: its
+        size, density, first member names and relationship count, as the
+        graph store's community vertex holds them."""
+        max_entities = (
+            self.community_detection_config.report_generation.max_entities_per_report
+        )
+        return {
+            "size": len(member_ids),
+            "density": nx.density(self.graph.subgraph(member_ids)),
+            "entity_names": [
+                self.graph.nodes[nid].get("name", nid) if nid in self.graph else nid
+                for nid in member_ids[:max_entities]
+            ],
+            "resolution": self.community_detection_config.resolution,
+            "num_relationships": len(relationship_ids),
+        }
+
     def _create_community_object(
         self, hier_comm: HierarchicalCommunity, attributes: dict[str, Any]
     ) -> Community:
         subgraph = self.graph.subgraph(hier_comm.nodes)
-        max_entities = (
-            self.community_detection_config.report_generation.max_entities_per_report
-        )
         member_ids = sorted(hier_comm.nodes, key=str)
-        entity_names = [
-            self.graph.nodes[nid].get("name", nid) for nid in member_ids[:max_entities]
-        ]
 
         # An edge carries every relationship between its two entities.
         relationship_ids = sorted(
@@ -391,11 +410,7 @@ class CommunityDetector:
         )
         community_attributes = {
             **attributes,
-            "size": len(hier_comm.nodes),
-            "density": nx.density(subgraph),
-            "entity_names": entity_names,
-            "resolution": self.community_detection_config.resolution,
-            "num_relationships": len(relationship_ids),
+            **self.community_attributes(member_ids, relationship_ids),
         }
 
         label = hier_comm.label or hier_comm.community_id
@@ -440,7 +455,7 @@ class CommunityDetector:
             communities: Communities to summarize.
             text_units: The corpus's text units, used to resolve each report's
                 candidate source documents (community membership provenance,
-                see ``_attach_report_lineage``). Omit to leave ``document_ids``
+                see ``attach_report_lineage``). Omit to leave ``document_ids``
                 empty; the report's ``text_unit_ids`` are recorded either way.
             descriptions: Entity id -> the description its report input
                 reads instead of the graph node's (an incremental run's
@@ -481,6 +496,7 @@ class CommunityDetector:
         self._report_types = dict(types or {})
         self._report_records = records
         self.item_failed_community_ids = []
+        self.requested_report_count = 0
         self._unit_documents = {
             unit.id: list(unit.document_ids or []) for unit in text_units or []
         }
@@ -500,7 +516,11 @@ class CommunityDetector:
                     communities, graph_attributes
                 )
 
-            self._attach_report_lineage(reports, communities, text_units)
+            attach_report_lineage(
+                reports,
+                {c.id: list(c.text_unit_ids or []) for c in communities},
+                text_units,
+            )
 
             if failed:
                 logger.warning(
@@ -523,74 +543,11 @@ class CommunityDetector:
                 "Error during community report generation: %s",
                 error=e,
             )
+            # Every report failed, each one a trial.
+            self.requested_report_count = len(communities)
             return [], [community.id for community in communities]
 
         return reports, failed
-
-    @staticmethod
-    def _attach_report_lineage(
-        reports: list[CommunityReport],
-        communities: list[Community],
-        text_units: list[TextUnit] | None,
-    ) -> None:
-        """Record each report's candidate source text units, documents and
-        document ``filters``.
-
-        A report is the only artifact in the index with no pointer back to its
-        sources, so a retrieved report cannot be filtered by origin. Detection
-        already unions its member entities' ``text_unit_ids`` onto the Community,
-        so the report inherits them; the source documents come from those units.
-
-        This is community MEMBERSHIP provenance, not report-input provenance.
-        ``_prepare_report_input`` caps the prompt at ``max_entities_per_report``
-        and a token budget, and the lineage deliberately ignores that cap: a
-        community with ``e1`` from ``d1`` and ``e2`` from ``d2`` records
-        ``document_ids=["d1", "d2"]`` even when only ``e1`` reached the prompt.
-        The fields therefore may name material omitted from the report and do
-        not establish sentence-level citation support; they exist so a consumer
-        can filter reports by source or re-summarize them per reader.
-
-        The report's ``filters`` attribute is the union of its text units'
-        document filters, so an attribute filter matches a report when one of
-        its documents matches, as it does an entity. Without text units, or
-        when none has filters, the report has none and an attribute filter
-        excludes it (fail-closed).
-
-        Args:
-            reports: Reports to annotate, mutated in place.
-            communities: The communities the reports were generated from.
-            text_units: Corpus text units; omit to leave ``document_ids`` empty.
-        """
-        unit_to_documents = {
-            unit.id: list(unit.document_ids or []) for unit in (text_units or [])
-        }
-        filters_key = Constants.FILTERS.value
-        unit_filters = {
-            unit.id: filters
-            for unit in (text_units or [])
-            if isinstance(filters := (unit.attributes or {}).get(filters_key), dict)
-            and filters
-        }
-        community_units = {c.id: list(c.text_unit_ids or []) for c in communities}
-
-        for report in reports:
-            unit_ids = community_units.get(report.community_id, [])
-            report.text_unit_ids = unit_ids
-            document_ids: set[str] = set()
-            for unit_id in unit_ids:
-                document_ids.update(unit_to_documents.get(unit_id, ()))
-            # Sorted for a stable, reproducible record.
-            report.document_ids = sorted(document_ids)
-            attributes = {
-                k: v for k, v in (report.attributes or {}).items() if k != filters_key
-            }
-            maps = [
-                {filters_key: unit_filters[u]} for u in unit_ids if u in unit_filters
-            ]
-            filters = (merge_attributes(maps) or {}).get(filters_key)
-            if filters:
-                attributes[filters_key] = filters
-            report.attributes = attributes
 
     def _report_key(self, chain_input: dict[str, Any], community: Community) -> str:
         """The record key of a community's report answer: its prompt input
@@ -671,6 +628,7 @@ class CommunityDetector:
             index: record["response"] for index, record in stored.items()
         }
         if pending:
+            self.requested_report_count += len(pending)
             errors: dict[int, BaseException] = {}
             answers = self.batch_processor.execute_with_fallback(
                 items_to_process=[report_inputs[index] for index in pending],

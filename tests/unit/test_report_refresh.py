@@ -28,7 +28,10 @@ from unified_kg_rag.domain.ingestion.community_clustering import (
     community_label,
     community_name,
 )
-from unified_kg_rag.domain.ingestion.community_hierarchy import community_report_id
+from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    ROOT_CUT_DEPTH,
+    community_report_id,
+)
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.models import (
     Claim,
@@ -39,6 +42,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -111,6 +115,7 @@ def _report(
         text_unit_ids=units,
         level=level,
         depth=1 - level,
+        min_cut_depth=1 - level if parent else ROOT_CUT_DEPTH,
         parent_community_id=parent,
         child_community_ids=children or [],
     )
@@ -189,11 +194,24 @@ def test_outdated_reports_are_written_again_from_what_remains() -> None:
     assert reports["p"].text_unit_ids == ["t2", "t3"]
     assert reports["p"].document_ids == ["doc-t2", "doc-t3"]
     assert (reports["p"].level, reports["p"].depth) == (1, 0)
+    assert reports["p"].min_cut_depth == ROOT_CUT_DEPTH
+    assert reports["c1"].min_cut_depth == 1
     assert reports["p"].child_community_ids == ["c1", "c2"]
     assert reports["c1"].parent_community_id == "p"
     # c2 was not outdated: not asked again.
     (c2,) = vector.read_community_reports([community_report_id("c2")])
     assert c2.summary == "Carrier, Depot"
+    # RV3-I4: the graph store's community vertices are written again with
+    # the members they now have, as a full build's detector makes them.
+    vertices = graph.data["communities"]
+    c1, p = vertices[("default", "c1")], vertices[("default", "p")]
+    assert (c1.entity_ids, c1.text_unit_ids, c1.size) == (["acme"], ["t2"], 1)
+    assert c1.attributes["entity_names"] == ["Acme"]
+    assert c1.attributes["num_relationships"] == 0
+    assert p.text_unit_ids == ["t2", "t3"]
+    assert p.attributes["entity_names"] == ["Acme", "Carrier", "Depot"]
+    assert p.attributes["num_relationships"] == 2
+    assert ("default", "c2") not in vertices
 
 
 def test_a_written_report_reads_what_a_full_build_would() -> None:
@@ -298,6 +316,66 @@ def test_a_failed_answer_leaves_the_report_outdated() -> None:
     assert parent.summary == "stale"
 
 
+class _FailingChild(_Reports):
+    """The report model, failing c1's report (Acme alone) while ``fail``."""
+
+    def __init__(self, fail: bool) -> None:
+        super().__init__()
+        self.fail = fail
+
+    def __call__(self, system: str, human: str) -> str:
+        members = [n for n in _NAMES if re.search(rf"\b{n}\b", human)]
+        if self.fail and members == ["Acme"]:
+            self.inputs.append(human)
+            return "no report"
+        return super().__call__(system, human)
+
+
+@pytest.mark.parametrize("rolls_up", [True, False])
+def test_a_parent_waits_for_a_child_that_failed_and_converges(rolls_up: bool) -> None:
+    # RV1-B2: c1's report failed and p was written without its roll-up,
+    # unflagged; the next run wrote c1 alone, so p kept the stale input for
+    # good. p now waits, flagged, and the next run writes both as a run
+    # whose model never failed does.
+    def run(
+        model: _Reports, stores: tuple[Any, Any] | None = None, ids=_OUTDATED
+    ) -> tuple[Any, Any, Any]:
+        graph, vector = stores or _stores(config)
+        done = _refresh(config, graph, vector, model)("default", ids, {"acme"})
+        return done, graph, vector
+
+    config = _config()
+    # The parent's context is truncated: it rolls its children's reports up.
+    config.graph.community_detection.report_generation.max_report_context_tokens = 40
+    config.graph.community_detection.report_generation.enable_sub_community_rollup = (
+        rolls_up
+    )
+    failing = _FailingChild(fail=True)
+    first, graph, vector = run(failing)
+    if not rolls_up:
+        # Without the roll-up p's input reads no child report: it is written.
+        assert first.written == {community_report_id("p")}
+        assert first.kept == {community_report_id("c1")}
+        return
+    assert first.written == set()
+    assert first.kept == _OUTDATED
+    # p was not asked: its input would lack c1's report.
+    assert len(failing.inputs) == 1 and "Carrier" not in failing.inputs[0]
+    (parent,) = vector.read_community_reports([community_report_id("p")])
+    assert parent.summary == "stale"
+
+    recovered = _FailingChild(fail=False)
+    second, _, vector = run(recovered, (graph, vector), first.kept)
+    assert second.written == _OUTDATED and not second.kept
+
+    one_shot = _FailingChild(fail=False)
+    _, _, clean = run(one_shot)
+    assert sorted(recovered.inputs) == sorted(one_shot.inputs)
+    assert {
+        r.community_id: r.summary for r in vector.read_community_reports(_OUTDATED)
+    } == {r.community_id: r.summary for r in clean.read_community_reports(_OUTDATED)}
+
+
 def test_a_community_without_members_left_loses_its_report() -> None:
     config = _config()
     graph, vector = _stores(config)
@@ -334,3 +412,212 @@ def test_a_written_report_reads_the_stored_claims_about_its_members() -> None:
     _refresh(config, graph, vector, model)("default", {report}, {"acme"})
     (text,) = model.inputs
     assert "Acme hired Carrier for the harbour route" in text
+
+
+# --- Failure paths: every one keeps the reports flagged (RV6-10) -----------
+#
+# A report the refresh could not write again must stay listed as kept: the
+# run's build record names it, so the next run tries again. Never written,
+# its stored version stays as it was.
+
+
+def _assert_kept_as_they_were(done: Any, vector: Any, model: _Reports) -> None:
+    assert done.kept == _OUTDATED
+    assert not done.written and not done.deleted
+    assert not model.inputs
+    stored = {
+        r.community_id: r.summary for r in vector.read_community_reports(_OUTDATED)
+    }
+    assert stored == {"c1": "stale", "p": "stale"}
+
+
+def test_a_refresh_that_raises_keeps_every_report(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config)
+    model = _Reports()
+
+    def fail(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("graph store down")
+
+    graph.find_ids_citing = fail
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+
+    _assert_kept_as_they_were(done, vector, model)
+    assert any("stay flagged outdated" in r.getMessage() for r in caplog.records)
+
+
+def test_a_lost_lease_is_raised_not_kept() -> None:
+    from unified_kg_rag.shared import NamespaceLeaseError
+
+    config = _config()
+    graph, vector = _stores(config)
+
+    def lost(*_: Any, **__: Any) -> Any:
+        raise NamespaceLeaseError("lease lost")
+
+    vector.read_community_reports = lost
+    with pytest.raises(NamespaceLeaseError):
+        _refresh(config, graph, vector, _Reports())("default", _OUTDATED, {"acme"})
+
+
+def test_nothing_to_refresh_reads_nothing() -> None:
+    config = _config()
+    graph, vector = _stores(config)
+    vector.read_community_reports = MagicMock()
+    done = _refresh(config, graph, vector, _Reports())("default", set())
+    assert done == ({*()}, {*()}, {*()}, {})
+    vector.read_community_reports.assert_not_called()
+
+
+def test_a_store_that_cannot_read_reports_by_id_keeps_them(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config)
+    model = _Reports()
+    read = vector.read_community_reports
+    vector.read_community_reports = lambda ids, suffix=None: None
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+    vector.read_community_reports = read
+
+    _assert_kept_as_they_were(done, vector, model)
+    assert any(
+        "cannot read community reports" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_a_graph_that_cannot_find_what_units_state_keeps_them(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config)
+    model = _Reports()
+    graph.find_ids_citing = lambda units, suffix=None: None
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+
+    _assert_kept_as_they_were(done, vector, model)
+    assert any("cannot find what text units" in r.getMessage() for r in caplog.records)
+
+
+def test_a_report_missing_below_keeps_its_ancestors(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    model = _Reports()
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+    assert done.kept == {community_report_id("p")}
+    assert any("without a stored report" in r.getMessage() for r in caplog.records)
+
+
+def test_a_store_that_rejects_the_rewrite_keeps_the_reports() -> None:
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    config = _config()
+    graph, vector = _stores(config)
+    model = _Reports()
+    upsert = vector.upsert_community_reports
+    # A write that failed without naming its items wrote none.
+    vector.upsert_community_reports = lambda reports: IndexingStats(
+        total_items=len(reports), failed_items=len(reports)
+    )
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+    vector.upsert_community_reports = upsert
+    assert done.kept == _OUTDATED and not done.written
+    assert done.results["vector_refreshed_reports_default"].failed_items == 2
+
+    # One named failure keeps that report only.
+    graph, vector = _stores(config)
+    upsert = vector.upsert_community_reports
+
+    def reject_parent(reports: list[CommunityReport]) -> Any:
+        stats = upsert([r for r in reports if r.community_id != "p"])
+        stats.failed_items += 1
+        stats.failed_ids.append(community_report_id("p"))
+        return stats
+
+    vector.upsert_community_reports = reject_parent
+    done = _refresh(config, graph, vector, _Reports())("default", _OUTDATED, {"acme"})
+    assert done.written == {community_report_id("c1")}
+    assert done.kept == {community_report_id("p")}
+
+
+def test_an_emptied_report_whose_delete_failed_stays_kept() -> None:
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    config = _config()
+    graph, vector = _stores(config)
+    graph.delete_by_id(["acme"])
+    report = community_report_id("c1")
+    vector.upsert_community_reports([_report("c1", ["t1"], 0, parent="p")])
+    vector.delete_by_id = lambda ids, prefix, suffix=None: IndexingStats(
+        total_items=len(ids), failed_items=len(ids), failed_ids=list(ids)
+    )
+    done = _refresh(config, graph, vector, _Reports())("default", {report})
+    assert done.kept == {report} and not done.deleted
+
+
+# --- The outdated-report note (RV3-I1) --------------------------------------
+
+
+def _removal_stores() -> tuple[Config, IndexingManager, Any]:
+    config = _config()
+    graph, vector = _stores(config)
+    vector.upsert_text_units([TextUnit(id="t1", text="t1")])
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    return config, manager, vector
+
+
+def test_a_removal_notes_the_reports_it_flags_before_flagging_them(mocker) -> None:
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    _, manager, vector = _removal_stores()
+    vector.write_extraction_records(
+        {OUTDATED_REPORTS: {"report_ids": ["r-earlier"], "candidates": ["e-earlier"]}}
+    )
+    flag = mocker.spy(vector, "mark_reports_outdated")
+    order: list[str] = []
+    write = vector.write_extraction_records
+    mocker.patch.object(
+        vector,
+        "write_extraction_records",
+        side_effect=lambda records, **kw: order.append("note") or write(records, **kw),
+    )
+    flag.side_effect = lambda *a, **k: order.append("flag") or IndexingStats()
+
+    manager.remove_text_units("default", ["t1"])
+
+    assert order[:2] == ["note", "flag"]
+    note = vector.read_extraction_records([OUTDATED_REPORTS])[OUTDATED_REPORTS]
+    # The earlier note's ids are kept beside this removal's.
+    assert note["report_ids"] == sorted({"r-earlier", *_OUTDATED})
+    assert "e-earlier" in note["candidates"]
+    assert manager.read_outdated_note("default")[0] == {"r-earlier", *_OUTDATED}
+
+
+def test_a_note_that_cannot_be_written_fails_the_removal(mocker) -> None:
+    _, manager, vector = _removal_stores()
+    failed = IndexingStats(total_items=1)
+    failed.add_error("store down")
+    mocker.patch.object(vector, "write_extraction_records", return_value=failed)
+    flag = mocker.spy(vector, "mark_reports_outdated")
+
+    results = manager.remove_text_units("default", ["t1"])
+
+    # Reported failed (the caller keeps the documents' records and retries),
+    # nothing flagged or stripped.
+    assert results["vector_outdated_reports_default"].failed_items == len(_OUTDATED)
+    flag.assert_not_called()
+    assert not manager.outdated_reports
+
+
+def test_only_a_note_the_run_read_or_wrote_is_cleared(mocker) -> None:
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    _, manager, vector = _removal_stores()
+    delete = mocker.spy(vector, "delete_extraction_records")
+    manager.clear_outdated_note("default")
+    delete.assert_not_called()
+
+    vector.write_extraction_records({OUTDATED_REPORTS: {"report_ids": ["r1"]}})
+    assert manager.read_outdated_note("default") == ({"r1"}, set())
+    manager.clear_outdated_note("default")
+    assert OUTDATED_REPORTS not in vector.read_extraction_records([OUTDATED_REPORTS])
+    # A run starts knowing of none.
+    manager._outdated_notes.add("default")
+    manager.reset_run_state()
+    assert not manager._outdated_notes
