@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from hypothesis import settings
+from hypothesis import HealthCheck, settings
 from langsmith.utils import get_env_var
 
 from unified_kg_rag.adapters.aws.bedrock import BedrockCrossRegionModelHelper
@@ -25,7 +25,18 @@ from unified_kg_rag.domain.models import Config
 # "ci" removes the per-example deadline, whose wall-clock limit flakes on
 # shared runners, and derandomizes generation so a failure reproduces on
 # re-run; print_blob makes any failure replayable locally via @reproduce_failure.
-settings.register_profile("ci", deadline=None, derandomize=True, print_blob=True)
+# It also drops the too_slow health check for the same reason: a wall-clock
+# limit on drawing the first examples, which a starved worker trips on a cheap
+# strategy (test_query_entities drew 6 inputs in 2.77 s at load 35 on 16
+# CPUs, then passed 30 reruns). The examples drawn and their number are
+# unchanged; a strategy too slow everywhere still fails the default profile.
+settings.register_profile(
+    "ci",
+    deadline=None,
+    derandomize=True,
+    print_blob=True,
+    suppress_health_check=[HealthCheck.too_slow],
+)
 # "explore" (the weekly hypothesis-explore workflow) draws from a fresh random
 # seed each run and raises the example budget of the tests that do not set
 # their own; a test with its own max_examples keeps it, but still meets new
