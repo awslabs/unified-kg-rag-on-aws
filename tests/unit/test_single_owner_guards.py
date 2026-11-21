@@ -757,9 +757,33 @@ _LOG_METHODS = frozenset(
 )
 
 
-def _plural_head(node: ast.AST) -> bool:
-    """``xs[:k]`` of a name that reads as a list (``errors``, ``stats.ids``):
-    a head written whole is the list's repr. ``entity_id[:8]`` or
+def _builds_a_list(node: ast.AST) -> bool:
+    """``sorted(...)``, ``list(...)``, a list display or comprehension: a
+    value that is a list whatever its name says."""
+    return isinstance(node, ast.List | ast.ListComp) or (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"sorted", "list"}
+    )
+
+
+def _list_names(scope: ast.AST) -> set[str]:
+    """The names ``scope``'s own code binds to a list (:func:`_builds_a_list`)."""
+    return {
+        target.id
+        for node in _own_nodes(scope)
+        if isinstance(node, ast.Assign | ast.AnnAssign | ast.NamedExpr)
+        and node.value is not None
+        and _builds_a_list(node.value)
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        if isinstance(target, ast.Name)
+    }
+
+
+def _list_head(node: ast.AST, lists: set[str]) -> bool:
+    """``xs[:k]`` of a list: of a name bound to one in the same function
+    (``lists``), or of a name that reads as one (``errors``, ``stats.ids``).
+    A head written whole is the list's repr. ``entity_id[:8]`` or
     ``text[:200]`` cuts a string."""
     if not _head(node):
         return False
@@ -770,6 +794,8 @@ def _plural_head(node: ast.AST) -> bool:
         if isinstance(value, ast.Name)
         else value.attr if isinstance(value, ast.Attribute) else ""
     )
+    if isinstance(value, ast.Name) and name in lists:
+        return True
     return name.endswith("s") and not name.endswith("ss")
 
 
@@ -777,19 +803,22 @@ def _head_written_whole(source: Source) -> Iterator[tuple[int, str]]:
     """A list's first ``k`` items written as the list itself, its repr
     (``['a', 'b']``), with no word of the rest: an argument a logger call
     writes into the line, or an f-string field."""
-    for node in ast.walk(source.tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in _LOG_METHODS
-        ):
-            written = node.args[1:]
-        elif isinstance(node, ast.FormattedValue):
-            written = [node.value]
-        else:
-            continue
-        if any(_plural_head(arg) for arg in written):
-            yield node.lineno, ast.unparse(node)[:80]
+    tree = source.tree
+    for scope in (tree, *(n for n in ast.walk(tree) if isinstance(n, _SCOPES))):
+        lists = _list_names(scope)
+        for node in _own_nodes(scope):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _LOG_METHODS
+            ):
+                written = node.args[1:]
+            elif isinstance(node, ast.FormattedValue):
+                written = [node.value]
+            else:
+                continue
+            if any(_list_head(arg, lists) for arg in written):
+                yield node.lineno, ast.unparse(node)[:80]
 
 
 # A hand-written "the first N, and N more" of a list of names: the count of
@@ -1291,6 +1320,21 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (_NAME_TRUNCATION, 'logger.warning("%s errors: %s", t, stats.errors[:2])\n', 1),
         (_NAME_TRUNCATION, 'raise E(f"failed: {stats.errors[:1]}")\n', 1),
         (_NAME_TRUNCATION, 'logger.info("%s of %s", ids[:5], n)\n', 1),
+        # A list by how it is built, whatever its name (R2D-6).
+        (
+            _NAME_TRUNCATION,
+            "def f(c):\n    repeated = sorted(c)\n"
+            "    raise E(f'given twice: {repeated[:10]}')\n",
+            1,
+        ),
+        (_NAME_TRUNCATION, 'kept = [a for a in b]\nlogger.info("%s", kept[:3])\n', 1),
+        # Bound to a list in another function: a string cut here.
+        (
+            _NAME_TRUNCATION,
+            "def f(c):\n    head = list(c)\ndef g(head):\n"
+            "    return f'{head[:8]}'\n",
+            [],
+        ),
         # A string cut, not a list: an id prefix, an excerpt.
         (_NAME_TRUNCATION, 'logger.debug("entity %s", entity_id[:8])\n', []),
         (_NAME_TRUNCATION, 'm = f"{text[:200]} ({address[:20]})"\n', []),
