@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 import unicodedata
 from collections.abc import Iterator
@@ -1171,7 +1172,9 @@ def test_concurrent_same_text_queries_each_name_their_own_failure(
 
 # A corpus in folders: each document's path filters (file, folder) scope a
 # question to a file or a folder at any depth. One folder is named in
-# decomposed Hangul (NFD, as macOS gives it), one file holds a ':'.
+# decomposed Hangul (NFD, as macOS gives it), files hold a ':' (one after a
+# single letter, as a Windows drive is written), and one folder is named
+# like a drive (``x:``), whose file cannot be told from a Windows path.
 _NFD_FOLDER = unicodedata.normalize("NFD", "서류")
 _FOLDERED = {
     "contracts/2024/acme.txt": "Vendor supplies widgets to Buyer.",
@@ -1179,6 +1182,8 @@ _FOLDERED = {
     "logistics/depot.txt": "Depot stores widgets for Vendor.",
     f"{_NFD_FOLDER}/ledger.txt": "Clerk stores widgets for Vendor.",
     "logistics/notes 10:30.txt": "Porter stores widgets for Vendor.",
+    "a:b.txt": "Courier stores widgets for Vendor.",
+    "x:/y.txt": "Keeper stores widgets for Vendor.",
     "notes.txt": "Carrier moves gadgets for Depot.",
 }
 
@@ -1194,7 +1199,10 @@ def _cited_paths(out: RAGOutput) -> set[str]:
 
 
 def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend(
-    tmp_path: Path, no_aws, store_harness: StoreHarness
+    tmp_path: Path,
+    no_aws,
+    store_harness: StoreHarness,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # A directory corpus carried no document filter, so a question could be
     # scoped to a file or folder only from Python (InputDocument.filters).
@@ -1207,18 +1215,27 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
     for relative, text in _FOLDERED.items():
         (source / relative).parent.mkdir(parents=True, exist_ok=True)
         (source / relative).write_text(text)
-    context = _ingest(config, providers, source, tmp_path / "run-1")
+    with caplog.at_level(logging.WARNING):
+        context = _ingest(config, providers, source, tmp_path / "run-1")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    # The one file that cannot be stamped is named; it does not take the
+    # path filters from the rest of the namespace (R2B-3).
+    (warning,) = [r for r in caplog.records if "carry no path filters" in r.message]
+    assert warning.message.endswith(": y.txt"), warning.message
 
     vectors = providers.build_vector_indexer()
     try:
         rows = stored_text_units(vectors, None, fields=["attributes"])
+        record = vectors.read_build_record(None) or {}
     finally:
         vectors.close()
+    assert record["document_filter_keys"] == ["file", "folder"]
     stamped = {
         row["attributes"]["filters"]["file"]: row["attributes"]["filters"].get("folder")
         for row in rows
+        if "filters" in (row["attributes"] or {})
     }
+    assert len(rows) == len(stamped) + 1
     # Stamped NFC, whatever form the file system gave.
     assert stamped == {
         "contracts/2024/acme.txt": ["contracts", "contracts/2024"],
@@ -1226,6 +1243,7 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
         "logistics/depot.txt": ["logistics"],
         "서류/ledger.txt": ["서류"],
         "logistics/notes 10:30.txt": ["logistics"],
+        "a:b.txt": None,
         "notes.txt": None,
     }
 
@@ -1253,6 +1271,10 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
         "attr_file with ':'": (
             {"attr_file": "logistics/notes 10:30.txt"},
             {"logistics/notes 10:30.txt"},
+        ),
+        "attr_file after a single letter and ':'": (
+            {"attr_file": "a:b.txt"},
+            {"a:b.txt"},
         ),
     }
     chain = GraphRAGChain(config, providers=providers)

@@ -117,10 +117,10 @@ def file_name(metadata: Mapping[str, Any]) -> str | None:
 
 
 # A path that names a place, not a path under the corpus root: a Windows
-# drive (``C:``, ``C:/x``) or a URL scheme (``s3://``). Any other ``:`` is
-# part of a name (``notes 10:30.txt``, a folder ``2024:Q1``), legal on
-# POSIX and macOS.
-_DRIVE_OR_SCHEME = re.compile(r"^(?:[A-Za-z]:|[A-Za-z][A-Za-z0-9+.-]*://)")
+# drive's absolute path (``C:``, ``C:/x``, ``C:\x``) or a URL scheme
+# (``s3://``). Any other ``:`` is part of a name (``notes 10:30.txt``,
+# ``a:b.txt``, a folder ``2024:Q1``), legal on POSIX and macOS.
+_DRIVE_OR_SCHEME = re.compile(r"^(?:[A-Za-z]:(?:/|$)|[A-Za-z][A-Za-z0-9+.-]*://)")
 
 
 def safe_relative_path(value: Any) -> str | None:

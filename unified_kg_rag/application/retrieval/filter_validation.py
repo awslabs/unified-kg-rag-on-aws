@@ -276,9 +276,10 @@ def check_path_filter_keys(
     """Refuse a filter on a path filter key (``attr_file``, ``attr_folder``
     or their ``attributes.filters.<key>`` form) on a namespace whose
     documents may not carry it (``NamespaceHoldings.unstamped_filter_keys``:
-    one an earlier version built, a delta over it, or one holding a document
-    whose path is not under the corpus root): it would match only some of
-    them, an answer from part of the corpus, not an error."""
+    one an earlier version built, or a delta over it): it would match only
+    some of them, an answer from part of the corpus, not an error. A
+    document whose path is not under the corpus root carries none in any
+    namespace and matches no path filter (ingestion names it)."""
     unstamped = holdings.unstamped_filter_keys
     if not filters or not unstamped:
         return
@@ -292,9 +293,8 @@ def check_path_filter_keys(
         raise InvalidFilterError(
             f"Filter key(s) {', '.join(asked)}: the index namespace "
             f"'{namespace}' was built before ingestion stamped each document's "
-            "path filters (file, folder), or holds a document indexed from "
-            "outside the corpus root, so its documents do not carry them all "
-            "and the filter would match only some of them. "
+            "path filters (file, folder), so its documents do not carry them "
+            "all and the filter would match only some of them. "
             "Rebuild it with indexing.reset: true (run-ingestion --reset) "
             "first."
         )

@@ -175,12 +175,13 @@ class IndexBuildRecord(BaseModel):
     document_filter_keys: list[str] | None = Field(
         default=None,
         description=(
-            "The document filter keys ingestion stamped on every document "
+            "The document filter keys ingestion stamped on the documents "
             "of the suffix (document_identity.PATH_FILTER_KEYS: file, "
-            "folder), a seed graph's aside; none when one was not (a path "
-            "outside the corpus root). An incremental record keeps "
-            "those the stored record names too. None in a record written "
-            "by an earlier version, whose documents carry none."
+            "folder), a seed graph's aside; a document whose path is not "
+            "relative to the corpus root carries none and matches no path "
+            "filter. An incremental record keeps those the stored record "
+            "names too. None in a record written by an earlier version, "
+            "whose documents carry none."
         ),
     )
     answer_fingerprints: dict[str, str | None] | None = Field(

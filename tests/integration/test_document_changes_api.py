@@ -7,6 +7,8 @@ documents are kept instead of deleted."""
 
 from __future__ import annotations
 
+import logging
+import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -165,12 +167,15 @@ def test_documents_from_memory_are_added_updated_and_deleted(
     assert any(isinstance(s, ps.DocumentParsingStage) for s in pipeline.stages)
 
 
-def test_the_build_record_names_the_path_filters_only_while_every_document_has_them(
-    setup,
+def test_a_document_without_path_filters_leaves_the_namespace_its_filters(
+    setup, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # An id that starts with a drive is no path under the corpus root and
-    # gets no path filters: the record must stop naming them, so a filter
-    # on them is refused instead of leaving that document out unseen.
+    # An id that starts with a Windows drive's path is no path under the
+    # corpus root and gets no path filters. The record named none from then
+    # on, so every path filter on the namespace was refused, a reset
+    # recorded none again, and a POSIX name such as a:b.txt took them away
+    # too (R2B-3). That document now matches no path filter, ingestion names
+    # it, and the namespace keeps the filters.
     config, providers, pipeline = setup
 
     def filter_keys() -> list[str] | None:
@@ -187,17 +192,49 @@ def test_the_build_record_names_the_path_filters_only_while_every_document_has_t
                     id="contracts/supply.txt", text="Vendor supplies widgets."
                 ),
                 InputDocument(id="notes 10:30.txt", text="Buyer pays for widgets."),
+                InputDocument(id="C:ledger.txt", text="Clerk counts widgets."),
             ]
         )
     )
     assert filter_keys() == ["file", "folder"]
+    assert _unit_filters(config, providers)["Clerk counts widgets."] == {
+        "file": "C:ledger.txt"
+    }
+    with caplog.at_level(logging.WARNING):
+        _ok(
+            pipeline.insert_documents(
+                [
+                    InputDocument(
+                        id="C:/ledger.txt", text="Depot stores widgets for Vendor."
+                    )
+                ]
+            )
+        )
+    assert _unit_filters(config, providers)["Depot stores widgets for Vendor."] is None
+    assert filter_keys() == ["file", "folder"]
+    (warning,) = [r for r in caplog.records if "carry no path filters" in r.message]
+    assert warning.message.endswith(": ledger.txt"), warning.message
+
+
+def test_a_documents_own_folder_is_stored_nfc(setup) -> None:
+    # Only the stamped path filters were NFC: a folder the document gave
+    # itself in NFD stayed NFD, so the NFC value a query types missed it
+    # (R2B-5).
+    config, providers, pipeline = setup
+    nfd = unicodedata.normalize("NFD", "서류")
     _ok(
         pipeline.insert_documents(
-            [InputDocument(id="C:ledger.txt", text="Depot stores widgets for Vendor.")]
+            [
+                InputDocument(
+                    id="b.txt", text="Vendor supplies widgets.", filters={"folder": nfd}
+                )
+            ]
         )
     )
-    assert _unit_filters(config, providers)["Depot stores widgets for Vendor."] is None
-    assert filter_keys() == []
+    assert _unit_filters(config, providers)["Vendor supplies widgets."] == {
+        "file": "b.txt",
+        "folder": "서류",
+    }
 
 
 def test_scopes_keep_their_documents_apart(setup, tmp_path: Path) -> None:
