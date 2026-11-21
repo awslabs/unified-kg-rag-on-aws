@@ -16,6 +16,7 @@ import math
 import re
 import time
 import unicodedata
+from collections.abc import Mapping
 from typing import Any
 
 from langchain_core.exceptions import ContextOverflowError, OutputParserException
@@ -41,6 +42,7 @@ from unified_kg_rag.domain.ingestion.community_hierarchy import (
     coarser_cut_filter,
     cut_filter,
 )
+from unified_kg_rag.domain.ingestion.rebuild_due import root_depth_release
 from unified_kg_rag.domain.ingestion.report_references import REPORT_OUTDATED_FIELD
 from unified_kg_rag.domain.models import (
     Config,
@@ -533,8 +535,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 )
             elif used < depth:
                 logger.warning(
-                    "The depth-%s cut has more than %s community reports; "
-                    "mapping the depth-%s cut (%s reports), which covers the "
+                    "The cut at depth %s has more than %s community reports; "
+                    "mapping the cut at depth %s (%s reports), which covers the "
                     "same entities in broader reports "
                     "(search.global_search.max_reports_per_level)",
                     depth,
@@ -551,9 +553,19 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         """Whether the stores hold a report at ``depth`` or above that a
         cut there selects (``coarser_cut_filter``): a coarser level above
         the first pass. Whatever the caller's filters, which narrow the
-        cut, not the hierarchy."""
+        cut, not the hierarchy.
+
+        None on a namespace whose last full build a release before
+        ``min_cut_depth`` wrote (its build record, ``root_depth_release``):
+        a later incremental run writes its delta's reports with the field
+        beside the full build's without it, which a negative cut's filter
+        on it would drop, and the coarser cut would cover the delta alone.
+        A backend without a build record is read off its reports alone."""
         retriever = self.document_retriever
         if retriever is None:
+            return False
+        record = await retriever.aread_build_record(query.suffix)
+        if isinstance(record, Mapping) and root_depth_release(record) is not None:
             return False
         probe = SearchQuery(
             query="",

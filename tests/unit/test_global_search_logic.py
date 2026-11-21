@@ -34,6 +34,7 @@ from unified_kg_rag.domain.ingestion.community_clustering import (
     hierarchical_communities,
 )
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    LEAF_CUT_DEPTH,
     attach_report_hierarchy,
     max_cut_depth,
 )
@@ -119,10 +120,19 @@ class _ReportStore:
     by the query word appearing in the report's community id (similarity).
     """
 
-    def __init__(self, documents: list[dict[str, Any]], window: int = 10000) -> None:
+    def __init__(
+        self,
+        documents: list[dict[str, Any]],
+        window: int = 10000,
+        record: dict[str, Any] | None = None,
+    ) -> None:
         self.documents = documents
         self.window = window  # the hits one search returns (max_result_window)
+        self.record = record  # the namespace's build record
         self.calls: list[SearchQuery] = []
+
+    async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        return self.record
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits(max_result_window=self.window)
@@ -449,6 +459,99 @@ async def test_the_step_down_stops_at_the_coarsest_level() -> None:
         "depth": {"lte": -3},
         "min_cut_depth": {"lte": -3},
     }
+
+
+async def test_the_step_down_logs_the_cut_it_maps(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    strat = _strategy(_ReportStore(_coarser_documents()), max_reports_per_level=3)
+    with caplog.at_level("WARNING"):
+        await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
+
+    assert "mapping the cut at depth -1 (3 reports)" in caplog.text
+    assert "depth--" not in caplog.text
+
+
+class _FilterIgnoringStore(_ReportStore):
+    """A store that ignores the coarser-cut probe's filter: it answers the
+    probe with the highest-ranked report, whatever its depth."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        if query.filters and "min_cut_depth" in query.filters:
+            if "max_cut_depth" not in query.filters:
+                self.calls.append(query)
+                hits = await super().aretrieve(query.model_copy(update={"filters": {}}))
+                return hits[:1]
+        return await super().aretrieve(query)
+
+
+async def test_the_probe_reads_the_depth_off_its_hit() -> None:
+    # A probe answered by a report below the step (here the highest-ranked
+    # one, at depth 0) finds no coarser level: the step-down would not end.
+    store = _FilterIgnoringStore(_coarser_documents())
+    assert {d["community_id"]: d["depth"] for d in store.documents}["Z"] == 0
+    strat = _strategy(store, max_reports_per_level=3)
+    result = await strat.asearch(SearchQuery(query="themes"))
+
+    assert result.metadata["global_cut_depth"] == 2
+    assert result.metadata["global_level_capped"] is True
+    assert len(_coarser_probes(store)) == 1
+
+
+# A namespace's build record: its last full build by ``release``, as
+# IndexBuildRecord.full_build keeps it for an incremental record.
+def _incremental_record(release: str) -> dict[str, Any]:
+    return {"mode": "incremental", "full_build": {"package_version": release}}
+
+
+def _mixed_documents() -> list[dict[str, Any]]:
+    """A 0.3.0 full build's reports (four leaf roots at depth 0, written
+    without ``min_cut_depth``) beside the reports an incremental run of this
+    release wrote for its delta (COARSER, with the field)."""
+    old = [
+        {
+            "community_id": f"O{i}",
+            "rank": 100 + i,
+            "depth": 0,
+            "max_cut_depth": LEAF_CUT_DEPTH,
+            "parent_community_id": "",
+            "child_community_ids": [],
+            "attr_x": "y",
+        }
+        for i in range(4)
+    ]
+    return old + _coarser_documents()
+
+
+@pytest.mark.parametrize(
+    "record",
+    [_incremental_record("0.3.0"), {"mode": "full", "package_version": "0.3.0"}],
+)
+async def test_a_store_whose_full_build_predates_the_cut_bounds_stops_at_depth_0(
+    record: dict[str, Any],
+) -> None:
+    # R2A-1: the probe found the delta's coarser level, whose cut (J, I, Z)
+    # held none of the old reports, and that was mapped, uncapped.
+    store = _ReportStore(_mixed_documents(), record=record)
+    strat = _strategy(store, max_reports_per_level=4)
+    result = await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
+
+    assert result.metadata["global_cut_depth"] == 2
+    assert result.metadata["global_level_capped"] is True
+    # Stopped before any probe for a coarser level.
+    assert _coarser_probes(store) == []
+
+
+async def test_a_store_whose_full_build_holds_the_cut_bounds_steps_past_depth_0() -> (
+    None
+):
+    store = _ReportStore(_coarser_documents(), record=_incremental_record("0.4.0"))
+    strat = _strategy(store, max_reports_per_level=3)
+    result = await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
+
+    assert result.metadata["global_cut_depth"] == -1
+    assert result.metadata["global_level_capped"] is False
+    assert _coarser_mapped(strat) == {"J", "I", "Z"}
 
 
 async def test_reports_written_without_the_shallowest_cut_stop_at_depth_0() -> None:

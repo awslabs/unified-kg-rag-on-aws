@@ -299,9 +299,12 @@ as upstream starts at level 0
   Only when even the coarsest cut does not fit, or at once under a filter on a report key (`community_id`, `level`, `rating`: a shallower report passes it on its own, not through its members), does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.
-  The cap counts reports, which bounds the map calls. Reports written before
-  `min_cut_depth` was stored step down to depth 0 only, until
-  `indexing.reset: true` writes them again.
+  The cap counts reports, which bounds the map calls. A namespace whose last
+  full build a release before `min_cut_depth` (0.4.0) wrote steps down to
+  depth 0 only, as its build record says, the reports its later incremental
+  runs write with the field included (a negative cut filters on it, so it
+  would hold the delta's reports alone), until `indexing.reset: true` writes
+  them again.
 - **Dynamic selection** (`use_dynamic_selection`) — MS GraphRAG's
   `DynamicCommunitySelection`: rate the depth-0 reports (the first Leiden
   pass) for relevance, follow the children of the relevant ones to the

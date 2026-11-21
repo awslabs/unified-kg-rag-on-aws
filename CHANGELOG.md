@@ -48,9 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cap (on planted graphs at the defaults: 132 reports at 6,000 entities, 120 at 9,000), so the default query maps a
   coarser cut there, not the 99 depth-2 reports most similar to the query. With
   `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
-  coarser roots. Stored reports keep their depth, and step down to depth 0 only, until a reset (*Upgrading*); a
-  namespace whose last full build an earlier release wrote gets a `community_depths` rebuild reason (remedy `reset`)
-  in `run-describe`, the console, MCP and the run's `rebuild_due`.
+  coarser roots. Stored reports keep their depth until a reset (*Upgrading*): a namespace whose last full build an
+  earlier release wrote steps down to depth 0 only, the reports its later incremental runs write included, and gets
+  a `community_depths` rebuild reason (remedy `reset`) in `run-describe`, the console, MCP and the run's
+  `rebuild_due`.
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
   holds only a run's output; on a stdout or stderr that is no terminal no line is wrapped or cropped at 80 columns (a
   panel or table is drawn as wide as its widest line: `run-ingestion`'s source and cache paths lost their ends), and

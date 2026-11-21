@@ -128,6 +128,25 @@ RebuildReasons = Annotated[
 FIRST_PASS_DEPTH_RELEASE = (0, 4, 0)
 
 
+def root_depth_release(record: Mapping[str, Any]) -> str | None:
+    """The release that wrote the full build ``record`` is or keeps when it
+    predates :data:`FIRST_PASS_DEPTH_RELEASE`, else None (a later one, or a
+    record without a version). Its community reports count their depth
+    from the coarsest root and hold no ``min_cut_depth``, and an
+    incremental run keeps them beside its delta's: global search steps no
+    cut below depth 0 there (``GlobalSearchStrategy._has_coarser_cut``)."""
+    full = record if record.get("mode") == "full" else record.get("full_build")
+    if not isinstance(full, Mapping):
+        return None
+    version = full.get("package_version")
+    match = re.match(
+        r"(\d+)\.(\d+)\.(\d+)", version if isinstance(version, str) else ""
+    )
+    if match is None or tuple(map(int, match.groups())) >= FIRST_PASS_DEPTH_RELEASE:
+        return None
+    return str(version)
+
+
 _ANSWERS = {
     COMMUNITY_REPORT_ANSWERS: "community reports",
     DESCRIPTION_SUMMARY_ANSWERS: "description summaries",
@@ -222,12 +241,8 @@ def _community_depth_reasons(
 ) -> list[RebuildReason]:
     if IndexArtifact.COMMUNITY_REPORTS not in held_artifacts(record, config):
         return []
-    full = record if record.get("mode") == "full" else record.get("full_build")
-    if not isinstance(full, Mapping):
-        return []
-    version = full.get("package_version")
-    match = re.match(r"(\d+)\.(\d+)\.(\d+)", version or "")
-    if match is None or tuple(map(int, match.groups())) >= FIRST_PASS_DEPTH_RELEASE:
+    version = root_depth_release(record)
+    if version is None:
         return []
     return [
         RebuildReason(
@@ -237,7 +252,9 @@ def _community_depth_reasons(
             "counted their depth from the coarsest root: global search's "
             "search.global_search.community_depth cut, which counts it from "
             "the first Leiden pass as MS GraphRAG does, reads them one or more "
-            "levels too coarse beside the reports incremental runs write; a "
+            "levels too coarse beside the reports incremental runs write, and "
+            "a cut over search.global_search.max_reports_per_level steps no "
+            "lower than depth 0 (the most similar reports are mapped); a "
             "run with indexing.reset: true writes every report at its depth, "
             "reusing the stored extractions",
             settings=[IndexArtifact.COMMUNITY_REPORTS.value],
