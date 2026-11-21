@@ -49,7 +49,7 @@ import re
 import unicodedata
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.domain.models.config import Constants
 from unified_kg_rag.domain.retrieval.source_fields import safe_relative_path
@@ -199,16 +199,36 @@ def path_filters(relative_path: str) -> dict[str, str | list[str]]:
 def stamp_path_filters(document: Document, relative_path: str) -> None:
     """Add :func:`path_filters` of ``document``'s ``relative_path`` to its
     ``filters`` metadata, in place (a new dict: the metadata's may be
-    shared), keeping a key its filters already give. Nothing for a path
-    that is not relative to the corpus root (``safe_relative_path``: a
-    document parsed outside the pipeline names where it lived)."""
-    relative = safe_relative_path(relative_path)
-    if relative is None:
-        return
+    shared), keeping a key its filters already give, in NFC as a stamped
+    one (:func:`path_filter_value`). No stamp for a path that is not
+    relative to the corpus root (``safe_relative_path``: a document parsed
+    outside the pipeline names where it lived)."""
     key = Constants.FILTERS.value
     given = document.metadata.get(key)
-    given = given if isinstance(given, dict) else {}
+    given = _nfc_path_filters(given) if isinstance(given, dict) else {}
+    relative = safe_relative_path(relative_path)
+    if relative is None:
+        if given:
+            document.metadata[key] = given
+        return
     document.metadata[key] = {**path_filters(relative), **given}
+
+
+def _nfc_path_filters(filters: dict[str, Any]) -> dict[str, Any]:
+    """``filters`` (a new dict) with the text values of its path filter
+    keys in NFC."""
+
+    def nfc(value: Any) -> Any:
+        if isinstance(value, str):
+            return path_filter_value(value)
+        if isinstance(value, list):
+            return [nfc(item) for item in value]
+        return value
+
+    return {
+        name: nfc(value) if name in PATH_FILTER_KEYS else value
+        for name, value in filters.items()
+    }
 
 
 def compute_document_id(source_key: str, content_hash: str) -> str:

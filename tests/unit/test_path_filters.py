@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from unified_kg_rag.application.ingestion.pipeline_stages import _stamped_filter_keys
+from unified_kg_rag.application.ingestion.pipeline_stages import _unstamped_documents
 from unified_kg_rag.application.retrieval.filter_validation import (
     check_path_filter_keys,
 )
@@ -179,7 +179,12 @@ def test_a_path_filter_value_matches_its_nfc_form(key: str) -> None:
         ("notes 10:30.txt", {"file": "notes 10:30.txt"}),
         ("2024:Q1/r.txt", {"file": "2024:Q1/r.txt", "folder": ["2024:Q1"]}),
         ("C:/corpus/r.txt", None),
-        ("c:r.txt", None),
+        ("C:", None),
+        ("x:/y", None),
+        # A letter and a colon begin a name, not a drive (R2B-3).
+        ("a:b.txt", {"file": "a:b.txt"}),
+        ("Q:1 report.txt", {"file": "Q:1 report.txt"}),
+        ("B:side/x.txt", {"file": "B:side/x.txt", "folder": ["B:side"]}),
         ("s3://bucket/r.txt", None),
         ("https://host/r.txt", None),
     ],
@@ -199,19 +204,55 @@ def _unit(unit_id: str, filters: dict | None) -> TextUnit:
     return TextUnit(id=unit_id, text="Vendor supplies widgets.", attributes=attributes)
 
 
-def test_the_build_record_names_the_path_filters_only_when_every_document_has_them() -> (
-    None
-):
+def test_a_document_without_path_filters_is_named_not_the_namespace_refused() -> None:
+    # One document whose path is not relative to the corpus root used to
+    # record no keys, so every attr_file/attr_folder query on the namespace
+    # was refused, and a reset recorded none again (R2B-3). It now matches
+    # no path filter itself, and ingestion names it.
     stamped = _unit("t1", {"file": "a/b.txt", "folder": ["a"]})
     at_root = _unit("t2", {"file": "b.txt"})
     seed = _unit(f"{SEED_UNIT_PREFIX}products", {"seed_graph": "products"})
-    assert _stamped_filter_keys([stamped, at_root, seed]) == ["file", "folder"]
-    assert _stamped_filter_keys([]) == ["file", "folder"]
-    # A document whose path is not under the corpus root carries none, so
-    # the namespace refuses the keys instead of answering without it.
-    for unstamped in (_unit("t3", None), _unit("t4", {"region": "emea"})):
-        keys = _stamped_filter_keys([stamped, unstamped])
-        assert keys == []
-        holdings = namespace_holdings({"document_filter_keys": keys}, Config())
-        with pytest.raises(InvalidFilterError, match="attr_file"):
-            check_path_filter_keys({"attr_file": "b.txt"}, holdings, "tenant")
+    assert _unstamped_documents([stamped, at_root, seed]) == []
+    assert _unstamped_documents([]) == []
+    outside = TextUnit(
+        id="t3",
+        text="Vendor supplies widgets.",
+        attributes={"file_name": "acme.txt"},
+        document_ids=["d3"],
+    )
+    tagged = TextUnit(
+        id="t4",
+        text="Vendor supplies widgets.",
+        attributes={"filters": {"region": "emea"}},
+        document_ids=["d4"],
+    )
+    assert _unstamped_documents([stamped, outside, tagged, outside]) == [
+        "acme.txt",
+        "d4",
+    ]
+
+
+def test_a_documents_own_path_filters_are_nfc_too() -> None:
+    # A key the document's own filters give was stored as given, so an NFD
+    # folder never matched the NFC value a query types (R2B-5).
+    given = _document(
+        "b.txt",
+        filters={
+            "folder": _NFD_FOLDER,
+            "file": [_NFD_FOLDER, 3],
+            "region": _NFD_FOLDER,
+        },
+    )
+    assign_document_identity(given, "/corpus")
+    assert given.metadata["filters"] == {
+        "file": ["서류", 3],
+        "folder": "서류",
+        # Another document key is kept as written.
+        "region": _NFD_FOLDER,
+    }
+    # Also where no path is stamped.
+    outside = _document("b.txt", filters={"folder": _NFD_FOLDER})
+    outside.file_path = "/elsewhere/b.txt"
+    outside.metadata["relative_path"] = "C:/elsewhere/b.txt"
+    assign_document_identity(outside, "/corpus")
+    assert outside.metadata["filters"] == {"folder": "서류"}

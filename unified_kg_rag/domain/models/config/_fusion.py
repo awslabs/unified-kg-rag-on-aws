@@ -108,6 +108,15 @@ class HybridConfig(ConfigSection):
         ),
     )
 
+    @field_validator("lexical_fuzziness", mode="before")
+    @classmethod
+    def _edits_as_text(cls, value: Any) -> Any:
+        # YAML reads `lexical_fuzziness: 0` as a number, as OpenSearch takes
+        # it; the field is the text form.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return value
+
     @field_validator("lexical_fuzziness")
     @classmethod
     def _check_fuzziness_bounds(cls, value: str) -> str:

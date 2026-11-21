@@ -21,7 +21,6 @@ where the engines agree. Skipped unless ``LOCAL_STORES=1``.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -40,10 +39,7 @@ from unified_kg_rag.domain.models import (
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("LOCAL_STORES") != "1",
-        reason="set LOCAL_STORES=1 with docker/compose.local.yaml running",
-    ),
+    pytest.mark.local_stores,
 ]
 
 _CORPUS = {

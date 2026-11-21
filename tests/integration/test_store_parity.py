@@ -26,7 +26,6 @@ Skipped unless
 
 from __future__ import annotations
 
-import os
 import random
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -49,10 +48,7 @@ from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("LOCAL_STORES") != "1",
-        reason="set LOCAL_STORES=1 with docker/compose.local.yaml running",
-    ),
+    pytest.mark.local_stores,
 ]
 
 _TOP = 10

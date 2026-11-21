@@ -60,6 +60,9 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.ports.indexer import BaseIndexer, VectorIndexer, _implements
 
 LOCAL_CONFIG = Path(__file__).parents[2] / "docker" / "config.local.yaml"
+# The variable that runs the local_stores tests (tests/conftest.py skips
+# them without it).
+LOCAL_STORES_ENV = "LOCAL_STORES"
 DEFAULT_SUFFIX = Constants.DEFAULT_SUFFIX.value
 
 # Capabilities a backend may lack; a test needing one runs only on the
@@ -484,8 +487,14 @@ def _harness_config(kind: str, tmp_path: Path) -> Config:
         config.providers.vector.sqlite_path = str(tmp_path / "vector.sqlite3")
         return config
     if kind == "container":
-        if os.getenv("LOCAL_STORES") != "1":
-            pytest.skip("set LOCAL_STORES=1 with docker/compose.local.yaml running")
+        # A container test carries the local_stores marker, which skips it
+        # unless LOCAL_STORES=1 (tests/conftest.py); one without it fails
+        # here rather than skipping where CI never runs it.
+        if os.getenv(LOCAL_STORES_ENV) != "1":
+            pytest.fail(
+                "a container store test needs the local_stores marker "
+                f"(it runs with {LOCAL_STORES_ENV}=1 only)"
+            )
         config = local_store_config()
     else:
         config = _aws_config()
@@ -497,7 +506,7 @@ def _harness_config(kind: str, tmp_path: Path) -> Config:
 BACKENDS = [
     pytest.param("fake", id="fake"),
     pytest.param("sqlite", id="sqlite"),
-    pytest.param("container", id="container"),
+    pytest.param("container", id="container", marks=pytest.mark.local_stores),
     pytest.param("aws", id="aws", marks=pytest.mark.aws),
     *(
         [pytest.param(EXTRA_BACKEND.name, id=EXTRA_BACKEND.name)]
@@ -516,7 +525,11 @@ _VARIANTS: dict[str, Callable[[Config], None]] = {
 # of graph contracts.
 GRAPH_BACKENDS = [
     *BACKENDS,
-    pytest.param(f"container+{CUSTOM_IDS}", id=f"container-{CUSTOM_IDS}"),
+    pytest.param(
+        f"container+{CUSTOM_IDS}",
+        id=f"container-{CUSTOM_IDS}",
+        marks=pytest.mark.local_stores,
+    ),
     pytest.param(f"aws+{CUSTOM_IDS}", id=f"aws-{CUSTOM_IDS}", marks=pytest.mark.aws),
 ]
 

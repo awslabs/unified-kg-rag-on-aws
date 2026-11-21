@@ -24,7 +24,6 @@ Ollama container and downloads no model.
 
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -59,10 +58,7 @@ from unified_kg_rag.domain.models.config import LanguageCode
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("LOCAL_STORES") != "1",
-        reason="set LOCAL_STORES=1 with docker/compose.local.yaml running",
-    ),
+    pytest.mark.local_stores,
 ]
 
 _SUFFIX = "default"

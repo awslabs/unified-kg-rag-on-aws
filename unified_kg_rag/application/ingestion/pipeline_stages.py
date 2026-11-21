@@ -168,6 +168,7 @@ from unified_kg_rag.domain.models import (
     TextUnitExtraction,
 )
 from unified_kg_rag.domain.models.methodology import recorded_artifacts
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import (
     BaseIndexer,
@@ -243,21 +244,22 @@ def _completed_stages(context: PipelineContext) -> set[PipelineStageType]:
     }
 
 
-def _stamped_filter_keys(text_units: Iterable[TextUnit]) -> list[str]:
-    """The path filter keys every document of ``text_units`` (a seed
-    graph's aside) carries: all of ``PATH_FILTER_KEYS`` when each one was
-    stamped (its ``file``; a document at the corpus root has no
-    ``folder``), none when one was not (a path outside the corpus root),
-    so a query on them is refused instead of answering from part of the
-    corpus."""
+def _unstamped_documents(text_units: Iterable[TextUnit]) -> list[str]:
+    """The documents of ``text_units`` (a seed graph's aside) that carry no
+    path filters (no ``file``: a path not relative to the corpus root), by
+    their file name, else id. Each matches no path filter; the others keep
+    theirs, so the namespace names every key of ``PATH_FILTER_KEYS``."""
     key = Constants.FILTERS.value
+    unstamped: set[str] = set()
     for unit in text_units:
         filters = (unit.attributes or {}).get(key)
-        if not is_seed_unit(unit.id) and not (
+        if is_seed_unit(unit.id) or (
             isinstance(filters, dict) and FILE_FILTER_KEY in filters
         ):
-            return []
-    return list(PATH_FILTER_KEYS)
+            continue
+        name = source_fields.file_name(unit.attributes or {})
+        unstamped.add(name or ", ".join(unit.document_ids or [unit.id]))
+    return sorted(unstamped)
 
 
 def _tree_pruned(results: Mapping[str, IndexingStats]) -> bool:
@@ -3396,6 +3398,14 @@ class IndexingStage(_RegistryStage):
         settings = context.incremental_extraction_settings or extraction_settings(
             self.config
         )
+        if not rewritten and (unstamped := _unstamped_documents(text_units)):
+            logger.warning(
+                "%s document(s) carry no path filters (file, folder): their "
+                "path is not relative to the corpus root, so attr_file and "
+                "attr_folder never match them: %s",
+                len(unstamped),
+                first_names(unstamped),
+            )
         record = IndexBuildRecord(
             pipeline_id=context.pipeline_id,
             mode="incremental" if incremental else "full",
@@ -3407,11 +3417,10 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=__version__,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
-            # The path filters every document this run indexed carries; a
-            # rewritten record does not know what the stored ones carry.
-            document_filter_keys=(
-                None if rewritten else _stamped_filter_keys(text_units)
-            ),
+            # The path filters this run stamped (a document outside the
+            # corpus root carries none: _unstamped_documents); a rewritten
+            # record does not know what the stored ones carry.
+            document_filter_keys=None if rewritten else list(PATH_FILTER_KEYS),
             # A full build wrote every report and summary under this config;
             # an incremental record keeps the stored ones (over()), and a
             # rewritten record does not know them.

@@ -295,6 +295,24 @@ def test_every_fuzziness_opensearch_takes_loads(value: str) -> None:
     assert config.search.hybrid.lexical_fuzziness == value
 
 
+@pytest.mark.parametrize("edits", [0, 1, 2])
+def test_a_yaml_number_of_edits_loads_as_its_text(edits: int) -> None:
+    # `lexical_fuzziness: 0` in YAML is a number, which the field refused
+    # ("Input should be a valid string", R2B-8).
+    import yaml
+
+    raw = yaml.safe_load(f"search:\n  hybrid:\n    lexical_fuzziness: {edits}\n")
+    assert raw["search"]["hybrid"]["lexical_fuzziness"] == edits
+    config = Config.model_validate(raw)
+    assert config.search.hybrid.lexical_fuzziness == str(edits)
+
+
+@pytest.mark.parametrize("value", [3, -1, True])
+def test_a_number_opensearch_refuses_is_refused(value: object) -> None:
+    with pytest.raises(ValueError, match="lexical_fuzziness"):
+        Config.model_validate({"search": {"hybrid": {"lexical_fuzziness": value}}})
+
+
 @pytest.mark.parametrize("text", ["가나다상사", "青空海運", "カタカナ", "가나다 Corp"])
 def test_build_lexical_query_no_fuzziness_for_dense_scripts(retriever, text) -> None:
     # One Hangul/Han/Kana character is a whole syllable or morpheme, so the

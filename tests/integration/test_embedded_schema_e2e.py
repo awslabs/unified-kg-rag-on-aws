@@ -13,7 +13,6 @@ The schema filter test also runs on the local containers (``LOCAL_STORES=1``).
 
 from __future__ import annotations
 
-import os
 import re
 import uuid
 from collections.abc import Callable
@@ -448,16 +447,15 @@ def _on_containers(config: Config) -> None:
     config.indexing.additional_suffix = f"sf{uuid.uuid4().hex[:8]}"
 
 
-@pytest.mark.parametrize("stores", ["embedded", "container"])
+@pytest.mark.parametrize(
+    "stores", ["embedded", pytest.param("container", marks=pytest.mark.local_stores)]
+)
 def test_schema_filters_never_empty_a_stream_silently(
     tmp_path: Path, no_aws, stores: str  # noqa: F811
 ) -> None:
     # strict with entity types alone: relationships had no in_schema, so
     # in_schema: true dropped every relationship (mix, hybrid, local, drift,
     # auto); and no type declares an IRI, so an IRI filter emptied its kind.
-    if stores == "container" and os.getenv("LOCAL_STORES") != "1":
-        pytest.skip("set LOCAL_STORES=1 with docker/compose.local.yaml running")
-
     def entity_types_only(config: Config) -> None:
         extraction = config.processing.graph_extraction
         extraction.relationship_patterns = []

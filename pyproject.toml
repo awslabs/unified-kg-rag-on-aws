@@ -364,6 +364,7 @@ markers = [
     "slow: Tests that take over 5 s (deselect with -m \"not slow\" for a quick run)",
     "perf: Wall- or CPU-time assertions, too noisy for shared runners (weekly job only)",
     "weekly: Heavy fidelity cases the weekly fidelity workflow runs (pull requests run a sample)",
+    "local_stores: Runs against the docker/compose.local.yaml stores; skipped unless LOCAL_STORES=1 (the CI local-stores job runs -m local_stores)",
 ]
 # Silence only known third-party deprecations so new ones (including our own)
 # stay visible. gremlin_python: camelCase step aliases kept for Neptune's

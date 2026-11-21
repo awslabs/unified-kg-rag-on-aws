@@ -91,11 +91,26 @@ _FAKE_AWS_ENV = {
 }
 
 
+# The tests against the docker/compose.local.yaml containers carry this
+# marker and are skipped here, and only here, unless LOCAL_STORES=1, so the
+# CI local-stores job selects every one of them (-m local_stores);
+# tests/unit/test_local_stores_marker.py keeps any other skip on the variable
+# out.
+_LOCAL_STORES_MARKER = "local_stores"
+_LOCAL_STORES_SKIP = pytest.mark.skip(
+    reason="set LOCAL_STORES=1 with docker/compose.local.yaml running"
+)
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Mark each test with its suite (``tests/<suite>/``) before ``-m``
-    selects: this runs ahead of the built-in deselection hook."""
+    selects: this runs ahead of the built-in deselection hook. Skip the
+    ``local_stores`` tests without ``LOCAL_STORES=1``."""
+    containers = os.getenv("LOCAL_STORES") == "1"
     for item in items:
+        if not containers and item.get_closest_marker(_LOCAL_STORES_MARKER):
+            item.add_marker(_LOCAL_STORES_SKIP)
         try:
             suite = item.path.relative_to(_TESTS_ROOT).parts[0]
         except ValueError:
