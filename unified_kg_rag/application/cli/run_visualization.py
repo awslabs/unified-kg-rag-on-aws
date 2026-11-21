@@ -203,11 +203,11 @@ def _fill_missing_analysis(
         logger.info(
             "No layout in the data; using a spring layout from the graph topology."
         )
+        interactive = InteractiveGraphSettings.model_validate(
+            config.graph.visualization.interactive
+        )
         context.layout = spring_layout(
-            context.graph,
-            InteractiveGraphSettings.model_validate(
-                config.graph.visualization.interactive
-            ).max_nodes,
+            context.graph, interactive.max_nodes, interactive.max_edges
         )
     if centrality and not context.centrality:
         context.centrality = GraphAnalyzer(config, context.graph).calculate_centrality()

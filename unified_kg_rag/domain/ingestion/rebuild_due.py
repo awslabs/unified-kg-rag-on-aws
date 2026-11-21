@@ -195,16 +195,23 @@ def _outdated_report_reasons(
         return []
     if IndexArtifact.COMMUNITY_REPORTS not in held_artifacts(record, config):
         return []
+    one = len(outdated) == 1
+    kept = (
+        "1 community report was kept after documents it was"
+        if one
+        else f"{len(outdated)} community reports were kept after documents they were"
+    )
     return [
         RebuildReason(
             kind=RebuildReasonKind.OUTDATED_REPORTS,
             remedy=RebuildRemedy.NEXT_RUN,
-            detail=f"{len(outdated)} community reports were kept after "
-            "documents they were written from were deleted or changed, and "
-            "the run could not write them again from what remains: they may "
-            "still state the removed text and are flagged outdated where "
-            "they are read; the next incremental run tries again, a model "
-            "call each (a run with indexing.reset: true writes every report)",
+            detail=f"{kept} written from were deleted or changed, and the run "
+            "could not write "
+            + ("it" if one else "them")
+            + " again from what remains: such a report may still state the "
+            "removed text and is flagged outdated where it is read; the next "
+            "incremental run tries again, a model call each (a run with "
+            "indexing.reset: true writes every report)",
             settings=[IndexArtifact.COMMUNITY_REPORTS.value],
         )
     ]

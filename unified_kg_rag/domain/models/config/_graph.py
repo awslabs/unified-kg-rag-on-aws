@@ -249,11 +249,32 @@ class InteractiveGraphSettings(ConfigSection):
         description="Nodes a drawn graph keeps, the top-N by degree: this "
         "page's and the console's Graph page's (the rest are listed and found "
         "by search there); 0 or null disables the cap. The layout is "
-        "quadratic in them: 600 take about 1.4 s, 2000 about 15 s.",
+        "quadratic in them: 600 take about 1.4 s, 2000 about 15 s, on a "
+        "sparse graph; a dense one takes longer (max_edges).",
         json_schema_extra=evidence(
             "operational",
-            "spring layout of a scale-free graph on one core: 600 nodes 1.4 s, "
-            "1000 3.3 s, 2000 15.2 s",
+            "spring layout on one core: a scale-free graph 600 nodes 1.4 s, "
+            "1000 3.3 s, 2000 15.2 s; a dense one (density 0.11) 600 nodes "
+            "2.1-2.9 s (docs/concepts/defaults-and-evidence.md#graph-page-size)",
+        ),
+    )
+    max_edges: int | None = Field(
+        default=3000,
+        ge=0,
+        description="Links a drawn graph keeps between its max_nodes, this "
+        "page's and the console's Graph page's: each node's strongest first "
+        "(by weight, then the other end's degree), so every node keeps its "
+        "own before any node a second; an entity's panel in the console "
+        "still lists all of its links. 0 or null disables the cap. 3000 is "
+        "5 per node at max_nodes 600: a sparse graph keeps all of them, and "
+        "a dense one (the structural benchmark's large seed graph, 27,863 "
+        "links between its 600 drawn nodes) went from 8.1 MB to 1.1 MB on "
+        "the Graph page.",
+        json_schema_extra=evidence(
+            "operational",
+            "payload of the console's Graph page at 600 nodes: 27,863 links "
+            "8.1 MB, 3000 1.1 MB; a scale-free graph's 1,154 links kept "
+            "(docs/concepts/defaults-and-evidence.md#graph-page-size)",
         ),
     )
 

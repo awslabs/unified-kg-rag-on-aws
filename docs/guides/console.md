@@ -488,7 +488,9 @@ npm run build
 - The Graph page draws the best-connected entities of a large graph
   (`graph.visualization.interactive.max_nodes`, 600 by default, the cap of
   `run-visualization`'s interactive page too); the others are found by name
-  or in the table.
+  or in the table. Of the relationships between them it draws at most
+  `interactive.max_edges` (3000), each entity's strongest first, and says
+  so under the canvas; an entity's panel lists all of its relationships.
 - A job's progress is per stage (ingestion), or per answer and saved run
   (evaluation), not per document; the answers count only at a log level
   that shows INFO lines (`logging.level`).

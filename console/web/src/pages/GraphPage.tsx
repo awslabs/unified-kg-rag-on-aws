@@ -65,12 +65,14 @@ type Panel = "entity" | "communities" | "analysis";
 const LEGEND_SLOTS = 8;
 const OTHER_GROUPS = "\u0000other";
 
-export function GraphPage({ params, namespace }: { params: URLSearchParams; namespace?: string | null }) {
+export function GraphPage({ params, namespace, ready = true }: { params: URLSearchParams; namespace?: string | null; ready?: boolean }) {
   const { t, date } = useI18n();
   // The namespace the header picked (undefined: the config's): its graph is
-  // brought up to date and opened.
+  // brought up to date and opened. Not before the header knows it
+  // (`ready`): a namespace picked earlier is null until the status loads,
+  // and the config's graph would be built and sent first (RV4-11).
   const picked = namespace ?? undefined;
-  const files = useApi(() => get<{ graphs: GraphFile[]; current: CurrentGraph }>("graphs", { namespace: picked }), [picked]);
+  const files = useApi(() => (ready ? get<{ graphs: GraphFile[]; current: CurrentGraph }>("graphs", { namespace: picked }) : Promise.resolve(null)), [picked, ready]);
   const [chosen, setChosen] = useState<string | null>(params.get("graph"));
   // Another namespace picked: the export chosen of the last one is not its.
   const [chosenOf, setChosenOf] = useState(picked);
@@ -175,8 +177,10 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
   const everyone = useMemo<EntityRow[]>(() => [...data.nodes, ...data.others], [data.nodes, data.others]);
   const nameOf = useMemo(() => new Map(everyone.map((n) => [n.id, n.name])), [everyone]);
   // Past the drawn ones, an entity (and the edges of a drawn one to them)
-  // is read from the server.
-  const partial = data.others.length > 0;
+  // is read from the server, as is a drawn one's every edge when the edge
+  // cap left some out.
+  const capped = data.linked !== undefined && data.linked > data.edges.length;
+  const partial = data.others.length > 0 || capped;
   const remote = useApi(
     () => (selected && partial ? get<GraphEntity>("graphs/entity", { ref: graphRef, id: selected }) : Promise.resolve(null)),
     [selected, partial, graphRef],
@@ -360,7 +364,8 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
             />
             </Suspense>
           </div>
-          {partial ? <p className="field-help">{t("graph.drawnOnly", { drawn: number(data.nodes.length), total: number(data.stats.nodes) })}</p> : null}
+          {data.others.length > 0 ? <p className="field-help">{t("graph.drawnOnly", { drawn: number(data.nodes.length), total: number(data.stats.nodes) })}</p> : null}
+          {capped ? <p className="field-help">{t("graph.edgesCapped", { drawn: number(data.edges.length), total: number(data.linked ?? 0) })}</p> : null}
         </div>
         <section className="sheet">
           <div className="tabs" role="tablist" aria-label={t("graph.panels")}>

@@ -115,6 +115,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 
 ### Added
 
+- `graph.visualization.interactive.max_edges`: a drawn graph keeps at most this many links between its nodes (3000;
+  0 for all), each node's strongest first: a dense graph's 600 drawn nodes sent all of their 27,863 links (8.1 MB) and
+  blocked the Graph page's main thread 4-5 s; with the cap 1.1 MB and about 1 s
+  ([measured](docs/concepts/defaults-and-evidence.md#graph-page-size)). The Graph page says how many it drew, and an
+  entity's panel lists all of its links.
 - The console's header picks the namespace Ask, Evaluate and Graph read, of those the stores hold (`/api/namespaces`;
   the Ask, evaluate and graph requests take `namespace`); Ingest writes into it unless told another. `run-console`
   takes the provider flags of the other CLIs (`--backend local` opens the local flow without a config file) and
@@ -368,6 +373,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   tree; it logged `Visualization data export failed: [configuration] ...` on every build. The store conformance suites
   also run on a custom backend that `UKR_TEST_BACKEND` names, without editing the test fixtures ([extend
   guide](docs/guides/extend.md#custom-backends-run-without-aws)).
+  laying out 600 nodes takes about 1.4 s, 2000 about 15 s, on a sparse graph (2.1-2.9 s on a dense one). Set it to
+  2000 for the former interactive page.
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0

@@ -66,8 +66,31 @@ describe("rebuild due", () => {
     await screen.findByText("default is due for a rebuild");
     const [item] = screen.getAllByRole("listitem").map((li) => li.textContent ?? "");
     expect(item).toContain("could not be written again: they may still state the removed text.");
-    expect(item).toContain("The next run applies it");
+    // RV4-10: its own remedy, not "extracting or rebuilding", and no raw
+    // artifact id after it.
+    expect(item).toContain("The next run tries to write them again from what remains, a model call each.");
+    expect(item).not.toContain("extracting or rebuilding");
+    expect(item).not.toContain("community_reports");
     expect(item).not.toContain("far from the last full clustering");
+  });
+
+  it("names reports at an earlier release's depths, and a kind it has no sentence for", async () => {
+    serve({
+      ...held,
+      rebuild: [
+        { kind: "community_depths", remedy: "reset", detail: "its community reports were written by 0.3.0", settings: ["community_reports"] },
+        // A newer server's kind: its own detail, not a raw key.
+        { kind: "future_kind" as never, remedy: "next_run", detail: "Something else is stale.", settings: [] },
+      ],
+    });
+    page("en");
+    await screen.findByText("default is due for a rebuild");
+    const [depths, unknown] = screen.getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(depths).toContain("counted their depths from the coarsest community");
+    expect(depths).toContain("Only a run with “Rebuild the namespace” (More options) applies it.");
+    expect(depths).not.toContain("community_reports");
+    expect(unknown).toContain("Something else is stale.");
+    expect(unknown).not.toContain("ingest.rebuild.");
   });
 
   it("says it in the page's language", async () => {

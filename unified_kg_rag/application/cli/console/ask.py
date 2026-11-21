@@ -37,7 +37,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationError,
     field_validator,
     model_validator,
 )
@@ -68,8 +67,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.namespace import migrate_namespace_field
 from unified_kg_rag.domain.models.retrieval import MAX_SERVED_TOP_K
-from unified_kg_rag.domain.models.usage import LLMUsage
-from unified_kg_rag.domain.pricing import usage_cost_usd
+from unified_kg_rag.domain.pricing import snapshot_cost_usd
 from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
 from unified_kg_rag.domain.retrieval.filters import filter_pairs
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
@@ -717,17 +715,12 @@ def _priced_usage(
     usage: Any, config: Config
 ) -> tuple[dict[str, Any] | None, float | None, list[str]]:
     """A question's usage (``None`` when it is none a meter wrote), its USD
-    cost by ``models.prices`` (``None`` with a model unpriced) and the
-    models without a price."""
+    cost by ``models.prices`` and the models it could not price, as the
+    chain prices a query (``snapshot_cost_usd``)."""
     if not isinstance(usage, dict):
         return None, None, []
-    try:
-        usd, missing = usage_cost_usd(
-            LLMUsage.model_validate(usage), config.models.prices
-        )
-    except ValidationError:
-        return None, None, []
-    return usage, usd, sorted(missing)
+    usd, unpriced = snapshot_cost_usd(usage, config.models.prices)
+    return usage, usd, unpriced
 
 
 def _failed_outcome(error_class: ErrorClass, failed: str) -> str:

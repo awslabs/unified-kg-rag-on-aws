@@ -291,8 +291,8 @@ export function IngestPage({ status, namespace, onJobsChanged }: { status: Statu
                   <ul style={{ margin: 0, paddingLeft: 18 }}>
                     {held.data.rebuild.map((reason) => (
                       <li key={`${reason.kind}-${reason.settings.join(",")}`} title={reason.detail}>
-                        {joinSentences([t(`ingest.rebuild.${reason.kind}`), t(`ingest.rebuildRemedy.${reason.remedy}`, { option: t("ingest.reset"), section: t("ingest.advanced") })], t)}
-                        {reason.settings.length ? <span className="field-help"> {reason.settings.join(", ")}</span> : null}
+                        {joinSentences([reasonText(reason, t), t(remedyKey(reason), { option: t("ingest.reset"), section: t("ingest.advanced") })], t)}
+                        {reason.settings.length && !NAMES_ITS_ARTIFACT.has(reason.kind) ? <span className="field-help"> {reason.settings.join(", ")}</span> : null}
                       </li>
                     ))}
                   </ul>
@@ -399,6 +399,27 @@ export function resetReasons(job: Pick<JobRecord, "result">): RebuildReason[] {
   return [...kinds.values()];
 }
 
+/** The reasons whose remedy has a sentence of its own: outdated reports are
+ * written again by the next run (report_refresh), not by "extracting or
+ * rebuilding". */
+const OWN_REMEDY = new Set<RebuildReason["kind"]>(["outdated_reports"]);
+/** The reasons whose `settings` is the artifact their sentence names (the
+ * community reports), not a setting to show. */
+const NAMES_ITS_ARTIFACT = new Set<RebuildReason["kind"]>(["outdated_reports", "community_depths"]);
+
+/** The catalog key of what applies `reason`. */
+function remedyKey(reason: RebuildReason): string {
+  return OWN_REMEDY.has(reason.kind) ? `ingest.rebuildRemedy.${reason.kind}` : `ingest.rebuildRemedy.${reason.remedy}`;
+}
+
+/** Why `reason` is due, in the page's language; a kind this page has no
+ * sentence for (a newer server's) by the server's own detail. */
+function reasonText(reason: RebuildReason, t: (key: string) => string): string {
+  const key = `ingest.rebuild.${reason.kind}`;
+  const text = t(key);
+  return text === key ? reason.detail : text;
+}
+
 /** A finished run that left its namespace due for a rebuild only a reset
  * applies: its reasons, and a button that starts it again with the
  * rebuild. Nothing for a run that was the rebuild. */
@@ -411,7 +432,7 @@ export function ResetAdvice({ job, disabled, onReset }: { job: Pick<JobRecord, "
       <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
         {reasons.map((reason) => (
           <li key={reason.kind} title={reason.detail}>
-            {t(`ingest.rebuild.${reason.kind}`)}
+            {reasonText(reason, t)}
           </li>
         ))}
       </ul>

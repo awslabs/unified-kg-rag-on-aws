@@ -267,7 +267,11 @@ def test_a_report_that_cannot_be_written_again_stays_recorded_and_flagged(
     (reason,) = rebuild_reasons(record, config)
     assert reason.settings == ["community_reports"]
     assert reason.remedy is RebuildRemedy.NEXT_RUN
-    assert reason.detail.startswith(f"{len(kept)} community reports were kept")
+    assert reason.detail.startswith(
+        "1 community report was kept"
+        if len(kept) == 1
+        else f"{len(kept)} community reports were kept"
+    )
     metrics = _indexing_metrics(second)
     assert metrics["rebuild_due_reasons"] == 1
     assert metrics["community_rebuild_recommended"] == 1

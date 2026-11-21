@@ -136,6 +136,45 @@ async def test_a_priced_query_publishes_its_tokens_and_cost() -> None:
     )
 
 
+async def test_an_answer_is_priced_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    # RV6-5: the metric priced the usage again after metadata["cost_usd"];
+    # it reads that one (the audit record prices the snapshot on its own).
+    from unified_kg_rag.application.retrieval import rag_chain
+
+    priced: list[Any] = []
+
+    def counted(usage: Any, prices: Any) -> Any:
+        priced.append(usage)
+        return snapshot_cost_usd(usage, prices)
+
+    monkeypatch.setattr(rag_chain, "snapshot_cost_usd", counted)
+    chain = _simple_chain(_counted(_FakeModelFactory()))
+    chain.config.models.prices = {_MODEL: _PRICE}
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    try:
+        output = await chain.ainvoke(_SIMPLE_QUERY)
+    finally:
+        await chain.aclose()
+    assert len(priced) == 1
+    ((_, values, _),) = sink.emitted
+    assert values[metrics.QUERY_COST_METRIC] == output.metadata["cost_usd"]
+
+
+def test_the_console_prices_a_question_as_the_chain_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # RV6-5: the console's _priced_usage was a copy of snapshot_cost_usd.
+    pytest.importorskip("fastapi")
+    from unified_kg_rag.application.cli.console import ask
+    from unified_kg_rag.domain.models import Config
+
+    monkeypatch.setattr(ask, "snapshot_cost_usd", lambda *_args: (1.5, ["m"]))
+    usage = {"llm_calls": 1}
+    assert ask._priced_usage(usage, Config()) == (usage, 1.5, ["m"])
+    assert ask._priced_usage(None, Config()) == (None, None, [])
+
+
 def test_a_snapshot_without_usage_has_no_cost() -> None:
     assert snapshot_cost_usd(None, {}) == (None, [])
     assert snapshot_cost_usd({"llm_calls": "many"}, {}) == (None, [])
