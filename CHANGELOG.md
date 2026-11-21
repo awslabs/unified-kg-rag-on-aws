@@ -522,7 +522,9 @@ Bugs present in 0.3.0.
   `outdated_reports` rebuild reason (remedy `next_run`; the console words it apart from re-clustering) whatever
   `on_drift_recommendation` says, until a later run writes it. A note in the extraction store lists the flagged
   reports until the build record does: a run killed after the removal deleted the documents' registry records, before
-  its refresh, left them flagged and listed nowhere, and the next run now writes them again. A flagged report's text
+  its refresh, left them flagged and listed nowhere, and the next run now writes them again (a run that writes no
+  report again, after a write failure the run tolerates or under a profile without reports, lists them in its build
+  record and keeps the note, with the members the refresh reads, for the run that does). A flagged report's text
   units, documents and path filters no longer name what was removed, so a filter on a deleted file stops matching it.
 - A streamed answer whose caller was cancelled mid-answer (a console client that disconnects, a cancelled task, an
   `asyncio.timeout` around `astream`) was cancelled wherever it was. Cancelled while the model's stream waited for a

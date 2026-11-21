@@ -791,13 +791,22 @@ class IncrementalIndexer:
         except BaseException:
             self.indexing_manager.discard_retired_ids()
             raise
+        # The reports a removal flagged and its run, killed before its build
+        # record, never listed (note_outdated_reports): the record this
+        # commit writes lists them, refreshed or not.
+        candidates = self._merge_outdated_notes()
         if refresh_reports is not None and not any(
             stats.failed_items for stats in results.values() if stats
         ):
             # From the stored state the commit left: what the strip derived
             # and the delta merged is written.
-            left = self._refresh_reports(refresh_reports, community_reports or [])
+            left = self._refresh_reports(
+                refresh_reports, community_reports or [], candidates
+            )
         else:
+            # No refresh read the notes' member candidates: they stay for
+            # the run that writes their reports again.
+            self.indexing_manager.keep_outdated_notes()
             left = {
                 suffix: ids
                 for suffix, ids in self.indexing_manager.outdated_reports.items()
@@ -833,17 +842,43 @@ class IncrementalIndexer:
             self.indexing_manager.collect_extraction_records()
         return results
 
+    def _merge_outdated_notes(self) -> dict[str, set[str]]:
+        """Merge, per suffix the run touches, the stored outdated-report
+        note into the run's outdated reports
+        (``IndexingManager.merge_outdated_note``); its member candidates by
+        suffix. A note that cannot be read is kept for a later run."""
+        m = self.indexing_manager
+        candidates: dict[str, set[str]] = {}
+        for suffix in sorted({*m.outdated_reports, self.suffix}):
+            try:
+                candidates[suffix] = m.merge_outdated_note(suffix)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the run's own still refresh
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Reading the outdated-report note of '%s' failed (%s): it "
+                    "is kept for the next run",
+                    suffix,
+                    error=e,
+                )
+        return candidates
+
     def _refresh_reports(
         self,
         refresh: ReportRefresh,
         written: Sequence[CommunityReport],
+        candidates: Mapping[str, set[str]],
     ) -> dict[str, set[str]]:
         """Write again, per suffix, the stored reports outdated by this
-        run's removals or listed outdated in the stored build record, but
-        the ones the run deleted or wrote (the delta's reports). Those
-        written again or deleted leave the run's outdated reports and are
-        taken out of the record's (``IndexingManager.refreshed_reports``);
-        the others stay, for the next run, and are returned by suffix."""
+        run's removals (the notes merged in) or listed outdated in the
+        stored build record, but the ones the run deleted or wrote (the
+        delta's reports); ``candidates``, by suffix, are the notes' member
+        candidates. Those written again or deleted leave the run's outdated
+        reports and are taken out of the record's
+        (``IndexingManager.refreshed_reports``); the others stay, for the
+        next run, and are returned by suffix."""
         left: dict[str, set[str]] = {}
         m = self.indexing_manager
         delta_reports: dict[str, set[str]] = defaultdict(set)
@@ -852,9 +887,6 @@ class IncrementalIndexer:
         for suffix in sorted({*m.outdated_reports, self.suffix}):
             try:
                 stored = m.vector_indexer.read_build_record(suffix) or {}
-                # The reports a removal flagged and its run, killed before
-                # its build record, never listed (note_outdated_reports).
-                noted, candidates = m.read_outdated_note(suffix)
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the run's own still refresh
@@ -866,13 +898,7 @@ class IncrementalIndexer:
                     suffix,
                     error=e,
                 )
-                stored, noted, candidates = {}, set(), set()
-            if noted:
-                # One the run does not settle stays listed in its build
-                # record, which takes the note over.
-                m.outdated_reports[suffix] = (
-                    m.outdated_reports.get(suffix, set()) | noted
-                )
+                stored = {}
             listed = stored.get("outdated_reports")
             ids = (
                 m.outdated_reports.get(suffix, set())
@@ -881,7 +907,9 @@ class IncrementalIndexer:
             if not ids:
                 continue
             done = refresh(
-                suffix, ids, m.stripped_entities.get(suffix, set()) | candidates
+                suffix,
+                ids,
+                m.stripped_entities.get(suffix, set()) | candidates.get(suffix, set()),
             )
             settled = done.written | done.deleted
             m.outdated_reports[suffix] = m.outdated_reports.get(suffix, set()) - settled
