@@ -51,9 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coarser roots. Stored reports keep their depth, and step down to depth 0 only, until a reset (*Upgrading*); a
   namespace whose last full build an earlier release wrote gets a `community_depths` rebuild reason (remedy `reset`)
   in `run-describe`, the console, MCP and the run's `rebuild_due`.
-- The CLIs log to stderr in text mode too, so stdout holds only a run's output (`run-rag ... > answer.txt` keeps the
-  answer alone); `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
-  coarser roots. Stored reports keep their depth until a reset (*Upgrading*).
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
   holds only a run's output; on a stdout that is no terminal no line is wrapped at 80 columns, and `run-rag --query
   ... > answer.txt` keeps the answer, its citations and a sources line as plain text, its banner, settings panel and
