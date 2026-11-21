@@ -808,7 +808,8 @@ async def test_a_baseline_is_checked_against_the_dataset_before_any_answer(
 ) -> None:
     """A baseline saved before token_f1_tokens was recorded (whitespace
     tokens) is refused only where the dataset holds Han, Hangul or Kana
-    text, before any answer is generated."""
+    text, before any answer is generated. (It records answer_contains_reads,
+    whose absence is refused on any dataset: that rule is tested apart.)"""
     earlier = tmp_path / "earlier"
     _save(
         earlier,
@@ -817,6 +818,7 @@ async def test_a_baseline_is_checked_against_the_dataset_before_any_answer(
         stamp="20260101_090000_aaaaaaaa",
         order=["local"],
         started=_T0,
+        scoring={**_SCORING, "answer_contains_reads": "first_line"},
     )
     data = tmp_path / "eval.json"
     data.write_text(
@@ -1455,6 +1457,28 @@ def test_the_tokenization_is_compared_only_on_dense_script_datasets() -> None:
         check_answer_scoring(
             [("before", {"answer_scoring": squad}), recorded[1]], dense_script=False
         )
+
+
+def test_a_run_whose_contains_read_the_whole_answer_is_not_compared() -> None:
+    """answer_contains read the whole answer, support included, before it
+    read the first line: a run saved then (no answer_contains_reads) is
+    refused beside a run of now on any dataset, and two runs saved then
+    still compare."""
+    old = {
+        "answer_span": "first_line",
+        "answer_normalization": "official_squad",
+        "token_f1_tokens": "whitespace",
+    }
+    now = {**old, "answer_contains_reads": "first_line"}
+    with pytest.raises(EvaluationException, match="answer_contains_reads 'full'"):
+        check_answer_scoring(
+            [("before", {"answer_scoring": old}), ("now", {"answer_scoring": now})],
+            dense_script=False,
+        )
+    pair = [("a", {"answer_scoring": old}), ("b", {"answer_scoring": dict(old)})]
+    assert check_answer_scoring(pair, dense_script=False) == []
+    pair = [("a", {"answer_scoring": now}), ("b", {"answer_scoring": dict(now)})]
+    assert check_answer_scoring(pair, dense_script=False) == []
 
 
 def test_a_run_of_the_earlier_korean_particle_rule_is_not_compared() -> None:

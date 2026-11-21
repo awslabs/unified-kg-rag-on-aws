@@ -881,6 +881,39 @@ class TestExtractedSpan:
         setup.assert_not_called()
 
 
+class TestContainsReadsTheAnswerProper:
+    """``answer_contains`` reads the answer's first line, not the support
+    after it, which quotes the context (ARCH baseline: 11 of 72 hits named
+    the gold only there, beside a wrong answer)."""
+
+    @pytest.mark.parametrize(
+        ("answer", "gold", "expected"),
+        [
+            (
+                "Answer: The parent company is Apple Records.\n\n"
+                "Support: Apple Records is a division of Apple Corps Ltd.",
+                "Apple Corps",
+                0.0,
+            ),
+            ("## Answer\nApple Corps owns it.\n\nSupport: ...", "Apple Corps", 1.0),
+            # A yes/no gold by the first line's polarity, not the support's.
+            ("The clause does not apply.\nSupport: yes, it was signed.", "yes", 0.0),
+            ("Yes, it was signed.\nSupport: no clause says otherwise.", "yes", 1.0),
+        ],
+    )
+    @pytest.mark.parametrize("span", ["first_line", "full"])
+    def test_the_support_is_not_read(
+        self, config: Config, span: str, answer: str, gold: str, expected: float
+    ) -> None:
+        config.evaluation.answer_span = span
+        assert _values(_report(config, answer, gold, {}))["answer_contains"] == expected
+
+    def test_the_manifest_records_it(self, config: Config) -> None:
+        assert answer_match_evaluator.answer_scoring(config)[
+            "answer_contains_reads"
+        ] == ("first_line")
+
+
 class TestHotpotQARule:
     @pytest.mark.parametrize(
         ("mode", "f1"), [("official_squad", 0.5), ("hotpotqa", 0.0)]

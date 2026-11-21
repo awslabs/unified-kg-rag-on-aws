@@ -112,6 +112,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `processing.document_parsing.namespace` (`UKR__PROCESSING__DOCUMENT_PARSING__NAMESPACE`) for `index_value`,
    `RAGInput.namespace` for `suffix`, `run-eval --arm ...,namespace=` for `suffix=`. The old names still work until
    0.5.0.
+10. `answer_contains` reads the answer's first line now (*Fixed*): a `run-eval` result saved before records no
+   `answer_scoring.answer_contains_reads` and is refused as `--baseline-results` (or in a rebuilt comparison) beside a
+   run of now. Re-run the baseline.
 
 ### Added
 
@@ -700,6 +703,11 @@ Bugs present in 0.3.0.
 - Bedrock's token-limit cut (`BedrockTokenCounter.truncate_to_token_limit`: embedding inputs, ragas contexts,
   summary-tree texts) could return text over the limit (15 of 300 mixed-script samples, by up to 202 tokens); it keeps
   the longest prefix that fits, by binary search as the local counter does.
+- `answer_contains` (the headline `answer_match` metric) read the whole answer, so a wrong first-line answer whose
+  support quoted the context scored 1 (11 of 72 hits on the 3B local baseline's answers). It reads the answer's first
+  line that is no heading, the one-sentence answer the answer prompt asks for; number and set golds read as before.
+  The run manifest records it (`answer_scoring.answer_contains_reads: first_line`), and a run saved before it, read as
+  `full`, is refused as a `--baseline-results` or rebuilt comparison against a run of now: re-run it.
 - `answer_match` with `evaluation.answer_span: extracted` scored a "yes"/"no" span for any question, so a span model
   that answered "yes" to "Who wrote it?" scored exact match and token F1 0 against "Tom Hood" (34 of 150 answers in
   the 3B local baseline). A yes/no span is the span only for a yes/no gold; otherwise the first line is scored and

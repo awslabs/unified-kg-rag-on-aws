@@ -182,9 +182,11 @@ The console prints the same summary.
 - `answer_scoring`: the `answer_span` and `answer_normalization` exact
   match and token F1 used and the token-F1 tokenization they imply
   (`token_f1_tokens`: `script_aware_v2` or `whitespace`) (with
-  `answer_match`), with an `extracted` span its `span_model` and
+  `answer_match`), what `answer_contains` reads (`answer_contains_reads`:
+  `first_line`; a run saved before it was recorded read the whole answer,
+  `full`), with an `extracted` span its `span_model` and
   `span_effort`, and `models.answer_span` the extracting model; runs
-  scored differently are not comparable on those two metrics (a run saved
+  scored differently are not comparable on those metrics (a run saved
   before the span model was recorded is warned about, not refused);
 - `citations`: `enabled` (`search.citations.enabled`: the answer prompt
   asked for markers) and `scoring` (`file_weighted`, how the citation
@@ -515,7 +517,9 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   run manifest: `evaluation.answer_span`, `answer_normalization`,
   `token_f1_tokens`; a run saved before `token_f1_tokens` was recorded
   tokenized by whitespace, and one that records `script_aware` dropped any
-  one to three Hangul syllables as a particle) are
+  one to three Hangul syllables as a particle), or whose `answer_contains`
+  did (`answer_contains_reads`; a run saved before it was recorded read the
+  whole answer, support included), are
   refused (exit 2), checked once the dataset is read and before any answer
   is generated. The tokenizations differ only on Han, Hangul and Kana text,
   so `token_f1_tokens` alone is not compared when the dataset holds none
@@ -723,9 +727,13 @@ Scores against `answer` and the optional `answer_aliases` (a string or a
 list, top level or under `metadata`, which wins), taking the maximum.
 
 - **`answer_contains`** is the headline: 1.0 when the gold answer or an alias
-  appears in the generated answer as a whole-word phrase. Long RAG answers
+  appears in the answer's first line that is no heading (the one-sentence
+  answer the answer prompt asks for) as a whole-word phrase. Long RAG answers
   rarely equal a short gold span, so it tracks correctness far better than
-  exact match. A possessive is read as its word (`Depot` matches `Depot's`;
+  exact match. The support after that line is not read: it quotes the
+  context, which names the gold beside a wrong answer (11 of 72 hits on a
+  3B local model's answers came from it). A yes/no gold is read the same
+  way. A possessive is read as its word (`Depot` matches `Depot's`;
   `Depots` is another word); `graph_aware` matches the same way.
 - **Korean and CJK.** Korean particles are tolerated after a word (`AWS`
   matches `AWS는`); a bare number may carry a Korean unit (`2024` matches

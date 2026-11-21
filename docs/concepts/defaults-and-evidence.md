@@ -65,7 +65,9 @@ measured most of the defaults below:
   with SQuAD's official normalization
   (`evaluation.answer_normalization: official_squad`), not the package
   defaults (`first_line`, `default`), so the numbers sit closer to the
-  papers'. `answer_contains` always reads the whole answer.
+  papers'. `answer_contains` read the whole answer then, support included
+  (it reads the first line now; the `answer_contains` numbers on this page
+  are not comparable with a run of now).
 - **Latency.** The arms of a comparison ran one after the other, all the
   repeats of one arm before the next, so a latency difference between arms
   also measures what changed on the host and the endpoints in between.

@@ -209,8 +209,8 @@ class EvaluationConfig(ConfigSection):
             "summary's answer_span_statistics. Use it, with "
             "answer_normalization official_squad, for numbers close to the "
             "papers'. 'full' scores the whole answer, so the score measures "
-            "answer length as much as correctness. answer_contains always "
-            "reads the whole answer. "
+            "answer length as much as correctness. answer_contains reads the "
+            "first line whatever this says (a number gold the extracted span). "
             "Recorded in the run manifest (answer_scoring) and each "
             "answer_match report."
         ),

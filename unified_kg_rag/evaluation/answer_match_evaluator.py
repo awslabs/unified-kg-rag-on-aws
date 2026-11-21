@@ -34,8 +34,11 @@ an official normalization gives numbers close to the papers'. Each report
 records the span mode (``answer_span``) and the text scored
 (``scored_span``). Then:
 
-- ``answer_contains``: 1.0 if the gold answer appears in the generated answer
-  as a whole-word phrase (``text_matching.phrase_in_text``: Korean particles
+- ``answer_contains``: 1.0 if the gold answer appears in the answer's first
+  line (``first_answer_line``: the one-sentence answer the answer prompt asks
+  for, not the support after it, which quotes the context and so names the
+  gold beside a wrong answer) as a whole-word phrase
+  (``text_matching.phrase_in_text``: Korean particles
   and Hebrew and Arabic proclitics tolerated, substring match for
   single-word CJK and Thai phrases). Long-form RAG
   answers rarely equal a short gold span, so this is the headline
@@ -154,6 +157,12 @@ TOKENS_KEY = "token_f1_tokens"
 # syllables after a reference word, so a run scored that way is refused
 # against one of now (``saved_results.check_answer_scoring``).
 SCRIPT_AWARE_TOKENS = "script_aware_v2"
+# What ``answer_contains`` reads of an answer for a phrase or yes/no gold:
+# its first line (``first_answer_line``), the one-sentence answer the answer
+# prompt asks for, not the support after it, which quotes the context. A
+# run saved before it was recorded read the whole answer ("full").
+CONTAINS_READS_KEY = "answer_contains_reads"
+CONTAINS_READS = "first_line"
 SCORED_SPAN_KEY = "scored_span"
 SPAN_FALLBACK_KEY = "answer_span_fallback"
 # The language the answer was normalized in (``answer_language``).
@@ -449,6 +458,7 @@ def answer_scoring(config: Config) -> dict[str, Any]:
         "answer_span": evaluation.answer_span,
         "answer_normalization": evaluation.answer_normalization,
         TOKENS_KEY: token_f1_tokens(evaluation.answer_normalization),
+        CONTAINS_READS_KEY: CONTAINS_READS,
     }
     if evaluation.answer_span == "extracted":
         model = config.model_id(ModelRole.ANSWER_SPAN)
@@ -597,7 +607,8 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         (``first_answer_line``; ``number_matches``), a set by every one of
         its ``answer_items`` (with ``answer_candidates``, in the extracted
         span or else the answer's first block, ``first_answer_block``),
-        else any reference as a phrase."""
+        else any reference as a phrase (or a yes/no gold by its polarity)
+        in the answer's first line (``CONTAINS_READS``)."""
         kind = result.metadata.get(ANSWER_TYPE_KEY)
         if kind == "number":
             read = self._extracted_or(span, span_metadata, first_answer_line(answer))
@@ -621,7 +632,10 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                     [str(c) for c in candidates],
                     language,
                 )
-        return max(answer_contains(answer, ref, language) for ref in references)
+        # The answer proper, not its support: the support quotes the
+        # context, which names the gold beside a wrong answer.
+        line = first_answer_line(answer)
+        return max(answer_contains(line, ref, language) for ref in references)
 
     def _extracted_or(
         self, span: str, span_metadata: dict[str, Any], otherwise: str
