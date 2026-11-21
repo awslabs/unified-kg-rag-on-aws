@@ -450,7 +450,7 @@ a concern's methods to support it, one port at a time:
 
 | Port | Override it for | Without it |
 |---|---|---|
-| `ExtractionRecordStore` | re-using each text unit's extraction across runs and documents (§4.1) | every text unit is extracted on every run |
+| `ExtractionRecordStore` | re-using each text unit's extraction across runs and documents (§4.1); the recovery notes of a removal and a commit, which live in this store | every text unit is extracted on every run, and no recovery note is kept: a run stopped mid-removal or mid-commit cannot resume them (the run logs one WARNING saying so) |
 | `SummaryTreeStore` | the `raptor` / `tree` strategies (§6.5); `scan_text_unit_pages` also samples the stored text of an incremental run's unchanged documents for the corpus-language check | the summary_tree stage skips with a warning |
 | `BuildRecordStore` | the build record: which run built the namespace, under which settings and with which artifacts, checked before a run and named in `run-eval`'s manifest | no record (the run reports it `unsupported`), so no check that reads it refuses a run |
 | `StoreInspection` | `run-describe` and the export (§5.8); `holds_any_text_unit`, which tells a seed-only build without a registry that the index is empty | `run-describe` and the export refuse the namespace; a full build's visualization export (`graph.visualization.export_data`) skips with a warning; that build asks to be confirmed |

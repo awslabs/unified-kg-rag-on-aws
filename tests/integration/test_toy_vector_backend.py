@@ -112,12 +112,22 @@ def test_a_full_build_and_an_incremental_run_complete(
     assert "failed" not in exports[0].getMessage()
     assert full.visualization_data_path is None
 
+    unkept = "keeps no extraction records"
+    assert not [r for r in caplog.records if unkept in r.getMessage()]
+
+    caplog.clear()
     (source / "logistics.txt").unlink()
     (source / "new.txt").write_text("Carrier moves widgets for Depot.")
     incremental = _pipeline(config, source, tmp_path, vectors, graph, registry).run(
         source, pipeline_id="toy-2"
     )
     assert incremental.status is PipelineStageStatus.COMPLETED
+    # The removal's and the commit's recovery notes live in the
+    # extraction-record store, which the toy leaves at its default: the run
+    # says once that they are not stored.
+    notes = [r for r in caplog.records if unkept in r.getMessage()]
+    assert [r.levelno for r in notes] == [logging.WARNING]
+    assert "cannot resume them" in notes[0].getMessage()
 
 
 def test_an_extra_backend_is_loaded_by_name() -> None:
@@ -246,3 +256,30 @@ def test_the_suites_pass_or_skip_on_the_smallest_backend(tmp_path: Path) -> None
     assert " failed" not in output and " error" not in output, output
     assert "toy leaves VectorIndexer.find_documents at its default" in output
     assert "toy leaves SummaryTreeStore at its defaults" in output
+
+
+def test_a_store_keeping_no_notes_is_named_once_per_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from tests.fixtures.fakes.stores import FakeVectorStore
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.stored_items import (
+        PENDING_COMMIT,
+        STRIPPED_SUMMARIES,
+    )
+
+    config = Config()
+    for vectors, logged in (
+        (ToyVectorStore(config), 1),
+        (FakeVectorStore(config.indexing.opensearch), 0),
+    ):
+        caplog.clear()
+        manager = IndexingManager(
+            config, vector_indexer=vectors, graph_indexer=FakeGraphStore(config)
+        )
+        manager._write_note(PENDING_COMMIT, "default", {"ids": []})
+        manager._write_note(STRIPPED_SUMMARIES, "default", {"ids": []})
+        notes = [
+            r for r in caplog.records if "keeps no extraction records" in r.getMessage()
+        ]
+        assert len(notes) == logged, type(vectors).__name__
