@@ -363,10 +363,95 @@ async def test_a_cancelled_ainvoke_writes_one_stopped_record(
     assert record.outcome is AuditOutcome.STOPPED
     assert record.error_class is None and record.answer is None
     assert record.requested_strategy == "simple"
+    # Stopped before its route: an explicit strategy is its own (R2C-2),
+    # as its metrics name it.
+    assert record.strategy == "simple"
     assert record.question is not None
     # Its metrics: one query, no failure.
-    ((_namespace, metrics, _properties),) = sink.emitted
+    ((_namespace, metrics, properties),) = sink.emitted
     assert metrics["query_failed"] == 0.0
+    assert properties["Strategy"] == "simple"
+
+
+async def test_a_cancelled_ainvoke_names_the_strategy_it_was_routed_to(
+    audit: _Captured, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2C-2: a cancelled ainvoke (no events reader) recorded no strategy,
+    though it was routed, where its metrics named one: the route is kept
+    for its records whether or not a reader takes its events."""
+    from unified_kg_rag.application.retrieval import rag_chain
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    routed = asyncio.Event()
+
+    async def route(
+        self: GraphRAGChain, state: dict[str, Any], *_: Any, **__: Any
+    ) -> dict[str, Any]:
+        state["resolved_strategy"] = SearchStrategy.SIMPLE
+        return state
+
+    real_emit = rag_chain._emit
+
+    async def held(event: Any) -> None:
+        await real_emit(event)
+        if isinstance(event, rag_chain.QueryRouted):
+            routed.set()
+            await asyncio.sleep(10)
+
+    monkeypatch.setattr(GraphRAGChain, "_resolve_strategy", route)
+    monkeypatch.setattr(rag_chain, "_emit", held)
+    auto = _SIMPLE_QUERY.model_copy(update={"search_strategy": SearchStrategy.AUTO})
+    try:
+        task = asyncio.create_task(chain.ainvoke(auto))
+        await routed.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        await chain.aclose()
+    record = _one(audit)
+    assert record.outcome is AuditOutcome.STOPPED
+    assert (record.requested_strategy, record.strategy) == ("auto", "simple")
+    ((_namespace, _metrics, properties),) = sink.emitted
+    assert properties["Strategy"] == "simple"
+
+
+async def test_a_host_s_stopped_unrun_query_names_its_caller_and_strategy(
+    audit: _Captured,
+) -> None:
+    """R2C-1: a query a host ended before the chain ran it, its caller
+    gone (an MCP call that left waiting for a slot), is one stopped record
+    with what it asked; a search's has no answer metrics."""
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    fields = {
+        "query": "q",
+        "search_strategy": SearchStrategy.LOCAL,
+        "top_k": 3,
+        "filters": {"n_tokens": {"gte": 1}},
+        "namespace": None,
+        "user_id": "user-42",
+    }
+    try:
+        chain.record_unrun_query(fields, None, started=0.0)
+        chain.record_unrun_query(fields, None, started=0.0, search=True)
+    finally:
+        await chain.aclose()
+    answer, search = (QueryAuditRecord.model_validate(f) for f in audit.fields())
+    for record in (answer, search):
+        assert record.outcome is AuditOutcome.STOPPED and record.error_class is None
+        assert (record.user_id, record.top_k) == ("user-42", 3)
+        assert record.filter_keys == ["n_tokens"] and record.strategy == "local"
+        assert record.usage is None and record.question is not None
+    assert (answer.mode, search.mode) == ("rag", "search")
+    ((_namespace, metrics, properties),) = sink.emitted
+    assert metrics["query_failed"] == 0.0 and properties["Strategy"] == "local"
 
 
 async def test_an_ainvoke_cancelled_past_its_deadline_is_one_timeout(

@@ -49,7 +49,9 @@ QUERY_METRICS_HELP = (
     f"{QUERY_DEGRADED_METRIC}, {QUERY_ABSTAINED_METRIC} and "
     f"{QUERY_LIMITED_METRIC}, {QUERY_THROTTLED_METRIC}, "
     f"{QUERY_INPUT_TOKENS_METRIC} and {QUERY_OUTPUT_TOKENS_METRIC}, and "
-    f"{QUERY_COST_METRIC} when models.prices prices every model called"
+    f"{QUERY_COST_METRIC} when models.prices prices every language model "
+    "and reranker called (an embedding model without a price leaves its "
+    "requests out)"
 )
 
 

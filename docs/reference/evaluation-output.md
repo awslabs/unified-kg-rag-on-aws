@@ -525,6 +525,10 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   so `token_f1_tokens` alone is not compared when the dataset holds none
   (this run's dataset, or the manifests' `dataset.dense_script`); runs of
   different datasets are warned about (only their shared query ids pair).
+  The refusal names the metrics the settings that differ score; `run-eval
+  --from-results <its results> --rescore`, under the other run's settings,
+  scores one side's saved answers again with no new answer (an `extracted`
+  span calls only the answer-span model), after which they compare.
 - `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1 when a
   compared strategy's paired delta meets the condition: `<measure>` is a key
   of `deltas_vs_baseline` (`<evaluator>/<metric>`) or of

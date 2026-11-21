@@ -37,6 +37,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     AnswerChunk,
     ProcessedQuery,
     QueryResult,
+    QueryRouted,
     RAGOutput,
 )
 from unified_kg_rag.domain.models import (
@@ -1290,6 +1291,45 @@ class _SpendingChain(_Chain):
         yield QueryResult(output=self.output)
 
 
+class _RoutedThenWaitingChain(_Chain):
+    """Routes an ``auto`` question to ``local`` (none other), then waits."""
+
+    async def aquery_events(self, rag_input: Any, **__: Any) -> AsyncIterator[Any]:
+        if rag_input.search_strategy is SearchStrategy.AUTO:
+            yield QueryRouted(strategy=SearchStrategy.LOCAL)
+        yield AnswerChunk(text="Vendor")
+        await asyncio.Event().wait()
+        yield QueryResult(output=self.output)
+
+
+@pytest.mark.parametrize(("requested", "named"), [("auto", "local"), ("mix", "mix")])
+async def test_a_stopped_question_is_recorded_as_its_audit_record_names_it(
+    tmp_path: Path, requested: str, named: str
+) -> None:
+    """R2C-2: a question its page stopped was recorded ``cancelled`` with no
+    strategy, where its audit record says ``stopped`` and names the
+    strategy it was routed to (an explicit one is its own route)."""
+    store = ConsoleStore(tmp_path / "s.sqlite3")
+    service = AskService(
+        Config, store, chain_factory=lambda _c: _RoutedThenWaitingChain(_output())
+    )
+    reader = service.ask(
+        AskRequest(query="q", search_strategy=SearchStrategy(requested))
+    )
+    async for event in reader:
+        if event["kind"] == "chunk":
+            await reader.aclose()  # the page stopped it mid-answer
+            break
+    (row,) = store.queries()
+    assert (row["outcome"], row["strategy"]) == ("stopped", named)
+    # The dashboard counts it as it counted a cancelled one, and the rows
+    # written before as before.
+    old = {**row, "id": "old", "outcome": "cancelled"}
+    totals = dashboard.summarize([row, old], [], Config())["totals"]
+    assert totals["cancelled"] == 2
+    await service.close()
+
+
 _PRICED = {
     "models": {
         "prices": {
@@ -1299,7 +1339,7 @@ _PRICED = {
 }
 
 
-@pytest.mark.parametrize("fails", [False, True], ids=["cancelled", "failed"])
+@pytest.mark.parametrize("fails", [False, True], ids=["stopped", "failed"])
 async def test_a_question_not_answered_records_the_usage_it_spent(
     tmp_path: Path, fails: bool
 ) -> None:
@@ -1317,7 +1357,7 @@ async def test_a_question_not_answered_records_the_usage_it_spent(
             await reader.aclose()  # the page disconnected mid-answer
             break
     (row,) = store.queries()
-    assert row["outcome"] == ("failed" if fails else "cancelled")
+    assert row["outcome"] == ("failed" if fails else "stopped")
     assert (row["usage"]["input_tokens"], row["usage"]["output_tokens"]) == (900, 100)
     assert row["usage"]["by_model"]["m"]["llm_calls"] == 1
     assert row["cost_usd"] == pytest.approx((900 * 3 + 100 * 15) / 1e6)

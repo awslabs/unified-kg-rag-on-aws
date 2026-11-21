@@ -311,6 +311,7 @@ def check_answer_scoring(
     if span_unrecorded and len(span_unrecorded) < len(extracted):
         drop |= {SPAN_MODEL_KEY, SPAN_EFFORT_KEY}
     scored: dict[str, list[str]] = {}
+    compared: list[Any] = []
     unknown: list[str] = []
     for label, scoring in scorings:
         if scoring is _UNKNOWN:
@@ -318,6 +319,7 @@ def check_answer_scoring(
         elif scoring is not None:  # None: answer_match was not enabled
             if isinstance(scoring, dict):
                 scoring = {k: v for k, v in scoring.items() if k not in drop}
+            compared.append(scoring)
             key = json.dumps(scoring, sort_keys=True)
             scored.setdefault(key, []).append(label)
     if len(scored) > 1:
@@ -325,18 +327,7 @@ def check_answer_scoring(
             f"{key} ({', '.join(dict.fromkeys(labels))})"
             for key, labels in scored.items()
         )
-        raise EvaluationException(
-            "the runs scored exact_match and token_f1 with different "
-            f"answer_scoring settings ({listed}); they are not comparable. "
-            "Re-run one side with the other's evaluation.answer_span and "
-            "answer_normalization (a run that records token_f1_tokens "
-            "'whitespace' under answer_normalization 'default' was scored "
-            "before token F1 tokenized Chinese, Japanese and Korean by "
-            "character, one that records 'script_aware' before it "
-            "dropped only Korean particles of their closed class, and one "
-            "that records answer_contains_reads 'full' before answer_contains "
-            "read the answer's first line only: re-run it)."
-        )
+        raise EvaluationException(_scoring_mismatch(compared, listed))
     warnings = []
     if SPAN_MODEL_KEY in drop:
         warnings.append(
@@ -353,6 +344,52 @@ def check_answer_scoring(
             "others."
         )
     return warnings
+
+
+def _scoring_mismatch(scorings: list[Any], listed: str) -> str:
+    """The refusal of runs whose answer_scoring settings (``scorings``,
+    ``listed``) differ: the metrics the settings that differ score, and
+    the remedy, scoring one side's saved answers again (``--rescore``: no
+    new answer) or answering again."""
+    keys = (
+        {
+            key
+            for key in set().union(*scorings)
+            if len({json.dumps(sc.get(key)) for sc in scorings}) > 1
+        }
+        if all(isinstance(sc, dict) for sc in scorings)
+        else None
+    )
+    contains = keys is None or CONTAINS_READS_KEY in keys
+    if keys is not None and keys <= {CONTAINS_READS_KEY}:
+        metrics = "answer_contains"
+    elif contains:
+        metrics = "exact_match, token_f1 and answer_contains"
+    else:
+        metrics = "exact_match and token_f1"
+    history = []
+    if keys is None or TOKENS_KEY in keys:
+        history += [
+            "one that records token_f1_tokens 'whitespace' under "
+            "answer_normalization 'default' was scored before token F1 "
+            "tokenized Chinese, Japanese and Korean by character",
+            "one that records 'script_aware' before it dropped only Korean "
+            "particles of their closed class",
+        ]
+    if contains:
+        history.append(
+            "one that records answer_contains_reads 'full' before "
+            "answer_contains read the answer's first line only"
+        )
+    return (
+        f"the runs scored {metrics} with different answer_scoring settings "
+        f"({listed}); they are not comparable. Score one side's saved "
+        "answers again under the other's evaluation.answer_span and "
+        "answer_normalization, with no new answer: run-eval --from-results "
+        "<its results> --rescore (an extracted answer_span calls only the "
+        "answer-span model), then compare the re-scored run; or re-run it"
+        + (f" ({'; '.join(history)})." if history else ".")
+    )
 
 
 def recorded_citations(citations: dict[str, Any], label: str) -> str:

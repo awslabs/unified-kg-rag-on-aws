@@ -150,7 +150,8 @@ question to it names the same. The answer streams in as the answer model writes 
 final answer then replaces it (it is the one a decline or the output
 guardrail decided). A browser that leaves mid-answer (a closed tab, a lost
 connection) stops its question: the query is cancelled at once, its model
-connection released, and the history records it as cancelled. Under it: for `auto`, the strategy it chose and how
+connection released, and the history records it as stopped, with the strategy its
+[audit record](../reference/telemetry.md#audit-record) names. Under it: for `auto`, the strategy it chose and how
 (the router named it, it was the only candidate under the filters or the
 only one the query's limits left room for, or the router failed and it fell
 back), and a line with the strategy, the time,
@@ -329,7 +330,8 @@ shows it too). Costs need `models.prices`
 ([Cost and prices](./evaluate.md#comparing-strategies)); a model without a
 price is listed and left out instead of counted as free. A cancelled
 question (its page closed or stopped it before the answer) is counted apart,
-in a Cancelled column of its requested strategy's row too:
+in a Cancelled column of its strategy's row too (the one it was routed to, else
+the one it asked for):
 the model calls it made count in the cost and the model and role rows, not
 in a strategy's tokens or cost per question (a row of cancelled questions
 only shows neither). Clear question history deletes

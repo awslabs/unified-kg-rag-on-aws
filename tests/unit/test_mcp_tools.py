@@ -144,7 +144,8 @@ def _search_result(results: list[RetrievalResult], **metadata: Any) -> SearchRes
 
 
 class FakeChain:
-    """What the tools call of a chain: the config, asearch, ainvoke."""
+    """What the tools call of a chain: the config, asearch, ainvoke and
+    record_unrun_query (``unrun``: the fields, error and mode of each)."""
 
     def __init__(self, config: Config | None = None, **metadata: Any) -> None:
         self.config = config or Config()
@@ -158,6 +159,12 @@ class FakeChain:
             **metadata,
         }
         self.closed = False
+        self.unrun: list[tuple[dict[str, Any], Any, bool]] = []
+
+    def record_unrun_query(
+        self, query: Any, error: Any, *, started: float, search: bool = False
+    ) -> None:
+        self.unrun.append((dict(query), error, search))
 
     def _processed(self, rag_input: RAGInput) -> ProcessedQuery:
         return ProcessedQuery(
@@ -808,7 +815,9 @@ async def test_a_backstop_timeout_counts_a_query_the_chain_did_not_record_once(
         await asyncio.sleep(3600)
 
     class StallingChain(FakeChain):
-        def record_unrun_query(self, query: Any, error: Any, *, started: float) -> None:
+        def record_unrun_query(
+            self, query: Any, error: Any, *, started: float, search: bool = False
+        ) -> None:
             unrun.append(error)
 
         async def ainvoke(self, rag_input: RAGInput) -> RAGOutput:
@@ -836,6 +845,86 @@ async def test_a_backstop_timeout_counts_a_query_the_chain_did_not_record_once(
     with pytest.raises(QueryTimeoutError):
         await asyncio.wait_for(call, timeout=30)
     assert len(unrun) == recorded
+
+
+@pytest.mark.parametrize("ends", ["timeout", "disconnect"])
+@pytest.mark.parametrize("tool", ["search", "answer"])
+async def test_a_call_that_ends_waiting_for_a_slot_records_what_it_asked_once(
+    monkeypatch: pytest.MonkeyPatch, tool: str, ends: str
+) -> None:
+    """R2C-1: a kg_search or kg_answer call that never reached the chain
+    (it timed out waiting for a call slot, or its client left there) is
+    recorded once by the chain's record path, with its caller, top_k and
+    filters; a kg_search that timed out and a call whose client left were
+    not recorded, and a kg_answer's timeout lost its caller."""
+    from unified_kg_rag.application.cli import trusted_identity
+
+    chain = FakeChain()
+    tools = _tools(chain)
+    for _ in range(tools.settings.max_concurrent_calls):
+        await tools._slots.acquire()
+    timeouts = HeldTimeouts(monkeypatch)
+    token = trusted_identity._CALLER.set("user-42")
+    try:
+        call = asyncio.ensure_future(
+            getattr(tools, tool)(
+                "q", strategy="local", top_k=3, filters={"n_tokens": {"gte": 1}}
+            )
+        )
+    finally:
+        trusted_identity._CALLER.reset(token)
+    await timeouts.wait_open()
+    if ends == "timeout":
+        timeouts.expire()
+        with pytest.raises(QueryTimeoutError):
+            await asyncio.wait_for(call, timeout=30)
+    else:
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+    assert chain.inputs == []
+    ((fields, error, search),) = chain.unrun
+    assert search is (tool == "search")
+    assert isinstance(error, QueryTimeoutError) if ends == "timeout" else error is None
+    assert fields["user_id"] == "user-42"
+    assert fields["top_k"] == 3 and fields["query"] == "q"
+    assert fields["search_strategy"] == SearchStrategy.LOCAL
+    assert fields["filters"] == {"n_tokens": {"gte": 1}}
+    assert fields["namespace"] == "default"
+
+
+@pytest.mark.parametrize("ends", ["timeout", "disconnect"])
+@pytest.mark.parametrize("tool", ["search", "answer"])
+async def test_a_call_the_chain_took_is_left_to_the_chain_to_record(
+    monkeypatch: pytest.MonkeyPatch, tool: str, ends: str
+) -> None:
+    """Once the chain took a call's query it records it however it ends
+    (cancelled, or at the backstop): the server records it again for
+    neither tool, or the query would count twice."""
+    taken: list[bool] = []
+
+    class StallingChain(FakeChain):
+        async def _stall(self, rag_input: RAGInput) -> Any:
+            taken.append(True)
+            await asyncio.sleep(3600)
+
+        asearch = ainvoke = _stall  # type: ignore[assignment]
+
+    chain = StallingChain()
+    tools = _tools(chain)
+    timeouts = HeldTimeouts(monkeypatch)
+    call = asyncio.ensure_future(getattr(tools, tool)("q"))
+    await _until(lambda: bool(taken))
+    if ends == "timeout":
+        await timeouts.wait_open()
+        timeouts.expire()
+        with pytest.raises(QueryTimeoutError):
+            await asyncio.wait_for(call, timeout=30)
+    else:
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+    assert chain.unrun == []
 
 
 async def test_calls_beyond_the_concurrency_wait_for_a_slot() -> None:

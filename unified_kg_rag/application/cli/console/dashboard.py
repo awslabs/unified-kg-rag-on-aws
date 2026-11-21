@@ -47,10 +47,14 @@ def _add(target: dict[str, float], counts: Mapping[str, Any]) -> None:
         target[name] = target.get(name, 0) + int(counts.get(name) or 0)
 
 
-# Questions that were not served: cancelled before an answer, or refused as
+# Questions whose reader left before the answer (the page closed, or Stop):
+# ``stopped``, as their audit records say; ``cancelled`` in the rows written
+# before the console used that word.
+_STOPPED = ("stopped", "cancelled")
+# Questions that were not served: stopped before an answer, or refused as
 # asked (a namespace without an index, a filter to change). Neither has a
 # latency to report or could have declined.
-_UNSERVED = ("cancelled", "refused")
+_UNSERVED = (*_STOPPED, "refused")
 
 
 # Questions served that ended in no answer: raised (``failed``) or returned
@@ -142,7 +146,7 @@ def summarize(
                 bool(query.get("abstained")) and not _limited(query)
             )
             row["errors"] += int(query.get("outcome") in _FAILED)
-            row["cancelled"] += int(query.get("outcome") == "cancelled")
+            row["cancelled"] += int(query.get("outcome") in _STOPPED)
             if latency is not None:
                 row["latencies"].append(latency)
             cost = query.get("cost_usd")
@@ -260,7 +264,7 @@ def summarize(
             # Questions whose reader left before the answer (the page
             # closed or stopped it): their spend counts in the cost and the
             # model rows, not in the latencies or the per-question figures.
-            "cancelled": sum(q["outcome"] == "cancelled" for q in queries),
+            "cancelled": sum(q["outcome"] in _STOPPED for q in queries),
             "latency_p50": quantile(latencies, 0.5),
             "latency_p95": quantile(latencies, 0.95),
             "latency_mean": statistics.fmean(latencies) if latencies else None,

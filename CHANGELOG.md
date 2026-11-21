@@ -52,11 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespace whose last full build an earlier release wrote gets a `community_depths` rebuild reason (remedy `reset`)
   in `run-describe`, the console, MCP and the run's `rebuild_due`.
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
-  holds only a run's output; on a stdout that is no terminal no line is wrapped at 80 columns, and `run-rag --query
-  ... > answer.txt` keeps the answer, its citations and a sources line as plain text, its banner, settings panel and
-  progress lines on stderr; `run-visualization`, whose result was its log line, prints the output directory and each
-  file written; `setup_logging` without a `stream` logs to stderr. A script that read the logs from stdout reads
-  stderr (`2>&1` keeps both on one stream).
+  holds only a run's output; on a stdout or stderr that is no terminal no line is wrapped or cropped at 80 columns (a
+  panel or table is drawn as wide as its widest line: `run-ingestion`'s source and cache paths lost their ends), and
+  `run-rag --query ... > answer.txt` keeps the answer, its citations and a sources line as plain text, its banner,
+  settings panel and progress lines on stderr; `run-visualization`, whose result was its log line, prints the output
+  directory and each file written; `setup_logging` without a `stream` logs to stderr. A script that read the logs from
+  stdout reads stderr (`2>&1` keeps both on one stream).
 - A filter on `attr_file` or `attr_folder` (*Added*: path filters) is refused on a namespace built before this
   release, a document's own `file` or `folder` filter included, until it is rebuilt (*Upgrading*).
 - `VectorIndexer` is split by concern, for extenders: its other concerns are `Protocol`s of their own, exported from
@@ -114,7 +115,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    0.5.0.
 10. `answer_contains` reads the answer's first line now (*Fixed*): a `run-eval` result saved before records no
    `answer_scoring.answer_contains_reads` and is refused as `--baseline-results` (or in a rebuilt comparison) beside a
-   run of now. Re-run the baseline.
+   run of now. Score its saved answers again, with no new answer: `run-eval --from-results <old results> --rescore`
+   (an `extracted` `answer_span` calls only the answer-span model), then compare against the re-scored run.
 
 ### Added
 
@@ -122,7 +124,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   0 for all), each node's strongest first: a dense graph's 600 drawn nodes sent all of their 27,863 links (8.1 MB) and
   blocked the Graph page's main thread 4-5 s; with the cap 1.1 MB and about 1 s
   ([measured](docs/concepts/defaults-and-evidence.md#graph-page-size)). The Graph page says how many it drew, and an
-  entity's panel lists all of its links.
+  entity's panel lists all of its links (the first 40, the rest on "Show all relationships"); `run-visualization`'s
+  interactive page says at its top how many of the nodes and links it drew when it drew part of the graph, and the run
+  logs it at WARNING (an INFO line before).
 - The console's header picks the namespace Ask, Evaluate and Graph read, of those the stores hold (`/api/namespaces`;
   the Ask, evaluate and graph requests take `namespace`); Ingest writes into it unless told another. `run-console`
   takes the provider flags of the other CLIs (`--backend local` opens the local flow without a config file) and
@@ -325,6 +329,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 
 ### Changed
 
+- The console's question history records a question its page stopped as `stopped`, as its audit record does (it was
+  `cancelled`), with the strategy the record names (it had none); the Dashboard counts rows of either word in its
+  Cancelled figures.
 - The community-counter WARNING reads `Index namespace '<suffix>' is due for a rebuild: its communities are due for
   re-clustering: ...` (it began `Communities of '<suffix>' are due for re-clustering`), one rule with the other
   rebuild reasons. The console's job card offers "Rebuild the namespace" when the run's `rebuild_due` holds a reason
@@ -523,7 +530,13 @@ Bugs present in 0.3.0.
   not in an `ExceptionGroup`; a `CancelledError` the call raised while its task was not cancelled is a failure). The
   chain records a cancelled `ainvoke` as a stopped query, as it records a console reader's stop: its query metrics
   and its audit record, its usage up to there; one cancelled after its deadline passed, at the server's backstop, is
-  one timed-out query, not two.
+  one timed-out query, not two. A `kg_search` or `kg_answer` call that ends waiting for a call slot, before the chain
+  took it, is recorded once by the server through the chain's record path (`GraphRAGChain.record_unrun_query`, which
+  takes `None` for a caller that left and `search=True`), with what the call asked and its caller: `stopped` when its
+  client left, a timeout otherwise (a client that left there got no record, a `kg_search` timeout none, and a
+  `kg_answer` timeout one without its `user_id`, `top_k` and `filter_keys`). A stopped query names the strategy it was
+  routed to, else the explicit one it asked for, in its audit record and span as in its metrics (an `ainvoke` stopped
+  after its route recorded `strategy: null`).
   uvicorn's start line keeps the address the server listens on, which the logging setup digested (`Uvicorn running
   on len=4 sha=...`); a record that matches it keeps no traceback, and only the text and numbers it formats.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
@@ -717,7 +730,9 @@ Bugs present in 0.3.0.
   support quoted the context scored 1 (11 of 72 hits on the 3B local baseline's answers). It reads the answer's first
   line that is no heading, the one-sentence answer the answer prompt asks for; number and set golds read as before.
   The run manifest records it (`answer_scoring.answer_contains_reads: first_line`), and a run saved before it, read as
-  `full`, is refused as a `--baseline-results` or rebuilt comparison against a run of now: re-run it.
+  `full`, is refused as a `--baseline-results` or rebuilt comparison against a run of now, the refusal naming
+  `answer_contains` when only it differs and `run-eval --from-results <its results> --rescore`, which scores the saved
+  answers again without answering them.
 - `answer_match` with `evaluation.answer_span: extracted` scored a "yes"/"no" span for any question, so a span model
   that answered "yes" to "Who wrote it?" scored exact match and token F1 0 against "Tom Hood" (34 of 150 answers in
   the 3B local baseline). A yes/no span is the span only for a yes/no gold; otherwise the first line is scored and

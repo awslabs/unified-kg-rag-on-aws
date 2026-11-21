@@ -165,7 +165,9 @@ timeout. Every failed call's error ends with its `query_id` (and `trace_id`
 when traced), a call that timed out waiting for a slot included. A
 `kg_answer` that times out, in the chain or in the slot queue, is counted
 once in the query metrics; a `kg_search` is not (the query metrics count
-answers). The graph tools do not watch the deadline: a slow store call ends
+answers). Each `kg_search` and `kg_answer` call gets one
+[audit record](../reference/telemetry.md#audit-record) however it ends, one
+that ended in the slot queue included, naming its caller. The graph tools do not watch the deadline: a slow store call ends
 at a backstop one second past it. A response's records are capped by `mcp.max_response_chars`,
 and the MCP message carries them twice (structured content and its JSON
 text), so the message is up to about 2-4 times that. The tools keep no conversation

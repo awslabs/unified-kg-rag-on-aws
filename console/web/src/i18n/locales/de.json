@@ -516,6 +516,7 @@
   "graph.id": "ID",
   "graph.neighbours_one": "{{count}} Beziehung",
   "graph.neighbours_other": "{{count}} Beziehungen",
+  "graph.showAllNeighbours": "Alle Beziehungen zeigen",
   "graph.edgeOut": "ausgehend",
   "graph.edgeIn": "eingehend",
   "graph.pickHint": "Wählen Sie eine Entität im Graphen oder suchen Sie sie nach Name.",

@@ -6,6 +6,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
+from rich.measure import Measurement
 from rich.panel import Panel
 from rich.table import Table
 
@@ -22,7 +23,44 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared.utils import first_names
 
-console = Console()
+# Past any line a panel or table of a run holds: the width they are
+# measured within on no terminal (``_CliConsole``).
+_UNBOUNDED_WIDTH = 1_000_000
+
+
+class _CliConsole(Console):
+    """The CLIs' console. On no terminal (a file, a pipe, a task's log
+    stream), where rich assumes 80 columns, a panel or table is drawn as wide
+    as its widest line, so none is cropped or wrapped there (``fit_console``
+    keeps the plain lines whole); on a terminal, as rich draws it."""
+
+    def print(self, *objects: Any, **kwargs: Any) -> None:
+        if self.is_terminal or kwargs.get("width") is not None:
+            super().print(*objects, **kwargs)
+            return
+        wide = max(map(self._natural_width, objects), default=0)
+        if wide <= self.width:
+            super().print(*objects, **kwargs)
+            return
+        saved = self._width
+        self.width = wide
+        try:
+            super().print(*objects, **kwargs)
+        finally:
+            self._width = saved
+
+    def _natural_width(self, renderable: Any) -> int:
+        """The width ``renderable`` (a panel, a table) takes unwrapped: 0
+        for plain text, which soft wrap leaves whole, and for a renderable
+        that does not measure itself (rich would take it as unbounded); a
+        rule measures 1, so it is drawn at the console's width."""
+        if isinstance(renderable, str) or not hasattr(renderable, "__rich_measure__"):
+            return 0
+        options = self.options.update_width(_UNBOUNDED_WIDTH)
+        return Measurement.get(self, options, renderable).maximum
+
+
+console = _CliConsole()
 
 # The entity names a community's panel lists, the rest counted.
 _COMMUNITY_ENTITIES_SHOWN = 5

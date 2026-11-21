@@ -50,8 +50,9 @@ QUERY_LIMITED_METRIC = "query_limited"
 QUERY_THROTTLED_METRIC = "query_throttled_requests"
 # The query's input and output tokens (its usage's input_tokens and
 # output_tokens: its language-model calls'), and its USD by models.prices
-# when every model it called has a price there (none otherwise): what a
-# query spends, per strategy, beside what it took.
+# when every language model and reranker it called has a price there (none
+# otherwise; an embedding model without one leaves its requests out): what
+# a query spends, per strategy, beside what it took.
 QUERY_INPUT_TOKENS_METRIC = "query_input_tokens"
 QUERY_OUTPUT_TOKENS_METRIC = "query_output_tokens"
 QUERY_COST_METRIC = "query_cost_usd"

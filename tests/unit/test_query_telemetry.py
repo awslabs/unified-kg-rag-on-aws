@@ -136,6 +136,40 @@ async def test_a_priced_query_publishes_its_tokens_and_cost() -> None:
     )
 
 
+async def test_an_unpriced_embedding_model_leaves_the_query_cost_a_number() -> None:
+    """R2C-7: query_cost_usd is published when every language model (and
+    reranker) the query called is priced; an embedding model without
+    embedding_per_million_tokens leaves its requests out, the cost a
+    number, as telemetry.md says and the --metrics-sink help now does."""
+    from unified_kg_rag.application.cli.metrics_args import QUERY_METRICS_HELP
+
+    chain = _simple_chain(_counted(_FakeModelFactory()))
+    chain.config.models.prices = {_MODEL: _PRICE}
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    usage = {
+        "llm_calls": 1,
+        "input_tokens": 1000,
+        "output_tokens": 100,
+        "by_model": {
+            _MODEL: {"llm_calls": 1, "input_tokens": 1000, "output_tokens": 100},
+            "embedder": {"embedding_calls": 2, "embedding_input_tokens": 50},
+        },
+    }
+    try:
+        chain._record_query(
+            0.0, {"search_strategy": "simple"}, search=False, query_id="q", usage=usage
+        )
+    finally:
+        await chain.aclose()
+    ((_, values, _),) = sink.emitted
+    assert values[metrics.QUERY_COST_METRIC] == pytest.approx(
+        (1000 * 1.0 + 100 * 2.0) / 1e6
+    )
+    assert "embedding model" in QUERY_METRICS_HELP
+    assert "prices every model called" not in QUERY_METRICS_HELP
+
+
 async def test_an_answer_is_priced_once(monkeypatch: pytest.MonkeyPatch) -> None:
     # RV6-5: the metric priced the usage again after metadata["cost_usd"];
     # it reads that one (the audit record prices the snapshot on its own).

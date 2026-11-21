@@ -132,6 +132,24 @@ def _being_cancelled() -> bool:
     return task is not None and task.cancelling() > 0
 
 
+class _QueryCall:
+    """A ``kg_search`` or ``kg_answer`` call's query until the chain takes
+    it: the call records it (:meth:`ended`) only if it never got there,
+    since from then on the chain records it however it ends."""
+
+    def __init__(self, record: Callable[[QueryTimeoutError | None], None]) -> None:
+        # Whether the chain took the query.
+        self.asked = False
+        self._record = record
+
+    def ended(self, error: QueryTimeoutError | None) -> None:
+        """The call ended (it ends once): it timed out (``error``) or its
+        client left (``None``, a stopped query); recorded here only if the
+        chain never took its query (it waited for a call slot)."""
+        if not self.asked:
+            self._record(error)
+
+
 class SupportingContent(BaseModel):
     """One piece of supporting content: a chunk of a document, or a graph
     item (entity, relationship, community report, claim, summary) with the
@@ -678,7 +696,8 @@ class KnowledgeGraphTools:
         ``_BACKSTOP_GRACE_SECONDS`` later for work that does not watch the
         deadline (the graph tools, a store call past it): such a call ends
         by the deadline plus that grace. ``on_timeout`` gets the error of
-        either before it is raised (``kg_answer`` records it as a query).
+        either before it is raised (``kg_search`` and ``kg_answer`` record a
+        query the chain never took).
         A caller's own ``limits.deadline_seconds`` (``limits``), when sooner,
         is that deadline: the slot wait counts against it too."""
         seconds, setting = self._deadline, "search.query_timeout_seconds"
@@ -723,11 +742,13 @@ class KnowledgeGraphTools:
         arguments: dict[str, Any],
         run: Callable[[], Awaitable[_R]],
         namespace: str | None = None,
-        on_timeout: Callable[[QueryTimeoutError], None] | None = None,
+        query_call: _QueryCall | None = None,
         limits: Any = None,
     ) -> _R:
         """Run one tool call (``limits``: the caller's ``QueryLimits``, whose
-        deadline bounds the call from its start, ``_within_deadline``): a slot, a ``kg_rag.mcp.tool`` span (the
+        deadline bounds the call from its start, ``_within_deadline``;
+        ``query_call``: a query tool's, told when the call times out or its
+        client leaves, so one the chain never took is recorded too): a slot, a ``kg_rag.mcp.tool`` span (the
         arguments as ``input.value`` only under
         ``observability.capture_content``, redacted; ``kg_rag.namespace``
         when the call reads a served one, ``namespace`` or the server's) and
@@ -752,7 +773,9 @@ class KnowledgeGraphTools:
             observability.span("kg_rag.mcp.tool", attributes) as span,
         ):
             try:
-                result = await self._within_deadline(run, on_timeout, limits)
+                result = await self._within_deadline(
+                    run, None if query_call is None else query_call.ended, limits
+                )
             except asyncio.CancelledError as e:
                 if not _being_cancelled():
                     # Raised by the call itself, its task not cancelled: a
@@ -763,6 +786,8 @@ class KnowledgeGraphTools:
                 # the server is stopping: no failure, so the span ends
                 # without the error status and is re-raised past it.
                 span.set_attribute("kg_rag.cancelled", True)
+                if query_call is not None:
+                    query_call.ended(None)
                 logger.info(
                     "MCP tool %s cancelled after %.2fs (its client left, or the "
                     "server is stopping): %s",
@@ -884,6 +909,53 @@ class KnowledgeGraphTools:
             user_id=caller_user_id(),
         )
 
+    def _query_call(
+        self,
+        *,
+        search: bool,
+        query: str,
+        strategy: str | None,
+        search_type: str | None,
+        top_k: int | None,
+        filters: dict[str, Any] | None,
+        namespace: str | None,
+        limits: QueryLimits | dict[str, Any] | None,
+    ) -> _QueryCall:
+        """The :class:`_QueryCall` of a ``kg_search`` (``search``) or
+        ``kg_answer`` call starting now: a query it ends before the chain
+        takes it is recorded by the chain's one record path
+        (``GraphRAGChain.record_unrun_query``) with what the call asked, its
+        caller's ``user_id`` included."""
+        started = time.monotonic()
+
+        def record(error: QueryTimeoutError | None) -> None:
+            try:
+                fields: dict[str, Any] = dict(
+                    self._rag_input(
+                        query,
+                        strategy,
+                        search_type,
+                        top_k,
+                        filters,
+                        namespace,
+                        limits=limits,
+                    )
+                )
+            except Exception:  # noqa: BLE001 - arguments it never checked
+                # As a refused input is recorded: the fields as given.
+                fields = {
+                    "query": query,
+                    "search_strategy": strategy,
+                    "search_type": search_type,
+                    "top_k": top_k,
+                    "filters": filters,
+                    "namespace": namespace,
+                    "user_id": caller_user_id(),
+                }
+            self.chain.record_unrun_query(fields, error, started=started, search=search)
+
+        return _QueryCall(record)
+
     def _from_result(self, rank: int, result: RetrievalResult) -> SupportingContent:
         return _record(SourceView.of_result(rank, result), self.settings.max_text_chars)
 
@@ -951,11 +1023,23 @@ class KnowledgeGraphTools:
     ) -> SearchToolResult:
         """``kg_search``: the ranked supporting content for ``query``, no
         answer. ``limits`` lowers the server's query limits for this call."""
+        call = self._query_call(
+            search=True,
+            query=query,
+            strategy=strategy,
+            search_type=search_type,
+            top_k=top_k,
+            filters=filters,
+            namespace=namespace,
+            limits=limits,
+        )
 
         async def run() -> SearchToolResult:
             rag_input = self._rag_input(
                 query, strategy, search_type, top_k, filters, namespace, limits=limits
             )
+            # No await between this and the chain's start (its _query).
+            call.asked = True
             output = await self.chain.asearch(rag_input)
             outcome = self._checked(output)
             results = output.search_results.results
@@ -977,6 +1061,7 @@ class KnowledgeGraphTools:
             {"query": query, "strategy": strategy, "filters": filters},
             run,
             namespace,
+            call,
             limits=limits,
         )
 
@@ -1003,23 +1088,18 @@ class KnowledgeGraphTools:
         "and its price?" is rewritten from it into a standalone question.
         ``limits`` lowers the server's query limits for this call."""
 
-        started = time.monotonic()
-        # Whether the chain took the query: from then on it records the
-        # query however it ends, cancelled at the backstop too.
-        asked = False
-
-        def on_timeout(error: QueryTimeoutError) -> None:
-            # A call that timed out waiting for a slot (or before it reached
-            # the chain) has no query metric of the chain's own.
-            if not asked:
-                self.chain.record_unrun_query(
-                    {"search_strategy": strategy, "namespace": namespace},
-                    error,
-                    started=started,
-                )
+        call = self._query_call(
+            search=False,
+            query=query,
+            strategy=strategy,
+            search_type=search_type,
+            top_k=top_k,
+            filters=filters,
+            namespace=namespace,
+            limits=limits,
+        )
 
         async def run() -> AnswerToolResult:
-            nonlocal asked
             if records not in ANSWER_RECORDS:
                 raise InvalidArgumentError(
                     f"records must be one of {', '.join(ANSWER_RECORDS)}, "
@@ -1036,7 +1116,7 @@ class KnowledgeGraphTools:
                 limits=limits,
             )
             # No await between this and the chain's start (its _query).
-            asked = True
+            call.asked = True
             output = await self.chain.ainvoke(rag_input)
             outcome = self._checked(output)
             view = AnswerView.from_output(output)
@@ -1096,7 +1176,7 @@ class KnowledgeGraphTools:
             },
             run,
             namespace,
-            on_timeout,
+            call,
             limits=limits,
         )
 
