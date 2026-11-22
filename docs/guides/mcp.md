@@ -192,7 +192,10 @@ slot (`mcp.max_concurrent_calls`) and is recorded as a stopped query
 (its query metrics and [audit record](../reference/telemetry.md#audit-record):
 its latency and usage up to there, no failure); the call is
 logged as cancelled, not failed, and its `kg_rag.mcp.tool` span carries
-`kg_rag.cancelled` without the error status. **The
+`kg_rag.cancelled` without the error status. The call runs its query as its
+reader (`shared.query_stop.await_as_reader`), so the query's own spans end
+the same way: [no error status, marked `kg_rag.stopped`](../reference/telemetry.md#spans-of-a-stopped-query);
+a client that leaves past the call's deadline leaves a timed-out query. **The
 server authenticates no caller.** Binding another address needs
 `--allow-remote`, and there it leaves the headers to the proxy in front:
 

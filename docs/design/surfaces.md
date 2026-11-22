@@ -386,7 +386,7 @@ runs ahead of it. A reader that stops (closes the iterator, or is
 cancelled while it waits: a client that disconnected) sets the query's
 `shared.query_stop.QueryStop`, then cancels the query at once, as its
 deadline does, wherever it is, before it writes memory; it waits for the
-query to end without cancelling it again (`_ended`: an anyio cancel scope
+query to end without cancelling it again (`shared.query_stop.wait_ended`: an anyio cancel scope
 cancels the reader at every await, and a second cancellation passed on
 would cut the close of a model response short, its connection held). The
 stop is what the cancellation does not reach: the work the query left on

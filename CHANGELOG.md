@@ -867,6 +867,13 @@ Bugs present in 0.3.0.
   have: it names `logging.log_format` (structured JSON records by default), the format its logs take on stderr.
 - The console's `/api/history` rows name the `namespace` a question asked and, under `--trusted-identity-header`,
   the `user_id` who asked it (new keys; the console's `console.sqlite3` gains a `user_id` column on open).
+- A query its reader stopped ended its spans as errors, while its metrics and audit record count it as stopped: an
+  MCP client that left a `kg_search` or `kg_answer` call left its `kg_rag.query` span `ERROR` (`CancelledError`), and
+  the console's Stop or a closed page its `kg_rag.console.ask` root; the retrieval or model span in flight was `ERROR`
+  on both. These spans now end with no error status, marked `kg_rag.stopped`: an MCP call runs its query as its
+  reader, and the console sets its question's reader stop before it cancels it. A CLI's `Ctrl-C` or `SIGTERM` (a
+  process stopping) and a timeout, an MCP client that leaves past the call's deadline included, keep `ERROR`
+  ([telemetry reference](docs/reference/telemetry.md#spans-of-a-stopped-query)).
 
 ## [0.3.0] - 2026-11-14
 
