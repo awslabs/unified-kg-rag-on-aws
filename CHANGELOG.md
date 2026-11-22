@@ -383,8 +383,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - `Ctrl-C` while `run-rag --interactive` answers stops that question and returns to the prompt; it ended the session
   with exit code 130. `Ctrl-C` at the prompt, or a second one while the question stops, ends the session as before.
 - Dependencies: pypdf 7.1.0, langchain-core 1.8.1, langchain-aws 1.9.3, langchain-openai 1.8.0, pydantic 2.14.3, fastapi
-  0.162.7, boto3 1.44 (also in the CDK lock), aws-cdk-lib 2.277, the `ollama/ollama` 0.40.16 image in
-  `docker/compose.local.yaml`. botocore 1.44 makes `standard` the default retry mode, so the clients the package leaves
+  0.163.1, ragas 0.4.4, boto3 1.44 (also in the CDK lock), aws-cdk-lib 2.277, the `ollama/ollama` 0.40.16 image in
+  `docker/compose.local.yaml`. ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046), which the pip-audit job
+  no longer accepts. botocore 1.44 makes `standard` the default retry mode, so the clients the package leaves
   at botocore's defaults (the Bedrock control plane client that resolves inference profiles, and STS: the role check of
   `aws.bedrock.assumed_role_arn` and credential refresh) make 3 attempts, not 5. Every client in standard or adaptive
   mode now also retries an unmodeled HTTP 429 as throttling. The Bedrock runtime, guardrail, DynamoDB and S3 clients set
