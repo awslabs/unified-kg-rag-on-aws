@@ -128,7 +128,7 @@ jobs:
           uv run pytest -n logical
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=96
+          --cov-fail-under=97.1
 
       - name: Upload coverage + test report
         # Surface coverage.xml / report.xml as artifacts for inspection on each

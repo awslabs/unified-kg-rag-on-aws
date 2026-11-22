@@ -411,6 +411,75 @@ class TestGeneration:
         )
         assert seen and all(name in system for system in seen)
 
+    def test_a_global_questions_claims_are_mapped_in_batches_then_reduced(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """More claims than one batch: a reduce call per batch (map), then
+        one over the partial assertions, read as claims citing their units,
+        so a final assertion cites the units of the claims behind it."""
+        monkeypatch.setattr(autoq, "CLAIM_BATCH", 2)
+        prompts: list[str] = []
+
+        def reducer(system: str, human: str) -> str:
+            assert "assertions for grading" in system
+            prompts.append(human)
+            claims = re.findall(r"ID: (claim_\d+)\nStatement: ([^\n]+)", human)
+            # Each batch: one assertion over all its claims; the reduce:
+            # one per partial assertion.
+            if len(prompts) <= 3:
+                merged = " + ".join(text for _, text in claims)
+                entries = [
+                    {"statement": f"[{merged}]", "sources": [c for c, _ in claims]}
+                ]
+            else:
+                entries = [
+                    {"statement": f"Final {text}", "sources": [c]} for c, text in claims
+                ]
+            return json.dumps({"assertions": entries})
+
+        config = Config()
+        generator = autoq.AssertionBenchmarkGenerator(
+            config, _settings(), providers=_providers(config, reducer)
+        )
+        claims = [
+            autoq.Claim(statement=f"c{n}", sources=[f"u{n}"], score=5) for n in range(5)
+        ]
+        candidate = autoq.Candidate(
+            question_class="data_global", question="What holds?", claims=claims
+        )
+        found = asyncio.run(generator._reduce_call(candidate, batched=True)())
+        # Three batches (2, 2, 1 claims), then the reduce over 3 partials.
+        assert len(prompts) == 4
+        # The batches run concurrently, so they reach the model in any order;
+        # the reduce comes after all of them.
+        counts = [p.count("ID: claim_") for p in prompts]
+        assert sorted(counts[:3]) == [1, 2, 2] and counts[3] == 3
+        assert [a.statement for a in found] == [
+            "Final [c0 + c1]",
+            "Final [c2 + c3]",
+            "Final [c4]",
+        ]
+        assert [a.sources for a in found] == [["u0", "u1"], ["u2", "u3"], ["u4"]]
+        # A local question's claims are reduced in one call.
+        prompts.clear()
+        asyncio.run(generator._reduce_call(candidate, batched=False)())
+        assert [p.count("ID: claim_") for p in prompts] == [5]
+
+    def test_an_assertion_citing_a_unit_never_sampled_is_a_bug_not_a_drop(
+        self,
+    ) -> None:
+        config = Config()
+        generator = autoq.AssertionBenchmarkGenerator(
+            config, _settings(), providers=_providers(config)
+        )
+        generator.units = {
+            "u1": autoq.TextUnit(id="u1", file="a.txt", start=0, end=4, text="Text")
+        }
+        assertion = autoq.GeneratedAssertion(statement="s", sources=["u1", "u9"])
+        call = generator._validation_call("What holds?", [assertion])
+        with pytest.raises(EvaluationException, match=r"unknown text units \['u9'\]"):
+            asyncio.run(call())
+
     def test_an_unknown_class_is_refused(self) -> None:
         with pytest.raises(EvaluationException, match="unknown question class"):
             autoq.AssertionBenchmarkGenerator(

@@ -353,8 +353,12 @@ def _increment(case: _Case) -> None:
 
 
 def _drop_cut_bounds(case: _Case) -> None:
-    """Remove ``min_cut_depth`` from every stored community report, as a
-    release before 0.4.0 wrote them."""
+    """Set ``min_cut_depth`` to null on every stored community report: the
+    shape the report refresh writes for a report a release before 0.4.0
+    wrote (it keeps the stored null). A 0.3.0 store itself holds no field
+    at all; both shapes read as an earlier release's report
+    (``holds_root_depth_reports`` searches for reports without the field),
+    and the vector conformance suite writes the absent one."""
     # The embedded store's indexer: its live index and engine.
     vector: Any = case.providers.build_vector_indexer()
     try:

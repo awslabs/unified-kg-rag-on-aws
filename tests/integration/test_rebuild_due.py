@@ -119,3 +119,25 @@ def test_reports_an_earlier_release_wrote_are_due_whatever_the_record_says(
     harness.run("reset", reset)
     assert not harness.vectors.holds_root_depth_reports("default")
     assert describe_namespace(harness.config, providers=providers).rebuild == []
+
+
+def test_old_reports_of_a_namespace_are_due_whatever_the_default_holds(
+    tmp_path,
+) -> None:
+    # R4A-4: the indexing stage asked the store about the default namespace
+    # (no reports, so no reason) instead of the namespace it wrote.
+    harness = _Harness(tmp_path)
+    harness.config.processing.document_parsing.namespace = "tenant-a"
+    harness.config.indexing.community_compaction.max_community_growth = None
+    harness.run("full")
+    assert "default" not in harness.vectors.builds
+    for report in harness.vectors.data["community_reports"].values():
+        report.min_cut_depth = None  # as 0.3.0 wrote them
+    assert harness.vectors.holds_root_depth_reports("tenant-a")
+    assert not harness.vectors.holds_root_depth_reports("default")
+
+    harness.add("carrier.txt", "Carrier ships widgets for Depot.")
+    delta = harness.run("add-1")
+
+    due = _indexing_metrics(delta)["rebuild_due"]
+    assert "community_depths" in [d["kind"] for d in due["tenant-a"]]

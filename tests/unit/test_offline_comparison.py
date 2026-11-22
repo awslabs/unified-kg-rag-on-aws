@@ -725,6 +725,32 @@ def test_a_regression_gate_exits_1_and_a_clean_run_passes(
     assert (code, out["gate_failures"]) == (0, [])
 
 
+def test_run_eval_exits_1_on_a_regression_rebuilt_from_saved_results(
+    tmp_path: Path, small_gates: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The CLI entry point's exit status is what a CI script gates on: a
+    # failed gate exits 1 and a clean run exits 0, with no chain built.
+    def no_chain(*_args: object) -> None:
+        raise AssertionError("--from-results built a chain")
+
+    monkeypatch.setattr(run_evaluation, "GraphRAGChain", no_chain, raising=False)
+    regressed, clean = tmp_path / "regressed", tmp_path / "clean"
+    _saved_comparison(regressed, _WORSE)
+    _saved_comparison(clean, _BASE)
+
+    def run_eval(saved: Path, out: Path) -> None:
+        argv = ["run-eval", "--from-results", str(saved), "--output-format", "json"]
+        argv += ["--fail-if", "answer_match/token_f1:ci_high<-0.02"]
+        monkeypatch.setattr("sys.argv", [*argv, "--output-directory", str(out)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            run_evaluation.main()
+
+    with pytest.raises(SystemExit) as exc:
+        run_eval(regressed, tmp_path / "o1")
+    assert exc.value.code == 1
+    run_eval(clean, tmp_path / "o2")  # returns: exit status 0
+
+
 def test_strategy_order_and_selection(tmp_path: Path) -> None:
     saved = tmp_path / "runs"
     _saved_comparison(saved, _WORSE)

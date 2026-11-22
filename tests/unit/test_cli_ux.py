@@ -665,6 +665,57 @@ def test_comparison_and_statistics_tables_never_cut_a_metric_name(
     assert "…" not in text
 
 
+def test_the_summary_shows_the_structured_answers_and_the_stage_latencies(
+    monkeypatch,
+) -> None:
+    # The structured strategy's outcome line and the per-span latency
+    # table: each figure in its column, each span on its row.
+    import io
+    from datetime import datetime
+
+    from rich.console import Console
+
+    from unified_kg_rag.application.cli import run_evaluation
+    from unified_kg_rag.domain.models import EvaluationSummary
+
+    out = io.StringIO()
+    monkeypatch.setattr(
+        run_evaluation, "console", Console(file=out, width=160, color_system=None)
+    )
+    summary = EvaluationSummary(
+        total_queries=4,
+        successful_evaluations=4,
+        failed_evaluations=0,
+        structured_statistics={
+            "queries": 4,
+            "status": {"answered": 3, "fallback": 1},
+            "fallback_reasons": {"compile_error": 1},
+            "valid_plan_rate": 0.75,
+        },
+        stage_latency_seconds={
+            "kg_rag.retrieve": {"answers": 4, "mean": 0.25, "p50": 0.2, "p95": 0.5},
+            "kg_rag.generate": {"answers": 3, "mean": 1.5, "p50": 1.25, "p95": 2.0},
+        },
+        evaluation_start_time=datetime(2026, 1, 1),
+        evaluation_end_time=datetime(2026, 1, 1),
+    )
+    run_evaluation.EvaluationRunner._print_summary(summary, 1.0)
+    text = out.getvalue()
+    assert (
+        "Structured: answered 3 of 4, valid plans 75% "
+        "(fallback reasons: compile_error 1)"
+    ) in text
+    assert "Stage Latency (seconds per answer, from spans)" in text
+    rows = [line.split() for line in text.splitlines() if "kg_rag." in line]
+    cells = [[c for c in row if c not in {"│", "┃"}] for row in rows]
+    assert cells == [
+        ["kg_rag.retrieve", "4", "0.250", "0.200", "0.500"],
+        ["kg_rag.generate", "3", "1.500", "1.250", "2.000"],
+    ]
+    header = next(line for line in text.splitlines() if "Answers" in line)
+    assert header.split()[1::2] == ["Span", "Answers", "Mean", "p50", "p95"]
+
+
 # --- --help loads no chain or pipeline ---------------------------------
 
 

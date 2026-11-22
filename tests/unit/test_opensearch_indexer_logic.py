@@ -751,6 +751,144 @@ def test_upsert_embeds_and_writes_one_slice_at_a_time(indexer, mocker) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Partial failures: the failed ids feed the run's pending writes
+# --------------------------------------------------------------------------- #
+
+
+def _rejected(*ids: str, op: str = "update") -> dict:
+    """A bulk response the client returns: its ``items`` are the rejected."""
+    return {"errors": True, "items": [{op: {"_id": i, "status": 409}} for i in ids]}
+
+
+def test_a_document_whose_preparation_fails_alone_is_counted_failed(
+    indexer,
+) -> None:
+    def prepare(item: Entity, vectors: tuple) -> dict:
+        if item.id == "e2":
+            raise ValueError("bad document")
+        return indexer._prepare_entity_doc(item, vectors)
+
+    items = [Entity(id=f"e{i}", name=f"E{i}") for i in range(1, 4)]
+    docs, failed = OpenSearchIndexer._prepare_documents(
+        items, [([0.1], [0.2])] * 3, prepare
+    )
+    assert [d["id"] for d in docs] == ["e1", "e3"]
+    assert failed == ["e2"]
+
+
+def test_extraction_records_a_bulk_write_rejects_are_the_failed_ids(
+    indexer, mocker
+) -> None:
+    indexer.opensearch_client = mocker.MagicMock()
+    indexer.opensearch_client.bulk_index.return_value = _rejected("k2", op="index")
+    mocker.patch.object(indexer, "_extraction_records_index", return_value="idx")
+    records = {key: {"entities": []} for key in ("k1", "k2", "k3")}
+
+    stats = indexer.write_extraction_records(records)
+
+    assert (stats.total_items, stats.successful_items) == (3, 2)
+    assert (stats.failed_items, stats.failed_ids) == (1, ["k2"])
+    indexer.opensearch_client.bulk_index.side_effect = RuntimeError("timeout")
+    stats = indexer.write_extraction_records(records)
+    assert (stats.successful_items, stats.failed_ids) == (0, ["k1", "k2", "k3"])
+
+
+def test_a_field_update_counts_only_its_rejected_items_failed(indexer, mocker) -> None:
+    client = mocker.MagicMock()
+    client.get_index_name_by_alias.return_value = "live-index"
+    client.bulk_update.return_value = _rejected("r2")
+    indexer.opensearch_client = client
+
+    stats = indexer.mark_reports_outdated(["r1", "r2", "r3"])
+
+    assert (stats.total_items, stats.successful_items) == (3, 2)
+    assert (stats.failed_items, stats.failed_ids) == (1, ["r2"])
+
+
+def test_a_field_update_failing_in_one_namespace_fails_only_its_items(
+    indexer, mocker
+) -> None:
+    from unified_kg_rag.domain.models import Constants
+
+    client = mocker.MagicMock()
+    client.get_index_name_by_alias.side_effect = lambda alias: f"live-{alias}"
+    client.search.return_value = {"hits": {"hits": []}}
+
+    def bulk_update(index: str, docs: list, refresh: bool = True) -> dict:
+        if "tenant-b" in index:
+            raise RuntimeError("timeout")
+        return {"errors": False, "items": []}
+
+    client.bulk_update.side_effect = bulk_update
+    indexer.opensearch_client = client
+    entities = [
+        Entity(id=f"{ns}-{i}", name="E", attributes={Constants.INDEX.value: ns})
+        for ns in ("tenant-a", "tenant-b")
+        for i in (1, 2)
+    ]
+    limits = mocker.MagicMock(id_batch_size=100)
+    mocker.patch.object(indexer, "_limits", return_value=limits)
+
+    stats = indexer.update_entity_lineage(entities)
+
+    assert (stats.total_items, stats.successful_items) == (4, 2)
+    assert sorted(stats.failed_ids) == ["tenant-b-1", "tenant-b-2"]
+
+
+def test_repointed_findings_a_rejected_report_is_the_failed_id(indexer, mocker) -> None:
+    client = mocker.MagicMock()
+    client.get_index_name_by_alias.return_value = "live-index"
+    client.bulk_update.return_value = _rejected("rep-2")
+    indexer.opensearch_client = client
+    mocker.patch.object(indexer, "find_documents", return_value={"rep-1", "rep-2"})
+    mocker.patch.object(
+        indexer,
+        "_read_sources",
+        return_value=[
+            {"id": f"rep-{i}", "findings": [{"explanation": "x", "entity_ids": ["e"]}]}
+            for i in (1, 2)
+        ],
+    )
+
+    stats = indexer.repoint_report_findings({"e": "e-renamed"})
+
+    (written,) = [call.args[1] for call in client.bulk_update.call_args_list]
+    assert [u["findings"][0]["entity_ids"] for u in written] == [["e-renamed"]] * 2
+    assert (stats.total_items, stats.successful_items) == (2, 1)
+    assert (stats.failed_items, stats.failed_ids) == (1, ["rep-2"])
+
+
+def test_an_upsert_failing_in_one_namespace_fails_only_its_items(
+    indexer, mocker
+) -> None:
+    from unified_kg_rag.adapters.storage.opensearch_indexer import _ItemSpec
+    from unified_kg_rag.domain.models import Constants
+
+    indexer._keep_replaced_vectors = False
+    mocker.patch.object(indexer, "_live_index", return_value="idx")
+
+    def write(index: str, chunk: list, spec: object, suffix: str, **_: object):
+        if suffix == "tenant-b":
+            raise RuntimeError("embedding service down")
+        stats = IndexingStats(total_items=len(chunk))
+        stats.add_success(len(chunk))
+        return stats
+
+    mocker.patch.object(indexer, "_embed_and_write", side_effect=write)
+    spec = _ItemSpec("entities", "entities", dict, [], indexer._prepare_entity_doc, ())
+    entities = [
+        Entity(id=f"{ns}-{i}", name="E", attributes={Constants.INDEX.value: ns})
+        for ns in ("tenant-a", "tenant-b")
+        for i in (1, 2)
+    ]
+
+    stats = indexer._upsert_item_type(entities, spec)
+
+    assert stats.successful_items == 2
+    assert sorted(stats.failed_ids) == ["tenant-b-1", "tenant-b-2"]
+
+
+# --------------------------------------------------------------------------- #
 # Claim read-back (cross-run claim merge)
 # --------------------------------------------------------------------------- #
 

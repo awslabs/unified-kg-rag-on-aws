@@ -127,3 +127,22 @@ def test_no_deprecation_text_is_written_by_hand() -> None:
         if "is deprecated" in text
     ]
     assert not by_hand, by_hand
+
+
+def test_no_ini_warning_filter_names_a_package_class() -> None:
+    # pytest imports an ini filter's category while it parses its config,
+    # before pytest-cov starts measuring: naming a package class there runs
+    # the package's import-time lines unmeasured (634 lines read as missing).
+    # tests/conftest.py adds such filters in pytest_configure instead.
+    import tomllib
+
+    ini = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    filters = ini["tool"]["pytest"]["ini_options"].get("filterwarnings", [])
+    # An ini filter is action:message:category:module:lineno.
+    named = [
+        entry
+        for entry in filters
+        if entry.split(":")[2:3] != []
+        and entry.split(":")[2].strip().startswith(unified_kg_rag.__name__)
+    ]
+    assert named == [], f"move these filters to tests/conftest.py: {named}"

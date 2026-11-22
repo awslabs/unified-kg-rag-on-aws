@@ -423,7 +423,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   also run on a custom backend that `UKR_TEST_BACKEND` names, without editing the test fixtures ([extend
   guide](docs/guides/extend.md#custom-backends-run-without-aws)): a test skips only on a method it reads that the
   backend leaves at its port's "cannot" default, naming the method (a default that derives its answer, as
-  `holds_any_item`'s from `read_schema_annotations`, runs it), and the summary-tree suite runs on it too. A run on
+  `holds_any_item`'s from `read_schema_annotations`, runs it), and the summary-tree suite runs on it too. Every
+  optional method of the extraction-record, build-record and inspection stores is read by a test, and a backend on
+  the embedded engine that declares `INDEX_ADMIN` runs the index-settings tests as that engine does. A run on
   such a store whose `ExtractionRecordStore` is left at its default logs one WARNING at its first recovery note: the
   notes of a removal and a commit (`pending-strip`, `pending-commit`, `pending-writes`, `stripped-summaries`,
   `outdated-reports`, `removed-records`) live in that store, so a run stopped mid-removal or mid-commit cannot resume

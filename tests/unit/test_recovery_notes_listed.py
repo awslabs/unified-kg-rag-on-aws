@@ -8,6 +8,7 @@ bullet. The lists were kept by hand and fell behind twice (R2D-3, R3D-4)."""
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -21,10 +22,35 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+_NOTE_KEY = re.compile(r"[a-z]+(?:-[a-z]+)+")
+_PACKAGE = Path(stored_items.__file__).resolve().parents[2]
+
+
+def _note_constants() -> dict[str, str]:
+    """The module's note-key constants (``NAME = "a-key"``, annotated or
+    not), by name."""
+    tree = ast.parse(Path(stored_items.__file__).read_text(encoding="utf-8"))
+    constants = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            target, value = node.target, node.value
+        else:
+            continue
+        if (
+            isinstance(target, ast.Name)
+            and target.id.isupper()
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and _NOTE_KEY.fullmatch(value.value)
+        ):
+            constants[target.id] = value.value
+    return constants
+
+
 def _note_keys() -> set[str]:
-    """The module's note-key constants (``NAME = "a-key"``)."""
-    source = Path(stored_items.__file__).read_text(encoding="utf-8")
-    keys = set(re.findall(r'^[A-Z_]+ = "([a-z]+(?:-[a-z]+)+)"$', source, re.M))
+    keys = set(_note_constants().values())
     assert keys >= {stored_items.PENDING_STRIP, stored_items.REMOVED_RECORDS}
     return keys
 
@@ -57,3 +83,43 @@ def test_every_note_is_listed_where_its_index_is_described() -> None:
     for where, text in listings.items():
         missing = sorted(k for k in keys if k not in text)
         assert not missing, f"{where} does not name {missing}"
+
+
+def _derives_from(function: ast.AST, constants: set[str]) -> bool:
+    """Whether ``function`` builds a key from a note constant
+    (``f"{PENDING_WRITES}-..."``: the parts of a split note)."""
+    return any(
+        isinstance(node, ast.JoinedStr)
+        and node.values
+        and isinstance(node.values[0], ast.FormattedValue)
+        and isinstance(node.values[0].value, ast.Name)
+        and node.values[0].value.id in constants
+        for node in ast.walk(function)
+    )
+
+
+def test_every_note_written_is_a_listed_note_key() -> None:
+    # A note key defined anywhere but stored_items (or written as a literal)
+    # would be missing from the lists the test above checks.
+    constants = set(_note_constants())
+    stray = []
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for function in ast.walk(tree):
+            if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for call in ast.walk(function):
+                if not (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr in {"_write_note", "_delete_note"}
+                    and call.args
+                ):
+                    continue
+                key = call.args[0]
+                if isinstance(key, ast.Name) and (
+                    key.id in constants or _derives_from(function, constants)
+                ):
+                    continue
+                stray.append(f"{path.relative_to(_PACKAGE)}:{call.lineno}")
+    assert not stray, f"note keys not defined in stored_items: {stray}"

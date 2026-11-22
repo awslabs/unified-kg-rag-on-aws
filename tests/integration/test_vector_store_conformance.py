@@ -30,6 +30,7 @@ from tests.fixtures.store_backends import (
     backends,
     open_harness,
 )
+from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
     ROOT_CUT_DEPTH,
     cut_filter,
@@ -1836,8 +1837,9 @@ def test_index_settings_the_engine_refuses_fail_before_extraction(
     # index is not created again, and the settings are checked all the same.
     harness.vector_indexer.prepare_extraction_records(tenant)
 
-    if harness.kind == "sqlite":
-        # The embedded engine applies max_result_window only: nothing to refuse.
+    if isinstance(typo.vector_indexer.opensearch_client, SQLiteSearchEngine):
+        # The embedded engine applies max_result_window only: nothing to
+        # refuse, whichever backend (packaged or custom) runs on it.
         typo.vector_indexer.check_index_creation(tenant)
         return
     with pytest.raises(ConfigurationError, match=named):
@@ -1912,6 +1914,131 @@ def test_extraction_records_are_written_read_and_deleted_per_suffix(
     deleted = indexer.delete_extraction_records(["k1", "k9"], suffix=tenant)
     assert deleted.failed_items == 0
     assert indexer.read_extraction_records(["k1", "k2"], suffix=tenant) == {"k2": {}}
+
+
+def _records_in_two_suffixes(harness: StoreHarness) -> tuple[str, str]:
+    """Extraction records of two fingerprints in one suffix, and one record
+    under the same key in another: (tenant, other)."""
+    indexer = harness.vector_indexer
+    tenant, other = harness.suffix("tenant"), harness.suffix("other")
+    indexer.write_extraction_records(
+        {"fp1:h1": {"entities": [1]}, "fp1:h2": {}, "fp2:h1": {}}, suffix=tenant
+    )
+    indexer.write_extraction_records({"fp1:h1": {}}, suffix=other)
+    return tenant, other
+
+
+def test_stored_extraction_record_keys_name_the_held_records(
+    harness: StoreHarness,
+) -> None:
+    # Ingestion checks the records its units name are still held before it
+    # skips their extraction: a key read as held but gone loses the unit's
+    # extraction, one read as gone pays it again.
+    harness.needs("write_extraction_records", "stored_extraction_record_keys")
+    indexer = harness.vector_indexer
+    tenant, other = _records_in_two_suffixes(harness)
+
+    asked = ["fp1:h1", "fp2:h1", "fp9:h1"]
+    assert indexer.stored_extraction_record_keys(asked, suffix=tenant) == {
+        "fp1:h1",
+        "fp2:h1",
+    }
+    assert indexer.stored_extraction_record_keys(["fp1:h2"], suffix=other) == set()
+
+
+def test_extraction_record_keys_list_a_suffix_records_by_prefix(
+    harness: StoreHarness,
+) -> None:
+    # A full build that does not produce a kind keeps that kind's records
+    # under the listed prefixes (the retain below would drop them).
+    harness.needs("write_extraction_records", "extraction_record_keys")
+    indexer = harness.vector_indexer
+    tenant, other = _records_in_two_suffixes(harness)
+
+    assert indexer.extraction_record_keys(["fp1:"], suffix=tenant) == {
+        "fp1:h1",
+        "fp1:h2",
+    }
+    assert indexer.extraction_record_keys(["fp1:", "fp2:"], suffix=tenant) == {
+        "fp1:h1",
+        "fp1:h2",
+        "fp2:h1",
+    }
+    assert indexer.extraction_record_keys(["fp3:"], suffix=tenant) == set()
+    assert indexer.extraction_record_keys(["fp1:"], suffix=other) == {"fp1:h1"}
+
+
+def test_retain_extraction_records_keeps_only_the_named_keys_of_its_suffix(
+    harness: StoreHarness,
+) -> None:
+    # A full build keeps its own units' records and drops every other: one
+    # that dropped a named record pays its extraction again next run, one
+    # that reached another namespace emptied that namespace's cache.
+    harness.needs(
+        "write_extraction_records",
+        "read_extraction_records",
+        "retain_extraction_records",
+    )
+    indexer = harness.vector_indexer
+    tenant, other = _records_in_two_suffixes(harness)
+
+    indexer.retain_extraction_records(["fp1:h1", "fp2:h1", "fp9:h9"], suffix=tenant)
+
+    every = ["fp1:h1", "fp1:h2", "fp2:h1", "fp9:h9"]
+    assert indexer.read_extraction_records(every, suffix=tenant) == {
+        "fp1:h1": {"entities": [1]},
+        "fp2:h1": {},
+    }
+    assert indexer.read_extraction_records(every, suffix=other) == {"fp1:h1": {}}
+
+
+def test_drop_build_artifacts_stops_naming_them(harness: StoreHarness) -> None:
+    # A failed summary tree build stops naming the tree: a record that still
+    # named it would let raptor queries read a tree that is not there.
+    harness.needs("record_build", "read_build_record", "drop_build_artifacts")
+    indexer = harness.vector_indexer
+    _write(harness, "text_units", "index", _text_units())
+    built = (
+        IndexArtifact.TEXT_UNITS,
+        IndexArtifact.ENTITIES,
+        IndexArtifact.RELATIONSHIPS,
+        IndexArtifact.SUMMARY_TREE,
+    )
+    indexer.record_build(
+        IndexBuildRecord(
+            pipeline_id="run-full",
+            mode="full",
+            built_at=datetime.now(UTC),
+            documents=2,
+            extraction_fingerprint="fp",
+        ).with_artifacts(built),
+        "default",
+    )
+
+    assert indexer.drop_build_artifacts([IndexArtifact.SUMMARY_TREE], "default")
+    stored = indexer.read_build_record("default")
+    assert stored is not None
+    assert stored["artifacts"] == [a.value for a in built[:-1]]
+    # Nothing left to drop: no record changed.
+    assert not indexer.drop_build_artifacts([IndexArtifact.SUMMARY_TREE], "default")
+
+
+def test_ingested_suffixes_list_a_namespace_once_it_holds_text_units(
+    harness: StoreHarness,
+) -> None:
+    # The error for a namespace nothing was ingested into names the ones
+    # that exist: this list.
+    harness.needs("ingested_suffixes")
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("tenant")
+    before = indexer.ingested_suffixes()
+    assert before is not None and tenant not in before
+
+    _write(harness, "text_units", "upsert", _text_units(tenant))
+
+    after = indexer.ingested_suffixes()
+    assert after is not None and tenant in after
+    assert after == sorted(after)
 
 
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)

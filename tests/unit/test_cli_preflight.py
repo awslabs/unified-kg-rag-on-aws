@@ -26,6 +26,7 @@ from unified_kg_rag.application.cli import (
     run_prompt_tuning,
     run_rag_chain,
 )
+from unified_kg_rag.application.cli.conventions import EXIT_INTERRUPTED
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -248,6 +249,71 @@ def test_eval_exits_before_the_chain_when_the_strategy_lacks_endpoints(
     assert exc.value.code == 2  # a configuration error
     chain.assert_not_called()
     assert "aws.neptune.endpoint" in capsys.readouterr().err
+
+
+def _eval_main_with(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run: object
+) -> list[str]:
+    """``run-eval``'s ``main()`` over a runner whose ``run`` is ``run`` and a
+    chain that records its close."""
+    events: list[str] = []
+
+    class Chain:
+        def __init__(self, _config: Config) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            events.append("chain closed")
+
+    class Runner:
+        def __init__(self, *_args: object) -> None:
+            pass
+
+    Runner.run = run  # type: ignore[attr-defined]
+    monkeypatch.setattr(run_evaluation, "_load_evaluation", lambda: None)
+    monkeypatch.setattr(run_evaluation, "load_cli_config", lambda _a: Config())
+    monkeypatch.setattr(run_evaluation, "missing_endpoints_error", lambda *_a: None)
+    monkeypatch.setattr(run_evaluation, "GraphRAGChain", Chain, raising=False)
+    monkeypatch.setattr(run_evaluation, "EvaluationRunner", Runner)
+    data = tmp_path / "eval.json"
+    data.write_text("[]")
+    monkeypatch.setattr(sys, "argv", ["run-eval", "--data-path", str(data)])
+    return events
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_eval_exits_with_its_runs_status_and_closes_the_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: int
+) -> None:
+    # A failed gate or failure budget is the run's 1: main() exits with it
+    # (scripts gate on it), and closes the chain either way.
+    async def run(_self: object) -> int:
+        return code
+
+    events = _eval_main_with(monkeypatch, tmp_path, run)
+    if code:
+        with pytest.raises(SystemExit) as exc:
+            run_evaluation.main()
+        assert exc.value.code == code
+    else:
+        run_evaluation.main()
+    assert events == ["chain closed"]
+
+
+def test_an_interrupted_eval_exits_130_and_closes_the_chain(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def run(_self: object) -> int:
+        raise KeyboardInterrupt
+
+    events = _eval_main_with(monkeypatch, tmp_path, run)
+    with pytest.raises(SystemExit) as exc:
+        run_evaluation.main()
+    assert exc.value.code == EXIT_INTERRUPTED == 130
+    assert events == ["chain closed"]
+    assert "Evaluation interrupted by user." in capsys.readouterr().out
 
 
 # --- missing optional extras ---------------------------------------------
