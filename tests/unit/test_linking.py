@@ -402,6 +402,9 @@ def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> No
         (["東京都"], [[_hit("京都", 0.8)]], "首都の人口はどれくらいですか", False),
         # Whole words: "York" is no word of "Yorkshire Dales".
         (["Yorkshire Dales"], [[_hit("York", 0.8)]], "q", False),
+        # A legal form is no word of a name, inside it too (link_key drops
+        # only a trailing one): the hit holds the whole focus.
+        (["Acme Asia"], [[_hit("Acme Corp Asia", 0.8)]], "Who leads it?", True),
     ],
 )
 def test_a_focus_names_something_stored_or_written_in_the_query(

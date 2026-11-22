@@ -580,6 +580,27 @@ async def test_a_store_whose_reports_hold_the_cut_bounds_steps_past_depth_0(
     assert _coarser_mapped(strat) == {"J", "I", "Z"}
 
 
+async def test_the_old_report_gate_reads_the_querys_namespace() -> None:
+    # R4A-4: the gate asked the store about the default namespace, which
+    # holds no reports (False): a tenant holding a 0.3.0 report stepped
+    # below depth 0 and its delta's coarser cut covered the delta alone.
+    class _Tenant(_ReportStore):
+        async def aholds_root_depth_reports(self, suffix: str | None) -> bool | None:
+            if suffix != "tenant-a":
+                return False  # no reports index there
+            return await super().aholds_root_depth_reports(suffix)
+
+    store = _Tenant(_mixed_documents())
+    strat = _strategy(store, max_reports_per_level=4)
+    result = await strat.asearch(
+        SearchQuery(query="themes", filters={"attr_x": "y"}, suffix="tenant-a")
+    )
+
+    assert result.metadata["global_cut_depth"] == 2
+    assert result.metadata["global_level_capped"] is True
+    assert _coarser_probes(store) == []
+
+
 async def test_a_store_that_cannot_tell_its_reports_stops_at_depth_0() -> None:
     store = _ReportStore(_coarser_documents(), record=_incremental_record("0.4.0"))
     store.root_depth_unknown = True
