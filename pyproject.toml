@@ -370,10 +370,11 @@ markers = [
 # stay visible. gremlin_python: camelCase step aliases kept for Neptune's
 # TinkerPop line; numba: transitive via unstructured; ragas: the
 # metric imports and LangchainLLMWrapper are deprecated in the pinned 0.x line.
+# The error filter for the package's own deprecations is added by
+# tests/conftest.py (pytest_configure), not here: a category named in this
+# list is imported while pytest parses its config, before coverage starts,
+# so the package's import-time lines would read as uncovered.
 filterwarnings = [
-    # The package never reads its own deprecated names; a test that uses one
-    # on purpose says so (pytest.warns / pytest.deprecated_call).
-    "error::unified_kg_rag.shared.utils.deprecation.PackageDeprecationWarning",
     "ignore::DeprecationWarning:gremlin_python",
     "ignore::DeprecationWarning:numba",
     "ignore:Importing .* from 'ragas.metrics' is deprecated:DeprecationWarning",
@@ -389,6 +390,9 @@ omit = [
 ]
 
 [tool.coverage.report]
+# The fail-under floor compares the total rounded to this many decimals: at
+# 0, a 96 floor passes down to 95.5% while the summary prints FAIL.
+precision = 2
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

@@ -102,6 +102,23 @@ _LOCAL_STORES_SKIP = pytest.mark.skip(
 )
 
 
+# The package never reads its own deprecated names; a test that uses one on
+# purpose says so (pytest.warns / pytest.deprecated_call). Added here rather
+# than in pyproject's filterwarnings, whose categories pytest imports while it
+# parses its config: that ran the package's import-time lines before
+# coverage started, so they all read as uncovered.
+PACKAGE_DEPRECATIONS_ARE_ERRORS = (
+    "error::unified_kg_rag.shared.utils.deprecation.PackageDeprecationWarning"
+)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Turn the package's deprecation warnings into errors for every test
+    (and collection): the ini filters are read per test, and a line added
+    last outranks the earlier ini lines."""
+    config.addinivalue_line("filterwarnings", PACKAGE_DEPRECATIONS_ARE_ERRORS)
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Mark each test with its suite (``tests/<suite>/``) before ``-m``
