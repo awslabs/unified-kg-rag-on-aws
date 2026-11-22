@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
@@ -58,6 +58,7 @@ from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import Degradation
+from unified_kg_rag.domain.retrieval.kind_shares import cut_by_kind, score_group
 from unified_kg_rag.domain.retrieval.source_fields import EntityRef
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
@@ -829,18 +830,45 @@ class KnowledgeGraphTools:
             )
 
     def _capped(
-        self, records: list[SupportingContent]
+        self,
+        records: list[SupportingContent],
+        groups: Sequence[str] | None = None,
     ) -> tuple[list[SupportingContent], int]:
         """``records`` (best first) without those past ``max_response_chars``
-        of serialized records, and how many were left out."""
+        of serialized records, and how many were left out; at least one is
+        kept.
+
+        With ``groups`` (each record's score group, ``score_group``: a
+        search's), the records kept are the largest cut of them that fits
+        (``cut_by_kind``), as the chain cut the search: each group keeps its
+        share and its best-ranked records. The groups' scales differ, so a
+        trim of the tail dropped the lowest scale first, every unreranked
+        graph record below every reranked chunk. A larger cut keeps every
+        record a smaller one kept, so the largest that fits is found by
+        bisection."""
         budget = self.settings.max_response_chars
-        kept: list[SupportingContent] = []
-        used = 0
-        for record in records:
-            used += len(record.model_dump_json())
-            if used > budget and kept:
-                break
-            kept.append(record)
+        sizes = [len(record.model_dump_json()) for record in records]
+        if groups is None:
+            count, used = 0, 0
+            for size in sizes:
+                used += size
+                if used > budget and count:
+                    break
+                count += 1
+            return records[:count], len(records) - count
+        positions = range(len(records))
+
+        def cut(bound: int) -> list[int]:
+            return cut_by_kind(positions, bound, groups.__getitem__)
+
+        low, high = min(1, len(records)), len(records)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if sum(sizes[i] for i in cut(middle)) <= budget:
+                low = middle
+            else:
+                high = middle - 1
+        kept = [records[i] for i in cut(low)]
         return kept, len(records) - len(kept)
 
     async def _resolve_documents(
@@ -964,9 +992,10 @@ class KnowledgeGraphTools:
         suffix: str,
         records: list[SupportingContent],
         filters: dict[str, Any] | None = None,
+        groups: Sequence[str] | None = None,
     ) -> tuple[list[SupportingContent], int]:
         _cite_entities(records)
-        kept, omitted = self._capped(records)
+        kept, omitted = self._capped(records, groups)
         await self._resolve_documents(suffix, kept, filters)
         return kept, omitted
 
@@ -1047,6 +1076,7 @@ class KnowledgeGraphTools:
                 str(rag_input.namespace),
                 [self._from_result(i, r) for i, r in enumerate(results, 1)],
                 rag_input.filters,
+                [score_group(r) for r in results],
             )
             return SearchToolResult(
                 namespace=str(rag_input.namespace),

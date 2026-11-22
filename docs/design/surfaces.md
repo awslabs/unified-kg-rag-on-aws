@@ -133,7 +133,9 @@ checked again in the tool: `top_k` and `limit` by `mcp.max_top_k`,
 `max_hops` by `mcp.max_hops`, neighbours by `mcp.max_neighbors`, the query
 by `mcp.max_query_chars`. Each record's text is cut to `mcp.max_text_chars`
 and a response past `mcp.max_response_chars` drops its lowest-ranked
-records (`truncated`, `omitted`); the MCP message carries the result
+records (`truncated`, `omitted`; `kg_search`'s the largest of its cuts by
+score scale that fits, `kind_shares.cut_by_kind`, so the graph records its
+tail holds are not the first dropped); the MCP message carries the result
 twice (structured content and its JSON text), so it is up to about 2-4
 times that on the wire. Each call runs under one deadline
 (`search.query_timeout_seconds`) that covers the wait for one of the

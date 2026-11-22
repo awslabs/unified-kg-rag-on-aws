@@ -112,7 +112,9 @@ and ontology tooling exchange:
 | `citation`, `cited` | `kg_answer` only: the `[n]` marker the answer context gave the record and whether the answer cites it ([citations](./query.md#citations)); `null` in `kg_search`, and in `kg_answer` for a strategy that does not cite (`global` and `drift` by default) |
 
 A response past `mcp.max_response_chars` drops its lowest-ranked records
-and says so (`truncated`, `omitted`).
+and says so (`truncated`, `omitted`). `kg_search` drops them as its `top_k`
+cut does, each kind keeping its share, so a trimmed response keeps the graph
+records beside the reranked chunks that outscore them.
 
 ### Reading the chunks a record cites
 
