@@ -1947,10 +1947,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """Close retrievers from sync code (best-effort, never raises).
 
         Retrievers bound to a loop that is still running on another thread are
-        closed there with their awaited ``aclose``; otherwise (no loop, or the
-        loop is gone) their synchronous ``close`` releases what it can. Called
-        with a loop running in this thread, the synchronous closes run on a
-        worker thread: a client's blocking close may drive its own event loop
+        closed there with their awaited ``aclose``; otherwise (no loop, the
+        loop is gone, or it ends before it runs that close) their synchronous
+        ``close`` releases what it can. Called with a loop running in this
+        thread, the synchronous closes run on a worker thread: a client's
+        blocking close may drive its own event loop
         (gremlinpython's transport calls ``run_until_complete``), which raises
         inside a running loop and would leave the connection open.
 
@@ -1970,16 +1971,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             and loop is not current
             and loop.is_running()
             and not loop.is_closed()
+            and _aclose_on_their_loop(retrievers, loop, wait=wait)
         ):
-            future = asyncio.run_coroutine_threadsafe(
-                _aclose_retrievers(retrievers), loop
-            )
-            if wait:
-                try:
-                    future.result(timeout=_TEARDOWN_TIMEOUT_SECONDS)
-                except Exception as e:  # noqa: BLE001 - teardown must never raise
-                    logger.debug("Error closing retrievers on their loop: %s", e)
             return
+        # No loop, the loop is gone, or it ended before it ran their close.
         if current is None and wait:
             _close_retrievers(retrievers)
             return
@@ -2006,21 +2001,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         for loop, retrievers in self._take_cached_retrievers().items():
             if loop is None or loop is current:
                 await _aclose_retrievers(retrievers)
-            elif loop.is_running() and not loop.is_closed():
-                try:
-                    await asyncio.wait_for(
-                        asyncio.wrap_future(
-                            asyncio.run_coroutine_threadsafe(
-                                _aclose_retrievers(retrievers), loop
-                            )
-                        ),
-                        timeout=_TEARDOWN_TIMEOUT_SECONDS,
-                    )
-                except Exception as e:  # noqa: BLE001 - teardown must never raise
-                    logger.debug("Error closing retrievers on their loop: %s", e)
             else:
-                # Their loop is gone: the blocking closes run off this loop.
-                await asyncio.to_thread(_close_retrievers, retrievers)
+                # Closed on their loop if it still runs it, else (their loop
+                # is gone) by the blocking closes; off this loop either way.
+                await asyncio.to_thread(
+                    self._release_retrievers, retrievers, loop, wait=True
+                )
         try:
             background = getattr(self, "_background_closes", None)
             if background is not None:
@@ -5061,6 +5047,67 @@ async def _aclose_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
             await aclose()
         except Exception as e:  # noqa: BLE001 - teardown must never raise
             logger.debug("Error closing retriever %r: %s", retriever, e)
+
+
+# How often a wait for a close submitted to another thread's loop checks that
+# the loop still runs: asyncio has no callback for a loop that stops, so a
+# loop that ends before it runs the close is noticed within this interval.
+_LOOP_ALIVE_CHECK_SECONDS = 0.05
+
+
+def _aclose_on_their_loop(
+    retrievers: list[BaseGraphRAGRetriever],
+    loop: asyncio.AbstractEventLoop,
+    *,
+    wait: bool,
+) -> bool:
+    """Close ``retrievers`` with their awaited ``aclose`` on ``loop``, which
+    runs on another thread (best-effort, never raises).
+
+    False when ``loop`` ended (stopped, or its task was cancelled) before it
+    started the close: the caller closes them synchronously instead. A loop
+    that ends with the close still queued never runs it and never resolves
+    its future, so waiting for the future alone left the retrievers open and
+    blocked the waiter (the release worker of every dropped chain) for the
+    whole teardown timeout. Exactly one of the loop and the caller closes
+    them. True otherwise: closed, or (``wait=False``) submitted, or still
+    closing there after ``_TEARDOWN_TIMEOUT_SECONDS``.
+    """
+    claim = threading.Lock()
+
+    async def close_there() -> None:
+        if claim.acquire(blocking=False):
+            await _aclose_retrievers(retrievers)
+
+    coro = close_there()
+    try:
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+    except RuntimeError:  # closed since the caller checked
+        coro.close()
+        return False
+    if not wait:
+        return True
+    deadline = time.monotonic() + _TEARDOWN_TIMEOUT_SECONDS
+    while True:
+        try:
+            future.result(timeout=_LOOP_ALIVE_CHECK_SECONDS)
+            return True
+        except TimeoutError:
+            if loop.is_running():
+                if time.monotonic() < deadline:
+                    continue
+                logger.debug("Retrievers still closing on their loop")
+                return True
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Error closing retrievers on their loop: %s", e)
+        break
+    if not claim.acquire(blocking=False):
+        return True  # started there: it ends there, or with its loop
+    if loop.is_closed():
+        coro.close()  # dropped with the loop's queue: never awaited
+    else:
+        future.cancel()  # a stopped loop run again skips it
+    return False
 
 
 def _take_cached(

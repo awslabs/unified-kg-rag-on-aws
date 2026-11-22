@@ -169,6 +169,7 @@ ALLOWED: dict[str, str] = {
         "application/retrieval/citations.py:MAX_LINEAGE_PAGES",
         "application/retrieval/methodology_check.py:HELD_TTL_SECONDS",
         "application/retrieval/rag_chain.py:_JOINED_CHECK_CHARS",
+        "application/retrieval/rag_chain.py:_LOOP_ALIVE_CHECK_SECONDS",
         "application/retrieval/rag_chain.py:_TEARDOWN_TIMEOUT_SECONDS",
         "application/storage/cross_run_merge.py:_DERIVE_ROUNDS",
         "application/storage/pending_writes.py:_PART_BYTES",
