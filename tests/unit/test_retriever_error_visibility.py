@@ -1909,6 +1909,31 @@ async def test_a_query_over_the_clause_limit_fails_the_query(
         await retriever.aretrieve(_text_units_query(config))
 
 
+@pytest.mark.parametrize(
+    ("error", "info", "rejected"),
+    [
+        # A raw body left as bytes reads as the parsed one.
+        (json.dumps(_CLAUSE_LIMIT_BODY).encode(), None, True),
+        # Text that is no JSON is the type name the sync client extracted.
+        ("too_many_clauses", None, True),
+        # A body whose ``error`` is a bare type name.
+        (None, {"error": "too_many_nested_clauses"}, True),
+        # A proxy's HTML page or a non-dict body names no type: retryable.
+        ("<html>bad gateway</html>", None, False),
+        (None, {"error": ["too_many_clauses"]}, False),
+        (None, ["too_many_clauses"], False),
+    ],
+)
+def test_a_500_is_fatal_only_when_its_body_names_the_clause_limit(
+    error: object, info: object, rejected: bool
+) -> None:
+    # The error types a 500's body names decide whether it fails the query
+    # (the same query fails every time) or stays a transient server error.
+    handled = _through_handler(TransportError(500, error, info))
+    assert isinstance(handled, StoreRequestRejectedError) is rejected
+    assert isinstance(handled, AWSServiceError)
+
+
 async def test_a_server_error_of_one_search_stays_transient(config: Config) -> None:
     body = {"error": {"type": "some_exception", "reason": "busy"}, "status": 500}
     error = _through_handler(_server_error(AsyncHttpConnection, 500, body))
