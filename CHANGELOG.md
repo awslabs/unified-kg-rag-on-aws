@@ -884,6 +884,12 @@ Bugs present in 0.3.0.
   entity: 金 grounded 金正恩, 이 grounded 이순신, な the placeholder なし (10 of 16 shapes in a probe, none kept before
   #870), as a run of one letter starts every name that begins with it. Such a run now holds a focus only as a whole
   word of it; a run of two or more letters keeps the start rule (東京 for 東京都).
+- On a custom vector store that leaves `VectorIndexer.read_text_unit_attributes` at its port's default (`{}`), a
+  removal and the report refresh wrote every kept or refreshed community report with no `document_ids` and no
+  `filters`, so each attribute filter excluded it and its lineage was lost from the store, and the extraction-record
+  collection deleted the records live text units still name. The default now reads as "cannot tell" (one WARNING names
+  the store): the reports keep their stored documents and filters, the records are kept, and a stripped entity keeps
+  its stored description, as before. `docs/guides/extend.md` names the method.
 
 ## [0.3.0] - 2026-11-14
 

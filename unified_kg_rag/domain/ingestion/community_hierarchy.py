@@ -169,6 +169,21 @@ def attach_report_lineage(
         report.attributes = attributes
 
 
+def keep_stored_lineage(report: CommunityReport, stored: CommunityReport) -> None:
+    """Give ``report`` the documents and document ``filters`` of ``stored``,
+    its earlier version (in place): what a report written again keeps when
+    the store cannot read its text units' attributes, of which
+    :func:`attach_report_lineage` would record none."""
+    filters_key = Constants.FILTERS.value
+    report.document_ids = list(stored.document_ids or [])
+    attributes = {
+        k: v for k, v in (report.attributes or {}).items() if k != filters_key
+    }
+    if filters := (stored.attributes or {}).get(filters_key):
+        attributes[filters_key] = filters
+    report.attributes = attributes
+
+
 def max_cut_depth(report: CommunityReport) -> int | None:
     """The deepest cut the report belongs to (see the module docstring)."""
     if report.depth is None:

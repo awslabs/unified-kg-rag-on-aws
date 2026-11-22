@@ -33,7 +33,12 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats, VectorIndexer
+from unified_kg_rag.ports.indexer import (
+    GraphIndexer,
+    IndexingStats,
+    VectorIndexer,
+    stored_unit_attributes,
+)
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -311,13 +316,15 @@ def unit_records(
     text_units: Sequence[TextUnit] = (),
 ) -> tuple[dict[str, TextUnitExtraction], dict[str, list[Claim]]]:
     """The graph and claim records of ``unit_ids`` (those found): of the
-    ``text_units`` given, the others' record keys read from ``vector``."""
+    ``text_units`` given, the others' record keys read from ``vector``
+    (none when it cannot read them, ``stored_unit_attributes``: the items
+    citing them are then kept as stored, as for a missing record)."""
     wanted = set(unit_ids)
     units = {u.id: u for u in text_units if u.id in wanted}
     missing = [i for i in unit_ids if i not in units]
     if missing:
-        for unit_id, attributes in vector.read_text_unit_attributes(
-            missing, suffix=suffix
+        for unit_id, attributes in (
+            stored_unit_attributes(vector, missing, suffix) or {}
         ).items():
             units[unit_id] = TextUnit.model_validate(
                 {"id": unit_id, "text": "", "attributes": attributes}

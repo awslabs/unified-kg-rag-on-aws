@@ -27,7 +27,7 @@ from unified_kg_rag.domain.retrieval.store_names import (
     store_name,
 )
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.logging import error_log_text
+from unified_kg_rag.shared.logging import error_log_text, warn_once
 
 logger = get_logger(__name__)
 
@@ -1242,6 +1242,32 @@ def keeps_build_records(store: object) -> bool:
     which writes nothing (so a ``None`` from it means a write that
     failed)."""
     return _implements(store, BuildRecordStore, "record_build")
+
+
+def stored_unit_attributes(
+    store: VectorIndexer, ids: list[str], suffix: str | None
+) -> dict[str, dict[str, Any]] | None:
+    """``store.read_text_unit_attributes(ids, suffix)``, or ``None`` when the
+    store leaves that method at the port's default: its ``{}`` reads as
+    "none of these text units is stored", which a store that cannot read
+    them does not mean. A caller then keeps what it would derive from them
+    (a report's documents and filters, the extraction records units still
+    name, a description's lines) as stored. Warned of once per store
+    class."""
+    if not _implements(store, VectorIndexer, "read_text_unit_attributes"):
+        name = type(store).__name__
+        warn_once(
+            logger,
+            ("read_text_unit_attributes", name),
+            "%s leaves VectorIndexer.read_text_unit_attributes at its default "
+            "(cannot read the text units' attributes): a removal or report "
+            "refresh keeps the reports' documents and filters, the extraction "
+            "records and the entity descriptions as stored, the removed "
+            "documents' included",
+            name,
+        )
+        return None
+    return store.read_text_unit_attributes(ids, suffix=suffix)
 
 
 def keeps_extraction_records(store: object) -> bool:

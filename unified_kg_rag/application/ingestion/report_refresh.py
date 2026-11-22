@@ -50,7 +50,10 @@ from unified_kg_rag.domain.ingestion.community_clustering import (
     community_label,
     community_name,
 )
-from unified_kg_rag.domain.ingestion.community_hierarchy import community_report_id
+from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    community_report_id,
+    keep_stored_lineage,
+)
 from unified_kg_rag.domain.ingestion.graph_builder import (
     GraphBuilder,
     edge_relationships,
@@ -65,7 +68,11 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.domain.retrieval import source_fields
-from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
+from unified_kg_rag.ports.indexer import (
+    BaseIndexer,
+    IndexingStats,
+    stored_unit_attributes,
+)
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.logging import log_error
 
@@ -381,7 +388,7 @@ class ReportRefresh:
             return set()
         vector = self._manager.vector_indexer
         units = sorted({u for c in communities for u in c.text_unit_ids or ()})
-        attributes = vector.read_text_unit_attributes(units, suffix=suffix)
+        attributes = stored_unit_attributes(vector, units, suffix)
         text_units = [
             TextUnit(
                 id=unit_id,
@@ -389,7 +396,7 @@ class ReportRefresh:
                 document_ids=source_fields.document_ids({"attributes": stored}),
                 attributes=stored,
             )
-            for unit_id, stored in sorted(attributes.items())
+            for unit_id, stored in sorted((attributes or {}).items())
         ]
         detector = self._report_detector().report_on(graph)
         for community in communities:
@@ -462,6 +469,11 @@ class ReportRefresh:
             report.min_cut_depth = kept.min_cut_depth
             report.parent_community_id = kept.parent_community_id
             report.child_community_ids = list(kept.child_community_ids)
+            if attributes is None:
+                # The store cannot read its text units' attributes: the
+                # report keeps the documents and filters stored with it,
+                # not none (which every attribute filter would exclude).
+                keep_stored_lineage(report, kept)
         self._write_vertices(suffix, communities, results)
         if not reports:
             return set()
