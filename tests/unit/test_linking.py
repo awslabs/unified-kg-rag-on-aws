@@ -405,6 +405,28 @@ def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> No
         # A legal form is no word of a name, inside it too (link_key drops
         # only a trailing one): the hit holds the whole focus.
         (["Acme Asia"], [[_hit("Acme Corp Asia", 0.8)]], "Who leads it?", True),
+        # R4A-1: a one-letter name starts any name that begins with it (a
+        # surname, a dynasty, a one-letter country abbreviation, the first
+        # letter of a placeholder), so it must be a whole word of the focus
+        # (probes/probe_focus5.py).
+        (["金正恩"], [[_hit("金", 1.0), _hit("Vendor", 0.9)]], "q", False),
+        (["秦始皇"], [[_hit("秦", 1.0)]], "q", False),
+        (["王小明"], [[_hit("王", 1.0)]], "q", False),
+        (["中国银行"], [[_hit("中", 1.0)]], "q", False),
+        (["東京"], [[_hit("東", 1.0)]], "q", False),
+        (["이순신"], [[_hit("이", 1.0)]], "q", False),
+        (["한국전력"], [[_hit("한", 1.0)]], "q", False),
+        (["무엇"], [[_hit("무", 1.0)]], "q", False),
+        (["なし"], [[_hit("な", 1.0)]], "q", False),
+        (["없음"], [[_hit("없", 1.0)]], "q", False),
+        # A one-letter name that is a whole word of the focus still holds
+        # (a run is read whole, so 金 正恩 is the one word 金正恩).
+        (["王 / Electronics"], [[_hit("王", 1.0)]], "q", True),
+        (["金 正恩"], [[_hit("金", 1.0)]], "q", False),
+        # Two or more letters keep the start rule (the kept direction R4A-2
+        # names on the design page).
+        (["北京大学"], [[_hit("北京", 1.0)]], "q", True),
+        (["Bank of America"], [[_hit("America", 1.0)]], "q", True),
     ],
 )
 def test_a_focus_names_something_stored_or_written_in_the_query(

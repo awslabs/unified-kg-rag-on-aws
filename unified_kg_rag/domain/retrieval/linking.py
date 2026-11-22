@@ -177,7 +177,10 @@ def _holds_name(name: str, part: str) -> bool:
     Kana, Thai, ...), joined, starts at a word of ``name`` (东芝 in 东芝电子,
     "아크메 로보틱스" in 아크메로보틱스), not inside one: 京都 is two
     letters of 東京都, not its start, as the bigrams :func:`covers` compares
-    would read it."""
+    would read it. A run of one letter must be a whole word of ``name``: as
+    a start it would hold any name that begins with it (金 of 金正恩, 이 of
+    이순신, な of the placeholder なし), and it is a whole term of its own
+    to :func:`covers` as well."""
     held, wanted = _name_words(name), _name_words(part)
     if not wanted:
         return False
@@ -195,7 +198,10 @@ def _holds_name(name: str, part: str) -> bool:
             return False
     if run:
         runs.append("".join(run))
-    return all(any(tail.startswith(r) for tail in tails) for r in runs)
+    return all(
+        r in held if len(r) == 1 else any(tail.startswith(r) for tail in tails)
+        for r in runs
+    )
 
 
 LinkPolicy = Literal["cover", "rank"]

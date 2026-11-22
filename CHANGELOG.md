@@ -874,6 +874,10 @@ Bugs present in 0.3.0.
   reader, and the console sets its question's reader stop before it cancels it. A CLI's `Ctrl-C` or `SIGTERM` (a
   process stopping) and a timeout, an MCP client that leaves past the call's deadline included, keep `ERROR`
   ([telemetry reference](docs/reference/telemetry.md#spans-of-a-stopped-query)).
+- Local search kept a focus whose top hit is a one-letter name in a script written without spaces and seeded that
+  entity: 金 grounded 金正恩, 이 grounded 이순신, な the placeholder なし (10 of 16 shapes in a probe, none kept before
+  #870), as a run of one letter starts every name that begins with it. Such a run now holds a focus only as a whole
+  word of it; a run of two or more letters keeps the start rule (東京 for 東京都).
 
 ## [0.3.0] - 2026-11-14
 

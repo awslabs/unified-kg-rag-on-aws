@@ -140,7 +140,9 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   is an unmeasured experiment. A focus none of whose names is a stored
   entity among its own hits, a word of the query, or holds its own top
   hit's whole name (`focus_names_anything`: whole words, and a run in a
-  script written without spaces from the start of one of its words) is read
+  script written without spaces from the start of one of its words, a run
+  of one letter only as a whole word: 金 does not hold 金正恩, nor な the
+  placeholder なし) is read
   as no focus: every section then searches by the query, as without one.
   That drops the placeholder a model writes for a query that names no
   entity ("none" or "Empty" in any language) and keeps "New York City" for
@@ -148,7 +150,14 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   contains does not count, as a placeholder is a word of many names ("None
   of the Above", "Second to None", 梨なし園) and a part of a name one of
   other entities' ("York", 京都 in 東京都): "Beatles" for the stored "The
-  Beatles" is searched as the query. With
+  Beatles" is searched as the query. The kept direction has the same
+  blind spot the other one had: a focus that holds a shorter stored name
+  is grounded on it whether or not that name is the entity meant, so
+  "Bank of America" seeds America, "University of Tokyo" Tokyo and
+  北京大学 北京 when the organization itself is not stored, the shape of
+  the intended "New York City" for "New York". A structural rule cannot
+  tell the two apart without a word list, and the rate on real questions
+  is not measured yet. With
   `search.local_search.include_bridge_relationships` (default on), the
   relationships incident to the expanded entities are fetched too (one
   request naming both endpoint fields, `SearchQuery.any_of`, of at most
