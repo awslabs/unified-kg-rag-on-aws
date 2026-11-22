@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """The gitleaks allowlist and the image that applies it, in CI and locally.
 
-The allowlist in ``.gitleaks.toml`` matches a line's text under one rule:
-a line-numbered fingerprint (``.gitleaksignore``) went stale as soon as a
-line was added above it, and a global allowlist would hide a real key of
-any rule. The ``gitleaks`` job of ``security.yml`` and the command in
+The allowlist in ``.gitleaks.toml`` matches the whole secret a rule
+reports, under that rule: a line-numbered fingerprint (``.gitleaksignore``)
+went stale as soon as a line was added above it, a global allowlist would
+hide a real key of any rule, and a pattern on the line's text hid any key
+on a line that also held the text (R3D-1). The ``gitleaks`` job of ``security.yml`` and the command in
 CONTRIBUTING.md run the same pinned image, so a local clean scan means a
 clean job.
 """
@@ -32,14 +33,18 @@ def test_the_allowlist_extends_the_default_rules_one_rule_at_a_time() -> None:
     assert config["allowlists"]
     for allowlist in config["allowlists"]:
         assert allowlist["targetRules"], "scope each allowlist to its rules"
-        assert allowlist["regexTarget"] == "line"
+        assert allowlist["regexTarget"] == "secret", "the secret, not its line"
         assert allowlist["regexes"]
+        for regex in allowlist["regexes"]:
+            assert regex.startswith("^") and regex.endswith(
+                "$"
+            ), f"{regex}: anchored, or a key that contains the text passes"
         assert set(allowlist) <= {
             "description",
             "targetRules",
             "regexTarget",
             "regexes",
-        }, "paths, commits or stop words would allow more than a line"
+        }, "paths, commits or stop words would allow more than one secret"
     assert not (REPO_ROOT / ".gitleaksignore").exists()
 
 
