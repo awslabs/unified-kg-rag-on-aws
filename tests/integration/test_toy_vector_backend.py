@@ -23,7 +23,12 @@ from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore
-from tests.fixtures.toy_vector_backend import TOY_BACKEND, ToyVectorStore
+from tests.fixtures.toy_vector_backend import (
+    BROKEN_TOY_BACKEND,
+    TOY_BACKEND,
+    BrokenToyVectorStore,
+    ToyVectorStore,
+)
 from tests.integration import test_ingestion_stages as stages
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages
@@ -193,6 +198,14 @@ class _FindingToy(ToyVectorStore):
         return {}
 
 
+class _AnnotatingToy(ToyVectorStore):
+    """The toy listing its schema annotations: ``holds_any_item``'s default
+    derives its answer from them."""
+
+    def read_schema_annotations(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+
 def test_a_test_needing_a_default_method_skips_naming_its_port(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -209,9 +222,19 @@ def test_a_test_needing_a_default_method_skips_naming_its_port(
         pytest.skip.Exception, match="toy leaves SummaryTreeStore at its defaults"
     ):
         harness.needs_port(SummaryTreeStore)
+    with pytest.raises(pytest.skip.Exception, match="holds_any_item at its default"):
+        harness.needs("holds_any_item")
     # A method the store overrides runs its test.
     harness.vector_indexer = _FindingToy(harness.config)
     harness.needs("find_documents")
+    # So does a default that derives its answer from one it overrides
+    # (R3D-2), and a port with any method of its own runs its suite.
+    harness.vector_indexer = _AnnotatingToy(harness.config)
+    assert harness.implements("holds_any_item")
+    assert not harness.implements("holds_any_text_unit")
+    harness.needs("holds_any_item")
+    harness.vector_indexer = BrokenToyVectorStore(harness.config)
+    harness.needs_port(SummaryTreeStore)
     # A packaged backend states every contract: nothing is skipped.
     fake = next(store_backends.open_harness("fake", tmp_path))
     fake.vector_indexer = ToyVectorStore(fake.config)
@@ -256,6 +279,63 @@ def test_the_suites_pass_or_skip_on_the_smallest_backend(tmp_path: Path) -> None
     assert " failed" not in output and " error" not in output, output
     assert "toy leaves VectorIndexer.find_documents at its default" in output
     assert "toy leaves SummaryTreeStore at its defaults" in output
+
+
+def test_the_suites_fail_a_backend_that_overrides_methods_wrongly(
+    tmp_path: Path,
+) -> None:
+    # Regression (R3D-2): one method of a port left at its default (the
+    # optional read_text_unit_fields, a holds probe's derived default)
+    # skipped every test of the port, so a summary tree that keeps nothing
+    # and a text-unit probe that always answers no passed: 0 failed. Each
+    # test skips only on the methods it reads.
+    ran = subprocess.run(  # nosec B603 - fixed argv
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-rfs",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
+            "-p",
+            "no:xdist",
+            "--basetemp",
+            str(tmp_path / "run"),
+            "tests/integration/test_vector_store_conformance.py",
+            "tests/integration/test_summary_tree_conformance.py",
+            "-k",
+            BROKEN_TOY_BACKEND.name,
+        ],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "UKR_TEST_BACKEND": "tests.fixtures.toy_vector_backend:BROKEN_TOY_BACKEND",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = ran.stdout[-12000:] + ran.stderr[-2000:]
+    assert ran.returncode == 1, output
+    failed = {
+        line.split("::")[-1].split("[")[0].split(" ")[0]
+        for line in output.splitlines()
+        if line.startswith("FAILED ")
+    }
+    # The tree it reports written and never keeps, the probe that says no.
+    assert {
+        "test_a_tree_is_written_whole_with_its_record_and_swapped_in",
+        "test_holds_any_text_unit_tells_a_suffix_with_text_units",
+    } <= failed, output
+    # Only the default's own test skips for it.
+    assert (
+        "brokentoy leaves SummaryTreeStore.read_text_unit_fields at its default"
+        in output
+    )
+    assert "leaves SummaryTreeStore at its defaults" not in output
 
 
 def test_a_store_keeping_no_notes_is_named_once_per_run(

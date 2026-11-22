@@ -1985,7 +1985,9 @@ def test_deleted_communities_leave_the_text_units_naming_them(
 def test_holds_any_item_tells_a_suffix_with_items(
     harness: StoreHarness, kind: str
 ) -> None:
-    harness.needs("holds_any_item", "holds_any_text_unit")
+    # Each probe is read on its own (pipeline_stages._stores_hold_items):
+    # the other is asserted only where the store answers it.
+    harness.needs("holds_any_item")
     indexer = harness.vector_indexer
     tenant, other = harness.suffix("held"), harness.suffix("none")
     assert indexer.holds_any_item(suffix=tenant) is False
@@ -1993,13 +1995,14 @@ def test_holds_any_item_tells_a_suffix_with_items(
     _write(harness, kind, "upsert", items)
     assert indexer.holds_any_item(suffix=tenant) is True
     assert indexer.holds_any_item(suffix=other) is False
-    assert indexer.holds_any_text_unit(suffix=tenant) is False
+    if harness.implements("holds_any_text_unit"):
+        assert indexer.holds_any_text_unit(suffix=tenant) is False
 
 
 def test_holds_any_text_unit_tells_a_suffix_with_text_units(
     harness: StoreHarness,
 ) -> None:
-    harness.needs("holds_any_text_unit", "holds_any_item")
+    harness.needs("holds_any_text_unit")
     # Text units alone (a corpus that stated no item): holds_any_item does
     # not see them, holds_any_text_unit does.
     indexer = harness.vector_indexer
@@ -2007,13 +2010,16 @@ def test_holds_any_text_unit_tells_a_suffix_with_text_units(
     assert indexer.holds_any_text_unit(suffix=tenant) is False
     _write(harness, "text_units", "upsert", _text_units(tenant))
     assert indexer.holds_any_text_unit(suffix=tenant) is True
-    assert indexer.holds_any_item(suffix=tenant) is False
+    if harness.implements("holds_any_item"):
+        assert indexer.holds_any_item(suffix=tenant) is False
     assert indexer.holds_any_text_unit(suffix=other) is False
 
 
 @pytest.mark.parametrize("kind", ["text_units", "entities"])
 def test_an_emptied_index_holds_nothing(harness: StoreHarness, kind: str) -> None:
-    harness.needs("holds_any_text_unit", "holds_any_item")
+    # The probe of the emptied kind; the other where the store answers it.
+    probe = "holds_any_text_unit" if kind == "text_units" else "holds_any_item"
+    harness.needs(probe)
     # A live index that a full build emptied exists but holds no document:
     # neither probe reads it as holding one.
     indexer = harness.vector_indexer
@@ -2022,8 +2028,9 @@ def test_an_emptied_index_holds_nothing(harness: StoreHarness, kind: str) -> Non
     _write(harness, kind, "upsert", items)
     _write(harness, kind, "index", [], suffixes=[tenant])
     assert harness.stored_ids(kind, tenant) == set()
-    assert indexer.holds_any_text_unit(suffix=tenant) is False
-    assert indexer.holds_any_item(suffix=tenant) is False
+    for method in ("holds_any_text_unit", "holds_any_item"):
+        if harness.implements(method):
+            assert getattr(indexer, method)(suffix=tenant) is False, method
 
 
 def test_a_build_record_reads_back_what_the_namespace_holds(

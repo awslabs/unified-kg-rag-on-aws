@@ -411,8 +411,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   custom backend may) skips the visualization export with one WARNING saying why, as the `summary_tree` stage skips its
   tree; it logged `Visualization data export failed: [configuration] ...` on every build. The store conformance suites
   also run on a custom backend that `UKR_TEST_BACKEND` names, without editing the test fixtures ([extend
-  guide](docs/guides/extend.md#custom-backends-run-without-aws)): a test of a method the backend leaves at its port's
-  default skips, naming the method, and the summary-tree suite runs on it too. A run on such a store whose
+  guide](docs/guides/extend.md#custom-backends-run-without-aws)): a test skips only on a method it reads that the
+  backend leaves at its port's "cannot" default, naming the method (a default that derives its answer, as
+  `holds_any_item`'s from `read_schema_annotations`, runs it), and the summary-tree suite runs on it too. A run on such a store whose
   `ExtractionRecordStore` is left at its default logs one WARNING at its first recovery note: the notes of a removal
   and a commit (`pending-strip`, `pending-commit`, `pending-writes`, `stripped-summaries`, `outdated-reports`) live in
   that store, so a run stopped mid-removal or mid-commit cannot resume them.
