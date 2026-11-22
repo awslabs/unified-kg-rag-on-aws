@@ -321,7 +321,7 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
 
   it("lists the deprecated and removed keys a config sets, in the page's language", () => {
     const preview = {
-      deprecated_keys: [{ key: "retry.max_attempts", replacements: ["retry.model.max_attempts", "retry.ingestion_item.max_attempts"], message: "Config key retry.max_attempts is deprecated" }],
+      deprecated_keys: [{ key: "retry.max_attempts", replacements: ["retry.model.max_attempts", "retry.ingestion_item.max_attempts"], message: "Config key retry.max_attempts is deprecated", removed_in: "0.5.0" }],
       removed_keys: [
         { key: "fixing", reason: "output fixing is always on (the default before); models.roles.fixing picks its model", reason_id: "fixing", message: "Config key fixing is removed and ignored" },
         { key: "search.future", reason: "a reason this page does not know", reason_id: "search.future", message: "Config key search.future is removed and ignored" },
@@ -334,6 +334,8 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
     );
     expect(screen.getByText("지원 중단되었거나 제거된 키")).toBeInTheDocument();
     expect(container.textContent).toContain("retry.model.max_attempts, retry.ingestion_item.max_attempts");
+    // The release that removes it, as the server names it (R3D-5).
+    expect(container.textContent).toContain("릴리스 0.5.0에서");
     // English agrees with the number of replacements (rv35).
     const one = { ...preview, deprecated_keys: preview.deprecated_keys.map((d) => ({ ...d, replacements: ["retry.model.max_attempts"] })) };
     for (const [shown, wording] of [[preview, "Set those instead"], [one, "Set that instead"]] as const) {
@@ -343,6 +345,7 @@ describe("a query's limits, a run's budget and deprecated keys", () => {
         </I18nProvider>,
       );
       expect(english.container.textContent).toContain(wording);
+      expect(english.container.textContent).toContain("release 0.5.0 removes the old key");
       english.unmount();
     }
     // The reason is in the page's language (rv48); one the page does not
@@ -368,7 +371,7 @@ describe("the Settings page on load", () => {
       models: { type: "object", properties: { prices: { type: "object", additionalProperties: { type: "object" }, description: "Prices" } } },
     },
   };
-  const deprecated = { key: "retry.model_server_max_attempts", replacements: ["retry.model_server.max_attempts"], conflicts: [] as string[], message: "Config key retry.model_server_max_attempts is deprecated" };
+  const deprecated = { key: "retry.model_server_max_attempts", replacements: ["retry.model_server.max_attempts"], conflicts: [] as string[], message: "Config key retry.model_server_max_attempts is deprecated", removed_in: "0.5.0" };
   const view = (keys: (typeof deprecated)[], effective: unknown) => ({
     path: "c.yaml",
     writable: true,
@@ -461,7 +464,7 @@ describe("the Settings page on load", () => {
       ...view([], { models: { prices: merged } }),
       text: "",
       data: { evaluation: { prices: { "extra-model": price } }, models: { prices: { m1: price } } },
-      deprecated_keys: [{ key: "evaluation.prices", replacements: ["models.prices"], conflicts: [], values: { "models.prices": merged }, message: "Config key evaluation.prices is deprecated" }],
+      deprecated_keys: [{ key: "evaluation.prices", replacements: ["models.prices"], conflicts: [], values: { "models.prices": merged }, message: "Config key evaluation.prices is deprecated", removed_in: "0.5.0" }],
     };
     const sent = serveReview(config, validPreview("models:\n  prices: {}\n"));
     render(

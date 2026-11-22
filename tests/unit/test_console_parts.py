@@ -40,6 +40,7 @@ from unified_kg_rag.domain.models import (
     Source,
 )
 from unified_kg_rag.domain.models.config import ObservabilityBackend
+from unified_kg_rag.shared.utils.deprecation import REMOVED_IN
 
 pytestmark = pytest.mark.unit
 
@@ -318,6 +319,7 @@ def test_the_settings_view_names_deprecated_keys_on_load(tmp_path: Path) -> None
             "message": settings_api.deprecated_key_warning(
                 "retry.model_server_max_attempts"
             ),
+            "removed_in": REMOVED_IN,
         }
     ]
     assert [r["key"] for r in view["removed_keys"]] == ["fixing"]

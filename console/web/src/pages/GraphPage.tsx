@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Bars } from "../components/charts";
 import { colorSlot } from "../lib/graphColors";
 
@@ -175,6 +175,18 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
   const [active, setActive] = useState(0);
   // The entity whose panel lists all of its relationships, not the first.
   const [allEdgesOf, setAllEdgesOf] = useState<string | null>(null);
+  // Its list, and whether "Show all relationships" was just pressed: the
+  // button goes once the list is whole, so focus moves to the first
+  // relationship it added rather than to the page (WCAG 2.4.3).
+  const neighbourList = useRef<HTMLUListElement>(null);
+  const focusAdded = useRef(false);
+  useEffect(() => {
+    if (!focusAdded.current || allEdgesOf === null) return;
+    focusAdded.current = false;
+    const list = neighbourList.current;
+    const added = list?.children[NEIGHBOURS_SHOWN]?.querySelector("button");
+    (added ?? list)?.focus();
+  }, [allEdgesOf]);
   const edgeTarget = params.get("edge");
 
   const byId = useMemo(() => new Map(data.nodes.map((n) => [n.id, n])), [data.nodes]);
@@ -439,7 +451,7 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                     <h3 className="field-label" style={{ margin: "0 0 6px" }}>
                       {t("graph.neighbours", { count: nodeEdges.length })}
                     </h3>
-                    <ul className="list-plain">
+                    <ul className="list-plain" ref={neighbourList} tabIndex={-1}>
                       {(allEdgesOf === node.id ? nodeEdges : nodeEdges.slice(0, NEIGHBOURS_SHOWN)).map((edge) => {
                         // Told apart by direction and description: two
                         // relationships may join the same pair.
@@ -465,7 +477,13 @@ function GraphExplorer({ graphRef, data, params }: { graphRef: string; data: Gra
                       })}
                     </ul>
                     {nodeEdges.length > NEIGHBOURS_SHOWN && allEdgesOf !== node.id ? (
-                      <button className="link-button" onClick={() => setAllEdgesOf(node.id)}>
+                      <button
+                        className="link-button"
+                        onClick={() => {
+                          focusAdded.current = true;
+                          setAllEdgesOf(node.id);
+                        }}
+                      >
                         {t("graph.showAllNeighbours")}
                       </button>
                     ) : null}

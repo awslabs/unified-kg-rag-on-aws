@@ -812,6 +812,20 @@ Bugs present in 0.3.0.
   once it ended (`ModelCallStillRunningError` when it still runs a call timeout later).
 - An index creation the search engine refused (a language analyzer whose plugin is not installed, say) said `..`
   between the engine's message and the hint when the message ended a sentence.
+- An MCP `kg_answer` or `kg_search` whose client left once the chain took it (a cancelled call, not a stopped
+  reader) named its strategy in its audit record and metrics but not on its `kg_rag.query` span: the span now names
+  it by the same rule (the route, else an explicit request; none for a query cancelled past its deadline, a
+  timeout). Telemetry reference: an `auto` query stopped before its route has audit `strategy: null` and a metric
+  `Strategy` of `auto` (the requested one, as for a failed query), not `null`.
+- The console's Settings page said a deprecated key is removed by "a later release"; every other surface names it
+  (`removed in 0.5.0`). The settings view sends each deprecated key's `removed_in`, and the page names that release
+  in all its languages.
+- The console Graph page's "Show all relationships" left keyboard focus on the page once the list was whole (the
+  button goes): focus moves to the first relationship it added.
+- With the console's highlighter as its one accent, a warning and a chosen or seed marker shared a yellow (their
+  washes a CIELAB difference of 2.8 apart under simulated tritanopia in the light theme, 5.9 in the dark one): a
+  warning is now orange-brown with a warning sign, its wash at least 10 from the trace and error washes under normal
+  vision and the three simulations in both themes, and a seed, running or pending badge is outlined in ink.
 
 ## [0.3.0] - 2026-11-14
 

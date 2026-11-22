@@ -47,6 +47,7 @@ from unified_kg_rag.shared.exceptions import (
     INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
     ErrorClass,
+    InvalidArgumentError,
     InvalidFilterError,
     MethodologyNotIndexedError,
     QueryTimeoutError,
@@ -891,6 +892,57 @@ async def test_a_call_that_ends_waiting_for_a_slot_records_what_it_asked_once(
     assert fields["search_strategy"] == SearchStrategy.LOCAL
     assert fields["filters"] == {"n_tokens": {"gte": 1}}
     assert fields["namespace"] == "default"
+
+
+@pytest.mark.parametrize("ends", ["timeout", "disconnect"])
+@pytest.mark.parametrize("tool", ["search", "answer"])
+async def test_a_waiting_call_with_arguments_it_never_checked_records_them_as_given(
+    monkeypatch: pytest.MonkeyPatch, tool: str, ends: str
+) -> None:
+    """R3C-5: a call that ends waiting for a slot never checked its
+    arguments; when they do not make an input (a strategy no tool takes, a
+    top_k past mcp.max_top_k) it is still recorded once, as a refused input
+    is, with the fields as given and its caller."""
+    from unified_kg_rag.application.cli import trusted_identity
+
+    chain = FakeChain()
+    tools = _tools(chain)
+    for _ in range(tools.settings.max_concurrent_calls):
+        await tools._slots.acquire()
+    timeouts = HeldTimeouts(monkeypatch)
+    token = trusted_identity._CALLER.set("user-42")
+    top_k = tools.settings.max_top_k + 1
+    try:
+        call = asyncio.ensure_future(
+            getattr(tools, tool)("q", strategy="nope", top_k=top_k, filters={"a": 1})
+        )
+    finally:
+        trusted_identity._CALLER.reset(token)
+    await timeouts.wait_open()
+    # The arguments do not make an input: the record falls back to them.
+    with pytest.raises(InvalidArgumentError):
+        tools._rag_input("q", "nope", None, top_k, {"a": 1}, None)
+    if ends == "timeout":
+        timeouts.expire()
+        with pytest.raises(QueryTimeoutError):
+            await asyncio.wait_for(call, timeout=30)
+    else:
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+    assert chain.inputs == []
+    ((fields, error, search),) = chain.unrun
+    assert search is (tool == "search")
+    assert isinstance(error, QueryTimeoutError) if ends == "timeout" else error is None
+    assert fields == {
+        "query": "q",
+        "search_strategy": "nope",
+        "search_type": None,
+        "top_k": top_k,
+        "filters": {"a": 1},
+        "namespace": None,
+        "user_id": "user-42",
+    }
 
 
 @pytest.mark.parametrize("ends", ["timeout", "disconnect"])
