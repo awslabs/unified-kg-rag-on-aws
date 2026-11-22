@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rebuild_due`. Both read the reports (one search for a report without the field), not the build record, which a
   principal without `indices:admin/mappings/get` cannot read and a record a later run rewrote does not date (a
   rewritten record stores no `package_version`).
+- Custom backends: the old-report gate reads two new methods, `BaseGraphRAGRetriever.aholds_root_depth_reports` (global
+  search) and `StoreInspection.holds_root_depth_reports` (the `community_depths` reason). Both default to `None`
+  (cannot tell), so a custom document retriever that does not override the first steps no cut below depth 0 and maps
+  the most similar reports of a cut over the cap (one WARNING names the retriever class), as before the coarser cut;
+  one that does not override the second never gets the `community_depths` reason. A retriever without a build
+  record used to be read off its reports alone. `docs/guides/extend.md` lists both.
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
   holds only a run's output; on a stdout or stderr that is no terminal no line is wrapped or cropped at 80 columns (a
   panel or table is drawn as wide as its widest line: `run-ingestion`'s source and cache paths lost their ends), and
@@ -874,6 +880,16 @@ Bugs present in 0.3.0.
   reader, and the console sets its question's reader stop before it cancels it. A CLI's `Ctrl-C` or `SIGTERM` (a
   process stopping) and a timeout, an MCP client that leaves past the call's deadline included, keep `ERROR`
   ([telemetry reference](docs/reference/telemetry.md#spans-of-a-stopped-query)).
+- Local search kept a focus whose top hit is a one-letter name in a script written without spaces and seeded that
+  entity: 金 grounded 金正恩, 이 grounded 이순신, な the placeholder なし (10 of 16 shapes in a probe, none kept before
+  #870), as a run of one letter starts every name that begins with it. Such a run now holds a focus only as a whole
+  word of it; a run of two or more letters keeps the start rule (東京 for 東京都).
+- On a custom vector store that leaves `VectorIndexer.read_text_unit_attributes` at its port's default (`{}`), a
+  removal and the report refresh wrote every kept or refreshed community report with no `document_ids` and no
+  `filters`, so each attribute filter excluded it and its lineage was lost from the store, and the extraction-record
+  collection deleted the records live text units still name. The default now reads as "cannot tell" (one WARNING names
+  the store): the reports keep their stored documents and filters, the records are kept, and a stripped entity keeps
+  its stored description, as before. `docs/guides/extend.md` names the method.
 
 ## [0.3.0] - 2026-11-14
 

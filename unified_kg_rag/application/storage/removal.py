@@ -71,7 +71,7 @@ from unified_kg_rag.domain.models import Entity, Relationship, TextUnit
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import translated_text_field
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
-from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.ports.indexer import IndexingStats, stored_unit_attributes
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.write_fence import check_write_fence
@@ -241,7 +241,9 @@ class TextUnitRemoval:
         matches a report the refresh may not write again. Their text is
         kept (flagged outdated next, it is written again from what remains
         or stays flagged); an unchanged text keeps its vectors. ``None``
-        when the store cannot read reports by id."""
+        when the store cannot read reports by id, or the attributes of
+        their text units (``stored_unit_attributes``): the reports keep
+        their stored lineage rather than lose every document and filter."""
         vector = self._m.vector_indexer
         stored = vector.read_community_reports(report_ids, suffix)
         if not stored:
@@ -250,9 +252,13 @@ class TextUnitRemoval:
             r.community_id: [u for u in r.text_unit_ids or [] if u not in removed]
             for r in stored
         }
-        attributes = vector.read_text_unit_attributes(
-            sorted({u for units in remaining.values() for u in units}), suffix=suffix
+        attributes = stored_unit_attributes(
+            vector,
+            sorted({u for units in remaining.values() for u in units}),
+            suffix,
         )
+        if attributes is None:
+            return None
         attach_report_lineage(
             stored,
             remaining,
@@ -1212,11 +1218,17 @@ class TextUnitRemoval:
                         suffix,
                     )
                     continue
+                naming_attributes = stored_unit_attributes(
+                    vector, sorted(naming), suffix
+                )
+                if naming_attributes is None:
+                    # Nor which records the units name (its
+                    # read_text_unit_attributes left at the default, warned
+                    # of): every record is kept, the note with them.
+                    continue
                 still_named = {
                     key
-                    for attributes in vector.read_text_unit_attributes(
-                        sorted(naming), suffix=suffix
-                    ).values()
+                    for attributes in naming_attributes.values()
                     for key in attribute_record_keys(attributes).values()
                 }
                 unused = sorted(

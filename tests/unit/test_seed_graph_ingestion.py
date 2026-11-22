@@ -1641,6 +1641,49 @@ def test_a_stripped_member_the_derivation_lacks_keeps_its_description(
     ) == {"vendor": "Vendor sells.\nSeed v1 says vendor."}
 
 
+def test_a_store_that_cannot_read_unit_attributes_keeps_the_description(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R4A-5 / R4B-6: read_text_unit_attributes left at the port's default
+    # reads no record of the units left, so the description is kept as
+    # stored, the replaced seed line included; the store is named once, not
+    # passed over as one whose units name no record.
+    from unified_kg_rag.ports import VectorIndexer
+    from unified_kg_rag.shared import logging as shared_logging
+
+    class CannotRead(FakeVectorStore):
+        read_text_unit_attributes = VectorIndexer.read_text_unit_attributes
+
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    stored = "Vendor sells.\nSeed v1 says vendor."
+    vendor = Entity(
+        id="vendor", name="Vendor", description=stored, text_unit_ids=["u1", SEED_UNIT]
+    )
+    records = {"u1": record_payload(_vendor_record("u1", "vendor", "Vendor sells."))}
+    for store_class, expected in (
+        (FakeVectorStore, "Vendor sells."),
+        (CannotRead, stored),
+    ):
+        vector = store_class()
+        vector.upsert_text_units(
+            [
+                TextUnit(
+                    id="u1", text="", attributes={"extraction_records": {"graph": "u1"}}
+                )
+            ]
+        )
+        vector.write_extraction_records(records)
+        assert stripped_descriptions(
+            Config(), vector, "default", [vendor], {SEED_UNIT}
+        ) == {"vendor": expected}
+    warned = [
+        m
+        for m in caplog.messages
+        if "leaves VectorIndexer.read_text_unit_attributes" in m
+    ]
+    assert len(warned) == 1 and warned[0].startswith("CannotRead ")
+
+
 @pytest.mark.parametrize(
     "payload",
     [

@@ -24,7 +24,11 @@ from botocore.exceptions import ClientError
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.retrievers import opensearch_fields_for
+from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+from unified_kg_rag.adapters.search_strategies import (
+    global_search as global_search_module,
+)
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
 from unified_kg_rag.adapters.storage.filter_schema import (
     IndexLimits,
@@ -50,6 +54,7 @@ from unified_kg_rag.domain.retrieval.filters import (
     FilterFields,
 )
 from unified_kg_rag.shared import ConfigurationError, InvalidFilterError
+from unified_kg_rag.shared import logging as shared_logging
 
 pytestmark = pytest.mark.unit
 
@@ -610,6 +615,48 @@ async def test_a_store_that_cannot_tell_its_reports_stops_at_depth_0() -> None:
     assert result.metadata["global_cut_depth"] == 2
     assert result.metadata["global_level_capped"] is True
     assert _coarser_probes(store) == []
+
+
+class _DefaultDepthStore(_ReportStore):
+    """A custom document retriever that leaves the old-report gate at the
+    base class's "cannot tell" default."""
+
+    aholds_root_depth_reports = BaseGraphRAGRetriever.aholds_root_depth_reports
+
+
+async def test_a_retriever_left_at_the_gates_default_is_warned_of_once(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R4A-3: the default answers None, so the cut stays at depth 0 above the
+    # cap; the extender is told why, once, by the retriever's class.
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    store = _DefaultDepthStore(
+        _coarser_documents(), record=_incremental_record("0.4.0")
+    )
+    strat = _strategy(store, max_reports_per_level=3)
+    with caplog.at_level("WARNING", logger=global_search_module.__name__):
+        for _ in range(2):
+            result = await strat.asearch(SearchQuery(query="themes"))
+
+    assert result.metadata["global_cut_depth"] == 2
+    assert _coarser_probes(store) == []
+    warned = [r.getMessage() for r in caplog.records if "depth 0" in r.getMessage()]
+    assert len(warned) == 1
+    assert "_DefaultDepthStore leaves aholds_root_depth_reports" in warned[0]
+
+
+async def test_a_retriever_that_answers_none_itself_is_not_warned_of_here(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Its own None (OpenSearch's failed probe) logs its own WARNING.
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    store = _ReportStore(_coarser_documents(), record=_incremental_record("0.4.0"))
+    store.root_depth_unknown = True
+    strat = _strategy(store, max_reports_per_level=3)
+    with caplog.at_level("WARNING", logger=global_search_module.__name__):
+        await strat.asearch(SearchQuery(query="themes"))
+
+    assert not [r for r in caplog.records if "depth 0" in r.getMessage()]
 
 
 async def test_reports_written_without_the_shallowest_cut_stop_at_depth_0() -> None:

@@ -42,7 +42,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
-from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
 
 pytestmark = pytest.mark.unit
 
@@ -138,9 +138,14 @@ _EDGES = [
 ]
 
 
-def _stores(config: Config, *, child_report: bool = True) -> tuple[Any, Any]:
+def _stores(
+    config: Config,
+    *,
+    child_report: bool = True,
+    vector_class: type[FakeVectorStore] = FakeVectorStore,
+) -> tuple[Any, Any]:
     graph = FakeGraphStore()
-    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    vector = vector_class(opensearch_config=config.indexing.opensearch)
     graph.upsert_entities([e.model_copy(deep=True) for e in _ENTITIES])
     graph.upsert_relationships([r.model_copy(deep=True) for r in _EDGES])
     vector.upsert_text_units(
@@ -649,3 +654,100 @@ def test_a_note_merges_into_the_runs_outdated_reports(mocker) -> None:
     delete = mocker.spy(vector, "delete_extraction_records")
     manager.clear_outdated_note("default")
     delete.assert_not_called()
+
+
+class _CannotReadUnits(FakeVectorStore):
+    """A custom store that leaves ``read_text_unit_attributes`` at the
+    port's default (``{}``), whatever else it implements."""
+
+    read_text_unit_attributes = VectorIndexer.read_text_unit_attributes
+
+
+_STORED_LINEAGE = {
+    "c1": (["doc-t1", "doc-t2"], {"file": ["t1.txt", "t2.txt"]}),
+    "p": (["doc-t1", "doc-t2", "doc-t3"], {"file": ["t1.txt", "t2.txt", "t3.txt"]}),
+}
+
+
+def _lineage_stores(vector_class: type[FakeVectorStore]) -> tuple[Config, Any, Any]:
+    """The stores, each outdated report written with the documents and
+    document filters a full build gave it (``attach_report_lineage``)."""
+    config = _config()
+    graph, vector = _stores(config, vector_class=vector_class)
+    vector.upsert_text_units(
+        [
+            TextUnit(
+                id=u,
+                text=u,
+                attributes={"document_id": f"doc-{u}", "filters": {"file": f"{u}.txt"}},
+            )
+            for u in ("t1", "t2", "t3", "t9")
+        ]
+    )
+    reports = vector.read_community_reports(sorted(_OUTDATED))
+    for report in reports:
+        documents, filters = _STORED_LINEAGE[report.community_id]
+        report.document_ids = list(documents)
+        report.attributes = {**(report.attributes or {}), "filters": filters}
+    vector.upsert_community_reports(reports)
+    return config, graph, vector
+
+
+def _lineage(vector: Any) -> dict[str, tuple[list[str], Any]]:
+    return {
+        r.community_id: (r.document_ids, (r.attributes or {}).get("filters"))
+        for r in vector.read_community_reports(sorted(_OUTDATED))
+    }
+
+
+def test_a_removal_narrows_the_reports_lineage_to_the_units_left() -> None:
+    config, graph, vector = _lineage_stores(FakeVectorStore)
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    manager.remove_text_units("default", ["t1"])
+
+    lineage = _lineage(vector)
+    assert lineage["c1"][0] == ["doc-t2"]
+    assert lineage["p"][0] == ["doc-t2", "doc-t3"]
+
+
+def test_a_store_that_cannot_read_unit_attributes_keeps_the_reports_lineage(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R4A-5 / R4B-6: the default {} read as "no unit stored" narrowed every
+    # kept report to no documents and no filters, so each attribute filter
+    # excluded it (fail-closed) and its lineage was lost from the store.
+    from unified_kg_rag.shared import logging as shared_logging
+
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    config, graph, vector = _lineage_stores(_CannotReadUnits)
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    manager.remove_text_units("default", ["t1"])
+
+    assert _lineage(vector) == _STORED_LINEAGE
+    assert manager.outdated_reports["default"] == _OUTDATED
+    assert any(
+        "_CannotReadUnits leaves VectorIndexer.read_text_unit_attributes" in m
+        for m in caplog.messages
+    )
+
+
+def test_a_refresh_on_a_store_that_cannot_read_unit_attributes_keeps_the_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The refresh wrote each report again with the lineage of the units it
+    # read: none from the default, so no documents and no filters.
+    from unified_kg_rag.shared import logging as shared_logging
+
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    config, graph, vector = _lineage_stores(_CannotReadUnits)
+    model = _Reports()
+
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+
+    assert done.written == _OUTDATED
+    reports = {r.community_id: r for r in vector.read_community_reports(_OUTDATED)}
+    assert reports["p"].summary == "Members: Acme, Carrier, Depot."
+    # The text units are the community's current ones; the documents and
+    # filters those stored with the report (the store cannot say less).
+    assert reports["p"].text_unit_ids == ["t2", "t3"]
+    assert _lineage(vector) == _STORED_LINEAGE

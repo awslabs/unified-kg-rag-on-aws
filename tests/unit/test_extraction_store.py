@@ -1162,6 +1162,40 @@ class TestChunkBoundaryRecords:
         stored = vector.read_extraction_records(["g:kept", "g:gone", REMOVED_RECORDS])
         assert set(stored) == {"g:kept", "g:gone", REMOVED_RECORDS}
 
+    def test_a_store_that_cannot_read_the_naming_units_keeps_the_records(
+        self,
+    ) -> None:
+        # Regression (R4A-5 / R4B-6): find_documents implemented but
+        # read_text_unit_attributes left at the port's default ({}): the
+        # units naming the records were found, their keys read as none, and
+        # every record was deleted, those a live unit still names too.
+        from unified_kg_rag.application.storage.stored_items import REMOVED_RECORDS
+        from unified_kg_rag.ports import VectorIndexer
+
+        class CannotRead(FakeVectorStore):
+            read_text_unit_attributes = VectorIndexer.read_text_unit_attributes
+
+        config = Config()
+        vector = CannotRead(opensearch_config=config.indexing.opensearch)
+        vector.upsert_text_units(
+            [
+                _unit("t2").model_copy(
+                    update={"attributes": {RECORD_KEYS_ATTRIBUTE: {"graph": "g:kept"}}}
+                )
+            ]
+        )
+        vector.write_extraction_records({"g:kept": {}, "g:gone": {}})
+        manager = IndexingManager(
+            config=config, vector_indexer=vector, graph_indexer=FakeGraphStore()
+        )
+        manager._write_note(REMOVED_RECORDS, "default", {"keys": ["g:gone"]})
+        manager._removed_record_keys["default"] = {"g:kept", "g:gone"}
+
+        assert manager.collect_extraction_records() == {}
+
+        stored = vector.read_extraction_records(["g:kept", "g:gone", REMOVED_RECORDS])
+        assert set(stored) == {"g:kept", "g:gone", REMOVED_RECORDS}
+
     def test_reads_nothing_without_reuse_and_writes_either_way(self) -> None:
         vector = FakeVectorStore()
         store = ExtractionStore(Config(), lambda: vector, reuse=False)
