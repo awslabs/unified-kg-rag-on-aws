@@ -822,6 +822,10 @@ Bugs present in 0.3.0.
   in all its languages.
 - The console Graph page's "Show all relationships" left keyboard focus on the page once the list was whole (the
   button goes): focus moves to the first relationship it added.
+- With the console's highlighter as its one accent, a warning and a chosen or seed marker shared a yellow (their
+  washes a CIELAB difference of 2.8 apart under simulated tritanopia in the light theme, 5.9 in the dark one): a
+  warning is now orange-brown with a warning sign, its wash at least 10 from the trace and error washes under normal
+  vision and the three simulations in both themes, and a seed, running or pending badge is outlined in ink.
 
 ## [0.3.0] - 2026-11-14
 

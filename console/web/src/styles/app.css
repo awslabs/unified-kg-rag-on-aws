@@ -784,15 +784,42 @@ kbd {
   border-color: transparent;
   color: var(--warn);
 }
+/* A warning wears its sign, so colour is not what tells it from the
+ * highlighter (an outlined triangle; its label says what it is). */
+.badge-warn::before,
+.notice-warn > :first-child::before {
+  content: "";
+  display: inline-block;
+  flex: none;
+  width: 0.95em;
+  height: 0.95em;
+  background: var(--warn);
+  -webkit-mask: var(--warn-sign) center / contain no-repeat;
+  mask: var(--warn-sign) center / contain no-repeat;
+}
+.notice-warn > :first-child::before {
+  margin-inline-end: 0.4em;
+  vertical-align: -0.12em;
+}
+@media (forced-colors: active) {
+  .badge-warn::before,
+  .notice-warn > :first-child::before {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}
 .badge-bad {
   background: var(--bad-wash);
   border-color: transparent;
   color: var(--bad);
 }
+/* A seed, a running job, pending changes: outlined in ink, no hue, so it
+ * never reads as a warning beside one (the highlighter keeps chosen chips
+ * and the current row). */
 .badge-trace {
-  background: var(--trace-wash);
-  border-color: transparent;
-  color: var(--trace-ink);
+  background: var(--sheet);
+  border-color: var(--ink);
+  color: var(--ink);
 }
 
 .notice {

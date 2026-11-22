@@ -41,7 +41,9 @@ are patterns, not assets:
 - **The highlighter is the one colour**: it marks matched evidence, the
   current page and the chosen option, so yellow always says "this one".
   Status colours (with a label) and the graph's series are the only other
-  hues.
+  hues. A warning is orange-brown and wears a warning sign, never yellow; a
+  marker badge (a seed, a running job, pending changes) is outlined in ink,
+  not washed, so it never reads as a warning beside one.
 - **Legible figures**: Atkinson Hyperlegible Next and Mono, drawn so that
   0/O, 1/l/I and 5/S never look alike, for the ids, hashes, token counts and
   costs the page is full of.
@@ -95,11 +97,11 @@ since the page's CSP allows no inline script).
 | `--control-edge` | `#77887a` (3.7:1, 3.2:1 on paper) | `#7a8087` (4.1:1) | Field edges |
 | `--primary-bg` / `-ink` | `#1f2622` / white (15.5:1) | `#e6e8e4` / `#161718` (14.6:1) | The primary action |
 | `--cobalt` (the accent) | `#1b211d` (16.0:1) | `#ffe07a` (12.8:1) | Links (underlined), the trace, focus ring |
-| `--trace-wash` / `--trace-ink` | `#fff1a8` / `#1b211d` (14.4:1) | `#38321c` / `#ffe58a` (10.3:1) | Chosen chips and rows |
+| `--trace-wash` / `--trace-ink` | `#fff1a8` / `#1b211d` (14.4:1) | `#38321c` / `#ffe58a` (10.3:1) | Chosen chips and rows (a marker badge, `badge-trace`, is outlined in `--ink` on `--sheet` instead) |
 | `--highlighter` / `--mark-ink` | `#ffd43b` / `#1b211d` (11.5:1) | same | Matched evidence, the current page, cited markers, an opened source |
 | `--pad-line` / `--pad-line-major` | graphite at 5% / 10% | chalk at 4% / 8% | The pad's grid and the composer's lines |
 | `--result-rule` | `3px double var(--ink)` | the same, in chalk | The boxed result |
-| `--good` / `--warn` / `--bad` | 4.6 / 5.2 / 5.5:1 on their washes | 6.9 / 7.3 / 6.0:1 | Status, with a label |
+| `--good` / `--warn` / `--bad` | 4.6 / 5.5 / 5.5:1 on their washes; warn `#804613` on `#fad6c0` | 6.9 / 5.9 / 6.0:1; warn `#f69749` on `#4f2503` | Status, with a label; a warning also with its sign (`--warn-sign`). The warn wash is a CIELAB difference of at least 10 from the trace wash and the bad wash under normal vision and simulated protanopia, deuteranopia and tritanopia (Machado 2009), in both themes; dark warn text is 17.5 from `--cobalt` |
 | `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (3:1 on sheet; 5 and 7 lighter, apart under colour-blindness) | Graph communities and types, charts |
 | `--node-edge` | `--control-edge` (3.6:1 on the canvas) | `--canvas-bg` | A graph node's edge: carries the light theme's 3:1, where series 3-5 and other fall under it |
 

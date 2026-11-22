@@ -30,7 +30,7 @@
   --cobalt: #1b211d; /* 16.0:1 on sheet */
   --trace: var(--cobalt);
   --trace-ink: #1b211d; /* on its wash, 14.4:1 */
-  --trace-wash: #fff1a8; /* chosen chips, the current row: a light highlighter */
+  --trace-wash: #fff1a8; /* chosen chips, the current row: a light highlighter (a seed or chosen badge is outlined) */
   --primary-bg: #1f2622;
   --primary-hover: #343d38;
   --primary-ink: #ffffff; /* 15.5:1, 11.2:1 hovered */
@@ -67,8 +67,11 @@
   /* Status, always with a label */
   --good: #1f7a3a; /* 4.6:1 on its wash, 5.3:1 on sheet */
   --good-wash: #dcf2e0;
-  --warn: #8a5a00; /* 5.2:1 */
-  --warn-wash: #fbf0cc;
+  /* Warn is orange-brown, off the highlighter's yellow: its wash is a
+   * CIELAB difference of 11.5 from --trace-wash and 10.1 from --bad-wash,
+   * the least under simulated protanopia, deuteranopia or tritanopia. */
+  --warn: #804613; /* 5.5:1 on its wash, 7.3:1 on sheet */
+  --warn-wash: #fad6c0;
   --bad: #b3261e; /* 5.5:1 */
   --bad-wash: #fce7e5;
 
@@ -132,8 +135,10 @@
 
   --good: #4cc27a; /* 6.9:1 on its wash */
   --good-wash: #14281b;
-  --warn: #e3a93e; /* 7.3:1 */
-  --warn-wash: #2c2512;
+  /* Its wash is 10.0 from --trace-wash and 10.1 from --bad-wash, the text
+   * 17.5 from --cobalt, under the same simulations. */
+  --warn: #f69749; /* 5.9:1 on its wash, 7.4:1 on sheet */
+  --warn-wash: #4f2503;
   --bad: #ff7468; /* 6.0:1 */
   --bad-wash: #3a1916;
 
@@ -205,6 +210,8 @@
   --result-rule: 3px double var(--ink);
   --rail: 2px;
   --station: 11px;
+  /* The warning sign, a mask filled in --warn: a triangle, its "!" cut out. */
+  --warn-sign: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 1.2 15.4 14.6H.6ZM7.1 5.6h1.8l-.35 4.9h-1.1ZM8 11.4a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1Z'/%3E%3C/svg%3E");
   --nav-height: 56px;
   --content-width: 1440px;
   --duration: 420ms;
