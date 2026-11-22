@@ -30,6 +30,7 @@ from tests.fixtures.store_backends import (
     backends,
     open_harness,
 )
+from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
     ROOT_CUT_DEPTH,
     cut_filter,
@@ -1836,8 +1837,9 @@ def test_index_settings_the_engine_refuses_fail_before_extraction(
     # index is not created again, and the settings are checked all the same.
     harness.vector_indexer.prepare_extraction_records(tenant)
 
-    if harness.kind == "sqlite":
-        # The embedded engine applies max_result_window only: nothing to refuse.
+    if isinstance(typo.vector_indexer.opensearch_client, SQLiteSearchEngine):
+        # The embedded engine applies max_result_window only: nothing to
+        # refuse, whichever backend (packaged or custom) runs on it.
         typo.vector_indexer.check_index_creation(tenant)
         return
     with pytest.raises(ConfigurationError, match=named):
