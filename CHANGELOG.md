@@ -890,6 +890,11 @@ Bugs present in 0.3.0.
   collection deleted the records live text units still name. The default now reads as "cannot tell" (one WARNING names
   the store): the reports keep their stored documents and filters, the records are kept, and a stripped entity keeps
   its stored description, as before. `docs/guides/extend.md` names the method.
+- A sync `GraphRAGChain.close()` (or `OpenSearchClient.close()`) called from a coroutine left the OpenSearch async
+  client's aiohttp session and every keep-alive socket open (7 of 7 after three searches inside `asyncio.run`), with
+  "Unclosed client session" warnings: the awaited close it scheduled on the caller's loop was cancelled by
+  `asyncio.run` before it ran. The connectors are now closed synchronously on that loop's thread (`await
+  chain.aclose()` was not affected).
 
 ## [0.3.0] - 2026-11-14
 
