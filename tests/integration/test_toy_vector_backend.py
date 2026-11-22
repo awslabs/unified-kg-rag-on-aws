@@ -206,6 +206,16 @@ class _AnnotatingToy(ToyVectorStore):
         return []
 
 
+class _RecordingToy(ToyVectorStore):
+    """The toy reading extraction records: ``stored_extraction_record_keys``'
+    default returns the keys that read holds."""
+
+    def read_extraction_records(
+        self, *args: Any, **kwargs: Any
+    ) -> dict[str, dict[str, Any]]:
+        return {}
+
+
 def test_a_test_needing_a_default_method_skips_naming_its_port(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -233,6 +243,8 @@ def test_a_test_needing_a_default_method_skips_naming_its_port(
     assert harness.implements("holds_any_item")
     assert not harness.implements("holds_any_text_unit")
     harness.needs("holds_any_item")
+    harness.vector_indexer = _RecordingToy(harness.config)
+    assert harness.implements("stored_extraction_record_keys")
     harness.vector_indexer = BrokenToyVectorStore(harness.config)
     harness.needs_port(SummaryTreeStore)
     # A packaged backend states every contract: nothing is skipped.
