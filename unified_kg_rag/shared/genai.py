@@ -48,6 +48,10 @@ GUARDRAIL_GROUNDING_SCORE = "aws.bedrock.guardrail.grounding.score"
 GUARDRAIL_RELEVANCE_SCORE = "aws.bedrock.guardrail.relevance.score"
 # General OpenTelemetry convention for the class of a failure.
 ERROR_TYPE = "error.type"
+# A span its query's reader stopped (a client that left, the console's Stop
+# or a closed page: shared.query_stop.reader_stopped), which ends with no
+# error status; a process stopping (Ctrl-C, SIGTERM) or a deadline keeps it.
+STOPPED = "kg_rag.stopped"
 
 
 def embedding_span(

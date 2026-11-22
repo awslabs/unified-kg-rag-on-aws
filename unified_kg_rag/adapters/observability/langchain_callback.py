@@ -62,6 +62,7 @@ from unified_kg_rag.shared.genai import (
     GEN_AI_USAGE_OUTPUT_TOKENS,
     GEN_AI_USAGE_REASONING_OUTPUT_TOKENS,
     PROVIDER_AWS_BEDROCK,
+    STOPPED,
 )
 from unified_kg_rag.shared.observability import (
     SESSION_ID,
@@ -69,6 +70,7 @@ from unified_kg_rag.shared.observability import (
     ContentPolicy,
     SpanHandle,
 )
+from unified_kg_rag.shared.query_stop import reader_stopped
 
 MODEL_PURPOSE = "kg_rag.model.purpose"
 # The index namespace a run's metadata names (a streamed answer's call,
@@ -241,9 +243,7 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
                 self._streamed.discard(run_id)
         if span is None:
             return
-        span.set_attribute(ERROR_TYPE, "CancelledError")
-        span.set_error("CancelledError")
-        span.end()
+        _end_failed(span, "CancelledError")
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         span = self._pop(run_id)
@@ -266,10 +266,7 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
                 span.set_attributes(self._response_attributes(response))
             span.end()
             return
-        span.record_exception(error)
-        span.set_attribute(ERROR_TYPE, type(error).__name__)
-        span.set_error(type(error).__name__)
-        span.end()
+        _end_failed(span, type(error).__name__, error)
 
     def _response_attributes(self, response: LLMResult) -> dict[str, Any]:
         finish_reasons: list[str] = []
@@ -410,3 +407,20 @@ def response_token_usage(response: LLMResult) -> TokenUsage | None:
         int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
         int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
     )
+
+
+def _end_failed(
+    span: SpanHandle, error_type: str, error: BaseException | None = None
+) -> None:
+    """End a model call's span that ended in ``error`` (of ``error_type``):
+    an error, unless its query's reader stopped (a client that left, the
+    console's Stop or a closed page), whose call ends marked stopped, with
+    no error status, as the query's records count it."""
+    if reader_stopped():
+        span.set_attribute(STOPPED, True)
+    else:
+        if error is not None:
+            span.record_exception(error)
+        span.set_attribute(ERROR_TYPE, error_type)
+        span.set_error(error_type)
+    span.end()

@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Coroutine, Sequence
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
@@ -77,6 +77,7 @@ from unified_kg_rag.shared.exceptions import (
     shows_error_text,
     tag_query_failure,
 )
+from unified_kg_rag.shared.query_stop import await_as_reader
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import strip_invisible, text_digest
 
@@ -683,7 +684,7 @@ class KnowledgeGraphTools:
 
     async def _within_deadline(
         self,
-        run: Callable[[], Awaitable[_R]],
+        run: Callable[[], Coroutine[Any, Any, _R]],
         on_timeout: Callable[[QueryTimeoutError], None] | None = None,
         limits: Any = None,
     ) -> _R:
@@ -721,7 +722,11 @@ class KnowledgeGraphTools:
                         f"the call's {setting}, the wait for a call slot included",
                         seconds,
                     ):
-                        return await run()
+                        # Its client leaving (this call cancelled) before
+                        # the deadline is its reader's stop: the query ends
+                        # as a stopped reader's, its spans with no error;
+                        # past the deadline (this backstop), a timeout.
+                        return await await_as_reader(run(), until=at)
         except QueryTimeoutError:
             raise
         except TimeoutError:
@@ -741,7 +746,7 @@ class KnowledgeGraphTools:
         self,
         tool: str,
         arguments: dict[str, Any],
-        run: Callable[[], Awaitable[_R]],
+        run: Callable[[], Coroutine[Any, Any, _R]],
         namespace: str | None = None,
         query_call: _QueryCall | None = None,
         limits: Any = None,

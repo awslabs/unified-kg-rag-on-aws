@@ -17,6 +17,12 @@ loses (the query's next stop point raises), so a stopped query sends no
 model request. A stop raises ``asyncio.CancelledError`` where nothing is
 held (between attempts).
 
+A host that reads a query's result for a client (an MCP tool call, whose
+client may leave) runs it as its reader (:func:`await_as_reader`): the
+host's cancellation is then its reader's stop, as for a streamed query,
+not a cancelled query's (a process stopping, ``Ctrl-C``), and the spans it
+ends say so (no error status).
+
 The reader's stop is bound for the whole query (:func:`query_stop_scope`);
 each deadline window binds a :class:`FollowingStop` of it (or a stop of its
 own without a reader), set by the reader's stop or by the deadline. Outside
@@ -46,7 +52,7 @@ import contextvars
 import enum
 import threading
 import time
-from collections.abc import Callable, Hashable, Iterator
+from collections.abc import Callable, Coroutine, Hashable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from typing import Any, Protocol, TypeVar
 
@@ -383,3 +389,66 @@ async def abackoff_wait(delay: float) -> None:
     # Set already, it returns at once.
     await stop._await(delay)
     raise_if_stopped()
+
+
+async def await_as_reader(
+    work: Coroutine[Any, Any, _T], *, until: float | None = None
+) -> _T:
+    """Run ``work`` (a query) in a task of its own, under a stop of its
+    own, and return its result, this caller its reader.
+
+    This caller cancelled (its client left) before ``until``
+    (``time.monotonic()``: the work's deadline; ``None``: none), the stop is
+    set (``StopCause.READER``) before ``work`` is cancelled, so ``work``
+    ends as a stopped reader's (no failure, in its records and its spans),
+    as a streamed query whose reader stops (``aquery_events``); cancelled
+    past ``until`` (a host's backstop for its deadline), ``work`` is
+    cancelled with no stop set, a timed-out query's. The cancellation is
+    re-raised once ``work`` ended (:func:`wait_ended`)."""
+    stop = QueryStop()
+    context = contextvars.copy_context()
+    context.run(_QUERY_STOP.set, stop)
+    task = asyncio.get_running_loop().create_task(work, context=context)
+    try:
+        await asyncio.wait({task})
+    except asyncio.CancelledError:
+        if until is None or time.monotonic() < until:
+            stop.set(StopCause.READER)
+        task.cancel()
+        await wait_ended(task)
+        raise
+    return task.result()
+
+
+async def wait_ended(task: asyncio.Task[Any]) -> None:
+    """Wait for ``task`` (a query its reader cancelled) to end, never
+    cancelling it again: a waiter cancelled again while it waits (an anyio
+    cancel scope cancels at every await) would pass that on to it through
+    ``asyncio.gather``, in the middle of its unwinding, where it cuts the
+    close of a model response short and leaves its connection held. Its
+    outcome is retrieved, so none is logged as never retrieved.
+
+    The query still has stop points, for a cancellation a layer under it
+    loses, on any Python: anyio's ``connect_tcp`` (httpcore's connect) can
+    return a connected stream to a task cancelled while it connected, and
+    on 3.11 ``asyncio.wait_for`` returns the result its awaitable got in
+    the same turn as the cancellation (langchain-openai reads each chunk of
+    a stream through it, for ``stream_chunk_timeout``; 3.12 rebuilt it on
+    ``asyncio.timeout``, which re-raises it), so the call goes on as if
+    nothing was cancelled. The query's next event, answer chunk, model
+    request (before its connection and again before it is written, its
+    response as its headers arrive) or retry wait then raises
+    ``CancelledError`` at the query's stop, set by its reader before the
+    cancellation, as by its deadline (a deadline window's stop)."""
+    try:
+        await asyncio.wait({task})
+    finally:
+        if task.done():
+            _retrieved(task)
+        else:
+            task.add_done_callback(_retrieved)
+
+
+def _retrieved(task: asyncio.Future[Any]) -> None:
+    if not task.cancelled():
+        task.exception()

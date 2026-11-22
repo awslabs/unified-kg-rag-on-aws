@@ -253,6 +253,7 @@ from unified_kg_rag.shared.query_stop import (
     query_stopped,
     raise_if_stopped,
     reader_stopped,
+    wait_ended,
     window_stop_scope,
 )
 from unified_kg_rag.shared.query_work import detach
@@ -2761,7 +2762,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             sink = _ChunkCallback(on_answer_chunk)
         token = _QUERY_EVENTS.set(sink)
         try:
-            result = await self._query(input, config, search=False)
+            result = await self._query_called(input, config, search=False)
         finally:
             _QUERY_EVENTS.reset(token)
         assert isinstance(result, RAGOutput)
@@ -2785,9 +2786,26 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         fusion and rerank) and returns the ranked results. Nothing is written
         to conversation memory. Errors behave as in :meth:`ainvoke`.
         """
-        result = await self._query(input, config, search=True)
+        result = await self._query_called(input, config, search=True)
         assert isinstance(result, SearchOutput)
         return result
+
+    async def _query_called(
+        self,
+        input: RAGInput | dict[str, Any],
+        config: RunnableConfig | None,
+        *,
+        search: bool,
+    ) -> RAGOutput | SearchOutput:
+        """:meth:`_query` for a caller that reads its result (``ainvoke``,
+        ``asearch``): a query its reader stopped (a host that runs it as
+        its reader, ``shared.query_stop.await_as_reader``, cancelled) ends
+        in the cancellation, not in :class:`_ReaderStopped`, which stays in
+        the chain's frames."""
+        try:
+            return await self._query(input, config, search=search)
+        except _ReaderStopped:
+            raise asyncio.CancelledError from None
 
     async def _query(
         self,
@@ -2900,9 +2918,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         _name_stopped_strategy(span, rag_input)
                         raise _ReaderStopped() from None
                     if isinstance(e, asyncio.CancelledError):
-                        # Its caller cancelled it (below): stopped, its span
-                        # names the strategy as its records do; timed out,
-                        # none (a failed query's).
+                        # Its caller cancelled it (below), not as its reader
+                        # (a process stopping: Ctrl-C, SIGTERM; a host's
+                        # backstop past its deadline), so its span keeps the
+                        # error status: stopped, it names the strategy as
+                        # its records do; timed out, none (a failed query's).
                         timed_out = deadline.passed()
                         if not timed_out:
                             _name_stopped_strategy(span, rag_input)
@@ -4302,7 +4322,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 # threads send nothing more), then the query is cancelled.
                 channel.stop()
                 task.cancel()
-            await _ended(task)
+            await wait_ended(task)
 
     def query_events(
         self, input: RAGInput, config: RunnableConfig | None = None
@@ -4614,7 +4634,7 @@ class _EventChannel(_EventSink):
 
     async def send(self, event: QueryEvent) -> None:
         # A stop point (its reader's, its deadline's), for a cancellation
-        # lost under the query (_ended).
+        # lost under the query (shared.query_stop.wait_ended).
         if self.reader_stop.is_set() or query_stopped():
             raise asyncio.CancelledError
         if isinstance(event, QuerySources):
@@ -4692,41 +4712,6 @@ async def _emit(event: QueryEvent) -> None:
     if sink is None:
         return
     await sink.send(event)
-
-
-async def _ended(task: asyncio.Task[Any]) -> None:
-    """Wait for ``task`` (a query its reader cancelled) to end, never
-    cancelling it again: a waiter cancelled again while it waits (an anyio
-    cancel scope cancels at every await) would pass that on to it through
-    ``asyncio.gather``, in the middle of its unwinding, where it cuts the
-    close of a model response short and leaves its connection held. Its
-    outcome is retrieved, so none is logged as never retrieved.
-
-    The query still has stop points, for a cancellation a layer under it
-    loses, on any Python: anyio's ``connect_tcp`` (httpcore's connect) can
-    return a connected stream to a task cancelled while it connected, and
-    on 3.11 ``asyncio.wait_for`` returns the result its awaitable got in
-    the same turn as the cancellation (langchain-openai reads each chunk of
-    a stream through it, for ``stream_chunk_timeout``; 3.12 rebuilt it on
-    ``asyncio.timeout``, which re-raises it), so the call goes on as if
-    nothing was cancelled. The query's next event, answer chunk, model
-    request (before its connection and again before it is written, its
-    response as its headers arrive) or retry wait then raises
-    ``CancelledError`` at the query's stop (``shared.query_stop``), set by
-    its reader before the cancellation, as by its deadline
-    (:class:`_DeadlineScope`)."""
-    try:
-        await asyncio.wait({task})
-    finally:
-        if task.done():
-            _retrieved(task)
-        else:
-            task.add_done_callback(_retrieved)
-
-
-def _retrieved(task: asyncio.Future[Any]) -> None:
-    if not task.cancelled():
-        task.exception()
 
 
 def _routed_strategy() -> SearchStrategy | None:
@@ -4862,7 +4847,7 @@ def _streamed_to(
                     # too (reasoning, a held-back marker, an answer the
                     # output guardrail screens first): a chunk read after
                     # the query's stop (its reader's, its deadline's) is
-                    # one whose cancellation was lost (_ended).
+                    # one whose cancellation was lost (shared.query_stop.wait_ended).
                     raise_if_stopped()
                     text = str(chunk)
                     if not text:
@@ -5383,7 +5368,7 @@ class _DeadlineScope:
     rest: the query's worker threads (their retries and the model clients'
     requests), the calls it shares (it leaves them, as it leaves them at its
     reader's stop), and a cancellation a layer under it loses (anyio's
-    ``connect_tcp``, 3.11's ``asyncio.wait_for``: ``_ended``), which its
+    ``connect_tcp``, 3.11's ``asyncio.wait_for``: ``shared.query_stop.wait_ended``), which its
     next stop point (a model request, an answer chunk, an event, a retry
     wait) raises again, so the query cannot outlive its deadline past that
     stop point. Either way it ends with :class:`QueryTimeoutError`.
