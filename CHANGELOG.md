@@ -838,6 +838,9 @@ Bugs present in 0.3.0.
   it cannot tell), a commit read "cannot tell" as "no text unit names these" and deleted every record the removed
   text units named, those a changed document's unchanged chunks still name too (extracted again on its next change).
   The records and their note are kept there now.
+- A run killed after a deletion's strip noted the items it stripped (`stripped-summaries`) and before its commit
+  deleted the note left the note for good when the resume had nothing to remove or index: its commit never read it.
+  Every commit reads it now, delta or none, and deletes it once its writes succeed, as the unkilled run's does.
 
 ## [0.3.0] - 2026-11-14
 
