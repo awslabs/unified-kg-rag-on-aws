@@ -899,6 +899,10 @@ Bugs present in 0.3.0.
   ranking `[a.pdf, a.txt]` scored 0.613 and `[a.txt, a.pdf]` 1.0 for the same two relevant files (a deeper cutoff that
   added a.txt lowered the score). A file is now credited to one reference: the one its full name is, else one its stem
   names. Recall, hit and MRR are unchanged.
+- A document in a corpus folder named like a drive (`x:/y.txt`) was scoped by its path filters but cited with no
+  path, so `run-rag`, the console and MCP showed it as the root file of the same name and `kg_get_chunks` gave it no
+  `relative_path` (`run-describe` listed its file name): the read side still refused the path as a Windows one. A
+  stored `relative_path` that is the unit's stamped `file` filter is now read as its path.
 
 ## [0.3.0] - 2026-11-14
 

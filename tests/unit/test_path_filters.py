@@ -21,6 +21,7 @@ from unified_kg_rag.domain.ingestion.document_identity import path_filters
 from unified_kg_rag.domain.ingestion.methodologies import namespace_holdings
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_UNIT_PREFIX
 from unified_kg_rag.domain.models import Config, Document, IndexBuildRecord, TextUnit
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import typed_filter_values
 from unified_kg_rag.domain.retrieval.source_fields import PATH_FILTER_KEYS
 from unified_kg_rag.shared import InvalidFilterError
@@ -220,6 +221,39 @@ def test_a_folder_the_walk_found_named_like_a_drive_is_a_folder(
     assign_document_identity(recorded, "/corpus")
     assert recorded.metadata["relative_path"] == path
     assert recorded.metadata.get("filters") is None
+
+
+@pytest.mark.parametrize(
+    ("attributes", "expected"),
+    [
+        # R4A-6 / R4B-5: the walk's path, stamped as its file filter, reads
+        # as the unit's relative path (its citations named none).
+        (
+            {"relative_path": "x:/y.txt", "filters": {"file": "x:/y.txt"}},
+            "x:/y.txt",
+        ),
+        # Stamped NFC from an NFD name.
+        (
+            {
+                "relative_path": unicodedata.normalize("NFD", "서류:/a.txt"),
+                "filters": {"file": "서류:/a.txt"},
+            },
+            unicodedata.normalize("NFD", "서류:/a.txt"),
+        ),
+        # Without that stamp the path may name a drive: none.
+        ({"relative_path": "x:/y.txt"}, None),
+        ({"relative_path": "x:/y.txt", "filters": {"file": "y.txt"}}, None),
+        ({"relative_path": "x:/y.txt", "filters": {"file": ["x:/y.txt"]}}, None),
+        # A URL never is one, whatever the filters say.
+        ({"relative_path": "s3://b/y.txt", "filters": {"file": "s3://b/y.txt"}}, None),
+        ({"relative_path": "a/../y.txt", "filters": {"file": "a/../y.txt"}}, None),
+        ({"relative_path": "a/y.txt"}, "a/y.txt"),
+    ],
+)
+def test_a_stored_path_its_file_filter_stamps_is_read_as_relative(
+    attributes: dict, expected: str | None
+) -> None:
+    assert source_fields.relative_path({"attributes": attributes}) == expected
 
 
 def _unit(unit_id: str, filters: dict | None) -> TextUnit:

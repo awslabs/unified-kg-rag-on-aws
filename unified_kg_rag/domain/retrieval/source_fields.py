@@ -166,8 +166,21 @@ def safe_relative_path(value: Any, *, under_root: bool = False) -> str | None:
 
 def relative_path(metadata: Mapping[str, Any]) -> str | None:
     """The file a text unit was chunked from, as its path relative to the
-    corpus root (its stored ``attributes.relative_path``), when it is one."""
-    return safe_relative_path(_attributes(metadata).get("relative_path"))
+    corpus root (its stored ``attributes.relative_path``), when it is one.
+    A path whose first folder is named like a drive (``x:/y.txt``) is one
+    when the unit's stamped ``filters.file`` is that path: ingestion stamps
+    the corpus walk's own path (``stamp_path_filters``, ``under_root``), so
+    its citations name the file its path filters match."""
+    attributes = _attributes(metadata)
+    value = attributes.get("relative_path")
+    if (path := safe_relative_path(value)) is not None:
+        return path
+    filters = attributes.get("filters")
+    stamped = filters.get(FILE_FILTER_KEY) if isinstance(filters, Mapping) else None
+    walked = safe_relative_path(value, under_root=True)
+    if walked is not None and stamped == path_filter_value(walked):
+        return walked
+    return None
 
 
 def text_value(value: Any) -> str | None:
