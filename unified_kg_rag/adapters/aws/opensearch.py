@@ -360,11 +360,6 @@ def _handle_async_opensearch_errors(func: Callable[..., Any]) -> Callable[..., A
     return async_wrapper
 
 
-# Strong references to close tasks scheduled from sync code, so they are not
-# garbage-collected before they finish.
-_PENDING_CLOSES: set[asyncio.Task[Any]] = set()
-
-
 def _running_loop() -> asyncio.AbstractEventLoop | None:
     try:
         return asyncio.get_running_loop()
@@ -391,6 +386,24 @@ def _finish_without_loop(awaitable: Any) -> None:
     close = getattr(iterator, "close", None)
     if close is not None:
         close()
+
+
+def _close_connections(async_client: AsyncOpenSearch) -> None:
+    """Close the aiohttp connectors of ``async_client``'s pooled
+    connections, synchronously (best-effort, never raises): each connector
+    closes its transports at once, and its session then reads closed.
+    Called on the thread of the loop that owns them, or after that loop is
+    gone (``_finish_without_loop``)."""
+    try:
+        transport = getattr(async_client, "transport", None)
+        pool = getattr(transport, "connection_pool", None)
+        for connection in getattr(pool, "connections", []) or []:
+            session = getattr(connection, "session", None)
+            connector = getattr(session, "connector", None)
+            if connector is not None:
+                _finish_without_loop(connector.close())
+    except Exception as e:  # noqa: BLE001 - teardown must never raise
+        logger.debug("Could not close the async client's connections: %s", e)
 
 
 def _retryable_query_error(exc: BaseException) -> bool:
@@ -485,32 +498,28 @@ class OpenSearchClient:
     ) -> None:
         """Best-effort close of an async client from sync code. Never raises.
 
-        Used when the bound event loop has rotated, or from ``close()``. While
-        the client's loop is still running, its awaited ``close()`` is
-        scheduled there (the clean path). Otherwise the loop is gone, and the
-        underlying aiohttp connectors' ``close()`` coroutines are run to
-        completion without a loop (see ``_finish_without_loop``).
+        Used when the bound event loop has rotated, or from ``close()``. The
+        client's aiohttp connectors are closed synchronously
+        (``_close_connections``), which closes every pooled connection at
+        once, on the thread of the loop that owns them: here when this is
+        that thread or the loop is gone, else posted to it as a callback,
+        which runs when the loop next runs. An awaited ``close()`` scheduled
+        as a task instead never ran when the loop ended first: a sync close
+        called from a coroutine (``GraphRAGChain.close()`` inside
+        ``asyncio.run``) blocks that loop's thread while it runs, and
+        ``asyncio.run`` cancels the task before its first step, leaving the
+        session and every keep-alive socket open.
         """
         try:
             if (
                 bound_loop is not None
                 and bound_loop.is_running()
                 and not bound_loop.is_closed()
+                and bound_loop is not _running_loop()
             ):
-                if bound_loop is _running_loop():
-                    task = bound_loop.create_task(async_client.close())
-                    _PENDING_CLOSES.add(task)
-                    task.add_done_callback(_PENDING_CLOSES.discard)
-                else:
-                    asyncio.run_coroutine_threadsafe(async_client.close(), bound_loop)
+                bound_loop.call_soon_threadsafe(_close_connections, async_client)
                 return
-            transport = getattr(async_client, "transport", None)
-            pool = getattr(transport, "connection_pool", None)
-            for connection in getattr(pool, "connections", []) or []:
-                session = getattr(connection, "session", None)
-                connector = getattr(session, "connector", None)
-                if connector is not None:
-                    _finish_without_loop(connector.close())
+            _close_connections(async_client)
         except Exception as e:  # noqa: BLE001 - teardown must never raise
             logger.debug("Could not eagerly close rotated async client: %s", e)
 

@@ -180,7 +180,7 @@ class IndexBuildRecord(BaseModel):
         default=None,
         description=(
             "The document filter keys ingestion stamped on the documents "
-            "of the suffix (document_identity.PATH_FILTER_KEYS: file, "
+            "of the suffix (source_fields.PATH_FILTER_KEYS: file, "
             "folder), a seed graph's aside; a document whose path is not "
             "relative to the corpus root carries none and matches no path "
             "filter. An incremental record keeps those the stored record "

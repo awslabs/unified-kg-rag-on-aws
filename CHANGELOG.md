@@ -890,6 +890,27 @@ Bugs present in 0.3.0.
   collection deleted the records live text units still name. The default now reads as "cannot tell" (one WARNING names
   the store): the reports keep their stored documents and filters, the records are kept, and a stripped entity keeps
   its stored description, as before. `docs/guides/extend.md` names the method.
+- A sync `GraphRAGChain.close()` (or `OpenSearchClient.close()`) called from a coroutine left the OpenSearch async
+  client's aiohttp session and every keep-alive socket open (7 of 7 after three searches inside `asyncio.run`), with
+  "Unclosed client session" warnings: the awaited close it scheduled on the caller's loop was cancelled by
+  `asyncio.run` before it ran. The connectors are now closed synchronously on that loop's thread (`await
+  chain.aclose()` was not affected).
+- `retrieval`'s nDCG credited a file to every reference it names, so with `reference_sources` `[a, a.pdf]` the
+  ranking `[a.pdf, a.txt]` scored 0.613 and `[a.txt, a.pdf]` 1.0 for the same two relevant files (a deeper cutoff that
+  added a.txt lowered the score). A file is now credited to one reference: the one its full name is, else one its stem
+  names. Recall, hit and MRR are unchanged.
+- A document in a corpus folder named like a drive (`x:/y.txt`) was scoped by its path filters but cited with no
+  path, so `run-rag`, the console and MCP showed it as the root file of the same name and `kg_get_chunks` gave it no
+  `relative_path` (`run-describe` listed its file name): the read side still refused the path as a Windows one. A
+  stored `relative_path` that is the unit's stamped `file` filter is now read as its path.
+- MCP `kg_search` and `kg_answer`: `mcp.max_response_chars` measured each record before its `documents` were filled in
+  (up to 20 file names a graph record), so with a raised `mcp.max_top_k` or a lower cap a response's records ran 1.5
+  to 2.9 times the cap; and a kept chunk's `entities` could name entity records the cap had dropped. The records are
+  now measured as returned, the chunks naming only the entity records kept.
+- MCP `kg_search`: the response cap apportioned the seats of the search's cut again, so a trimmed response could
+  differ by a seat between kinds from a search at the smaller `top_k` (trimmed to 10, a cut of 20 kept 6 chunks, 2
+  entities, 1 relationship, 1 report; a search at `top_k` 10 returns 5, 2, 2, 1). The search output names its score
+  groups' counts before its cut (`metadata.cut_group_counts`), and the cap apportions on them.
 
 ## [0.3.0] - 2026-11-14
 

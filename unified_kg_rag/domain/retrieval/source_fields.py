@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
@@ -116,6 +117,26 @@ def file_name(metadata: Mapping[str, Any]) -> str | None:
     return None
 
 
+# The document filters ingestion stamps on every corpus document (a seed
+# graph's shard aside), from its relative path, so a query is scoped to a
+# file (``attr_file``) or a folder at any depth (``attr_folder``) with the
+# filters every store already applies. A key the document's own filters
+# give (``InputDocument.filters``) is kept as given. Here, beside the read
+# side of the path (``relative_path``), which the ingestion and retrieval
+# code both import.
+FILE_FILTER_KEY = "file"
+FOLDER_FILTER_KEY = "folder"
+PATH_FILTER_KEYS: tuple[str, ...] = (FILE_FILTER_KEY, FOLDER_FILTER_KEY)
+
+
+def path_filter_value(value: str) -> str:
+    """A path filter's value in the one form ingestion stamps it and a query
+    compares it in: NFC. A file system may give a name decomposed (NFD
+    Hangul from macOS or an archive tool) while a user types it composed,
+    and the stores compare values as written."""
+    return unicodedata.normalize("NFC", value)
+
+
 # A path that names a place, not a path under the corpus root: a Windows
 # drive's absolute path (``C:``, ``C:/x``, ``C:\x``) or a URL scheme
 # (``s3://``). Any other ``:`` is part of a name (``notes 10:30.txt``,
@@ -145,8 +166,21 @@ def safe_relative_path(value: Any, *, under_root: bool = False) -> str | None:
 
 def relative_path(metadata: Mapping[str, Any]) -> str | None:
     """The file a text unit was chunked from, as its path relative to the
-    corpus root (its stored ``attributes.relative_path``), when it is one."""
-    return safe_relative_path(_attributes(metadata).get("relative_path"))
+    corpus root (its stored ``attributes.relative_path``), when it is one.
+    A path whose first folder is named like a drive (``x:/y.txt``) is one
+    when the unit's stamped ``filters.file`` is that path: ingestion stamps
+    the corpus walk's own path (``stamp_path_filters``, ``under_root``), so
+    its citations name the file its path filters match."""
+    attributes = _attributes(metadata)
+    value = attributes.get("relative_path")
+    if (path := safe_relative_path(value)) is not None:
+        return path
+    filters = attributes.get("filters")
+    stamped = filters.get(FILE_FILTER_KEY) if isinstance(filters, Mapping) else None
+    walked = safe_relative_path(value, under_root=True)
+    if walked is not None and stamped == path_filter_value(walked):
+        return walked
+    return None
 
 
 def text_value(value: Any) -> str | None:

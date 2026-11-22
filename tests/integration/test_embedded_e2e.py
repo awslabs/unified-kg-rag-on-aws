@@ -1308,8 +1308,46 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
                 assert not out.metadata.get("error"), (strategy, name, out.metadata)
                 cited = _cited_paths(out)
                 assert cited and cited <= allowed, (strategy, name, cited)
+        _assert_drive_named_folder_is_cited_with_its_path(chain, config)
     finally:
         chain.close()
+
+
+def _assert_drive_named_folder_is_cited_with_its_path(
+    chain: GraphRAGChain, config: Config
+) -> None:
+    """R4A-6 / R4B-5: a document in a folder named like a drive (``x:``)
+    was scoped by its path filters but cited with no path (the read side
+    refused ``x:/y.txt`` as a Windows path), so it read as a root file of
+    the same name: in ``run-rag``'s citations, the console's and
+    ``kg_get_chunks``'s ``relative_path``."""
+    from unified_kg_rag.application.cli.console.ask import AskService
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    from unified_kg_rag.application.cli.run_rag_chain import _citation_line
+
+    out = chain.invoke(
+        RAGInput(
+            query="Who stores the widgets for Vendor?",
+            search_strategy=SearchStrategy.NAIVE,
+            filters={"attr_folder": "x:"},
+        )
+    )
+    assert isinstance(out, RAGOutput)
+    (citation,) = [c for c in out.citations if c.file_name == "y.txt"]
+    assert citation.file_path == "x:/y.txt"
+    assert _citation_line(citation).split()[1] == "x:/y.txt"
+    shown = AskService._result(out, config, 0.0)["citations"]
+    assert [c["file_path"] for c in shown if c["file_name"] == "y.txt"] == ["x:/y.txt"]
+    unit_ids = [
+        str(r.source)
+        for r in out.search_results.results
+        if r.retriever_type == "text"
+        and ((r.metadata.get("attributes") or {}).get("filters") or {}).get("file")
+        == "x:/y.txt"
+    ]
+    assert unit_ids
+    chunks = asyncio.run(KnowledgeGraphTools(chain).get_chunks(unit_ids))
+    assert {r.attributes.get("relative_path") for r in chunks.records} == {"x:/y.txt"}
 
 
 def test_a_path_filter_on_a_namespace_built_without_them_is_refused(

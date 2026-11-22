@@ -261,6 +261,41 @@ def test_format_search_output_step_returns_a_search_output() -> None:
     assert out.processed_query.original_query == "q"
 
 
+def test_a_cut_search_output_names_its_groups_counts_before_the_cut() -> None:
+    # R4B-4: a later cut of the returned results (the MCP response cap)
+    # apportions on these, so it equals a search cut to its size.
+    from unified_kg_rag.domain.retrieval.kind_shares import CUT_GROUP_COUNTS
+
+    sr = _search_result()
+    sr.results = [
+        RetrievalResult(
+            content=f"c{i}",
+            score=1.0 - 0.01 * i,
+            source=f"doc-{i}",
+            retriever_type=SectionType.TEXT if i < 6 else SectionType.ENTITY,
+            metadata={"reranked": True} if i < 6 else {},
+        )
+        for i in range(9)
+    ]
+    state = {
+        "search_results": sr,
+        "resolved_strategy": SearchStrategy.LOCAL,
+        "start_time": 0.0,
+        "top_k": 4,
+        "processed_query": ProcessedQuery(original_query="q", final_query="q"),
+    }
+    out = GraphRAGChain._format_search_output_step(state)
+    assert len(out.search_results.results) == 4
+    assert out.metadata[CUT_GROUP_COUNTS] == {"reranked": 6, "entity": 3}
+    assert list(out.metadata[CUT_GROUP_COUNTS]) == ["reranked", "entity"]
+
+    # Uncut, the results' own counts are the strategy's: none named.
+    uncut = GraphRAGChain._format_search_output_step(
+        {**state, "search_results": _search_result(), "top_k": 10}
+    )
+    assert CUT_GROUP_COUNTS not in uncut.metadata
+
+
 # --- query processing off: the simple path --------------------------------
 
 

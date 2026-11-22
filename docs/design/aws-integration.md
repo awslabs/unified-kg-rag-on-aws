@@ -88,7 +88,14 @@ pools, which leak until garbage collection unless closed, so every layer
 exposes a best-effort `close()` / `aclose()` that never raises:
 
 - `OpenSearchClient` and `NeptuneClient` close their pools (OpenSearch also
-  when the event loop changes, awaiting the old client on its own loop).
+  when the event loop changes). A sync `close()` closes the async client's
+  aiohttp connectors synchronously on the thread of the loop that owns them:
+  at once when that is the caller's thread or the loop is gone, else as a
+  callback that loop runs next. It schedules no awaited close, which the
+  loop's end could cancel before it ran: `GraphRAGChain.close()` called from
+  a coroutine blocks that loop's thread while the closes run, and
+  `asyncio.run` then cancelled the close and left every keep-alive socket
+  open. `aclose()` awaits the close on the caller's loop.
   A closed Neptune retriever opens no connection or worker pool again: a
   traversal still running at the close, or started after it, fails with
   `StoreConnectionError`.

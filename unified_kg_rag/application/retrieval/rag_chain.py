@@ -12,7 +12,7 @@ import time
 import unicodedata
 import uuid
 import weakref
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -191,7 +191,11 @@ from unified_kg_rag.domain.retrieval.filters import (
     typed_filter_values,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
-from unified_kg_rag.domain.retrieval.kind_shares import cut_by_kind, score_group
+from unified_kg_rag.domain.retrieval.kind_shares import (
+    CUT_GROUP_COUNTS,
+    cut_by_kind,
+    score_group,
+)
 from unified_kg_rag.domain.retrieval.no_context import (
     NO_CONTEXT_ANSWERS,
     is_no_context_answer,
@@ -2687,6 +2691,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         sr.search_strategy = state["resolved_strategy"].value
         bound = state.get("top_k", 10) * state.get("retrieval_multiplier", 1)
         if len(sr.results) > bound:
+            # The groups' counts before the cut: a later cut of these results
+            # (the MCP response cap) keeps what a search cut to it would.
+            sr.metadata[CUT_GROUP_COUNTS] = dict(
+                Counter(score_group(r) for r in sr.results)
+            )
             sr.results = cut_by_kind(sr.results, bound, score_group)
             sr.total_results = len(sr.results)
 

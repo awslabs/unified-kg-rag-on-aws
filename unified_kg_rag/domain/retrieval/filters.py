@@ -43,10 +43,6 @@ from enum import Enum, StrEnum
 from typing import Any
 
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
-from unified_kg_rag.domain.ingestion.document_identity import (
-    PATH_FILTER_KEYS,
-    path_filter_value,
-)
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_SOURCE_KIND,
@@ -54,6 +50,10 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     encoded_source_kinds,
 )
 from unified_kg_rag.domain.models import Constants
+from unified_kg_rag.domain.retrieval.source_fields import (
+    PATH_FILTER_KEYS,
+    path_filter_value,
+)
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 ATTRIBUTE_KEY_PREFIX = f"{Constants.ATTRIBUTE_PREFIX.value}_"

@@ -100,8 +100,10 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `citation`, `cited` | `kg_answer`만: 답변 컨텍스트가 레코드에 붙인 `[n]` 표식과 답변이 그것을 인용했는지([인용](./query.ko.md#인용)). `kg_search`에서, 그리고 인용하지 않는 전략(기본값으로는 `global`과 `drift`)의 `kg_answer`에서는 `null` |
 
 응답이 `mcp.max_response_chars`를 넘으면 순위가 낮은 레코드부터 빼고 그 사실을
-알립니다(`truncated`, `omitted`). `kg_search`는 `top_k`로 자를 때처럼 종류마다 비율을
-유지하며 빼므로, 줄어든 응답에도 점수가 더 높은 재순위화 청크 옆에 그래프 레코드가 남습니다.
+알립니다(`truncated`, `omitted`). 레코드는 반환되는 그대로, 즉 `documents`와 `entities`까지
+포함해 셉니다(청크에는 응답에 남은 엔터티 레코드만 붙습니다). `kg_search`는 `top_k`로 자를 때처럼
+전략 결과에서 종류마다 차지하는 비율을 유지하며 빼므로, 줄어든 응답은 더 작은 `top_k`로 검색한
+응답과 같고 점수가 더 높은 재순위화 청크 옆에 그래프 레코드가 남습니다.
 
 ### 레코드가 인용한 청크 읽기
 

@@ -541,9 +541,8 @@ async def test_the_response_cap_keeps_each_score_groups_share() -> None:
     result = await tools.search("q", top_k=60)
     assert result.truncated and 0 < len(result.records) < 60
     assert result.omitted == 60 - len(result.records)
-    # The cap measures each record before its documents are resolved.
-    measured = [r.model_copy(update={"documents": []}) for r in result.records]
-    assert sum(len(r.model_dump_json()) for r in measured) <= 60000
+    # The records as returned, their documents resolved, fit the cap.
+    assert sum(len(r.model_dump_json()) for r in result.records) <= 60000
     kinds = Counter(r.kind for r in result.records)
     assert kinds["entity"] and kinds["relationship"], kinds
     # Each group's share of the 60 (40 chunks, 20 graph records) and its
@@ -563,6 +562,124 @@ async def test_the_response_cap_keeps_each_score_groups_share() -> None:
         first = {"text": 1, "entity": 41, "relationship": 42}[kind]
         step = 1 if kind == "text" else 2
         assert own == list(range(first, first + step * len(own), step)), kind
+
+
+def _ranked_mix(counts: dict[str, int]) -> list[RetrievalResult]:
+    """A strategy's results of ``counts`` records per score group, each
+    group best first and the groups interleaved by score: reranked chunks,
+    then entities, relationships and community reports, one scale each."""
+    results: list[RetrievalResult] = []
+    for i in range(counts.get("reranked", 0)):
+        text = _text(f"unit-{i}", f"Depot stores widget lot {i} for Vendor.")
+        text.score = 0.99 - 0.01 * i
+        text.metadata["reranked"] = True
+        results.append(text)
+    for i in range(counts.get("entity", 0)):
+        entity = _entity(f"Hub{i}", units=[])
+        entity.score = 0.016 - 0.0001 * i
+        results.append(entity)
+    for i in range(counts.get("relationship", 0)):
+        relationship = _relationship()
+        relationship = relationship.model_copy(
+            update={
+                "source": f"r-{i}",
+                "score": 0.015 - 0.0001 * i,
+                "metadata": {
+                    **relationship.metadata,
+                    "id": f"r-{i}",
+                    "text_unit_ids": [],
+                },
+            }
+        )
+        results.append(relationship)
+    for i in range(counts.get("community", 0)):
+        results.append(
+            RetrievalResult(
+                content=f"Report {i}",
+                score=0.5,
+                source=f"c-{i}",
+                retriever_type="community",
+                metadata={"id": f"c-{i}", "title": f"Report {i}"},
+            )
+        )
+    return results
+
+
+async def test_a_trimmed_search_is_the_cut_a_smaller_search_returns() -> None:
+    # R4B-4: the trim apportioned the seats of the chain's cut again, not
+    # the strategy's counts, so trimmed to 10 the search's cut of 20 kept
+    # {reranked 6, entity 2, relationship 1, community 1}, while a search
+    # at top_k 10 returns {5, 2, 2, 1} (probes/recut_example.txt).
+    from unified_kg_rag.domain.retrieval.kind_shares import (
+        CUT_GROUP_COUNTS,
+        cut_by_kind,
+        score_group,
+    )
+
+    counts = {"reranked": 40, "entity": 12, "relationship": 12, "community": 1}
+    strategy = _ranked_mix(counts)
+    chain = FakeChain(**{CUT_GROUP_COUNTS: dict(counts)})
+    chain.results = cut_by_kind(strategy, 20, score_group)
+    full = (await _tools(chain).search("q", top_k=20)).records
+    assert len(full) == 20
+    size = {r.rank: len(r.model_dump_json()) for r in full}
+    rank_of = {id(r): rank for rank, r in enumerate(chain.results, 1)}
+    for top_k in range(4, 20):
+        direct = {rank_of[id(r)] for r in cut_by_kind(strategy, top_k, score_group)}
+        budget = sum(size[rank] for rank in direct)
+        if budget < 1000:  # below mcp.max_response_chars' floor
+            continue
+        trimmed = await _tools(chain, max_response_chars=budget).search("q", top_k=20)
+        assert {r.rank for r in trimmed.records} == direct, top_k
+
+
+async def test_documents_count_in_the_response_cap_at_raised_caps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # R4B-2: the cap measured the records before their documents were
+    # filled in (up to 20 file names each), so with raised caps a response
+    # ran 1.5 to 2.9 times max_response_chars (probes/docs_overshoot.py).
+    async def names(
+        chain: Any,
+        suffix: str | None,
+        unit_ids: list[str],
+        *,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        return {u: f"{u}-{'n' * 100}.txt" for u in unit_ids}
+
+    monkeypatch.setattr(graph_lookup, "text_unit_file_names", names)
+    units = [f"u{i}" for i in range(20)]
+    for top_k, budget in ((20, 5000), (100, 60000)):
+        chain = FakeChain()
+        chain.results = [_entity(f"Hub{i}", units=units) for i in range(top_k)]
+        result = await _tools(chain, max_top_k=100, max_response_chars=budget).search(
+            "q", top_k=top_k
+        )
+        assert result.truncated, top_k
+        assert all(len(r.documents) == 20 for r in result.records)
+        assert sum(len(r.model_dump_json()) for r in result.records) <= budget
+
+
+async def test_a_kept_chunk_names_only_kept_entity_records() -> None:
+    # R4B-2: the chunks' entities were filled in before the cap, so a kept
+    # chunk named entity records the cap dropped, of "the same response".
+    chain = FakeChain()
+    text = _text()
+    text.metadata["reranked"] = True
+    hubs = [_entity(f"Hub{i}", units=[_UNIT]) for i in range(60)]
+    for i, hub in enumerate(hubs):
+        hub.metadata["description"] = "x " * 400
+        hub.score = 0.5 - 0.001 * i
+    chain.results = [text, *hubs]
+    result = await _tools(chain, max_top_k=100, max_response_chars=8000).search(
+        "q", top_k=61
+    )
+    assert result.truncated
+    chunk = next(r for r in result.records if r.kind == "text")
+    kept = {r.source_id for r in result.records if r.kind == "entity"}
+    assert kept and {e.id for e in chunk.entities} == kept
+    assert sum(len(r.model_dump_json()) for r in result.records) <= 8000
 
 
 async def test_a_record_lists_at_most_twenty_text_units() -> None:

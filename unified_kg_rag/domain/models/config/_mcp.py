@@ -122,9 +122,12 @@ class McpServerConfig(ConfigSection):
         default=60000,
         ge=1000,
         description=(
-            "Characters of serialized records one response holds; past it the "
+            "Characters of serialized records one response holds, each record "
+            "as returned (its documents and entities included); past it the "
             "lowest-ranked records are left out (truncated, omitted), in "
-            "kg_search each kind keeping its share as its top_k cut does. The MCP "
+            "kg_search each kind keeping its share as its top_k cut does (the "
+            "response of a search at a smaller top_k). At least one record is "
+            "kept. The MCP "
             "message carries the result twice (structured content and its "
             "JSON text) and JSON escaping lengthens non-ASCII text, so the "
             "message on the wire is up to about 2-4 times this"
