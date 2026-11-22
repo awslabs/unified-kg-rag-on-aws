@@ -1028,6 +1028,9 @@ def test_the_ollama_capability_probe_closes_its_connection(
     import warnings
 
     unraisable: list[Any] = []
+    # Garbage an earlier test of the worker left (an unclosed socket in a
+    # cycle) is collected before the hook, not counted as the probe's.
+    gc.collect()
     monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
     with _HTTPFakeServer(FakeServer(capabilities=["thinking"])) as server:
         factory = OllamaLanguageModelFactory(_http_config("ollama", server.url))
