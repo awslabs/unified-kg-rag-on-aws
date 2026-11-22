@@ -493,8 +493,10 @@ Bugs present in 0.3.0.
   and its own best-ranked records: one cut by score across kinds compares a reranked chunk's score (0-1) with a graph
   record's fusion score (about 0.016), and kept chunks only for every graph strategy. Kinds the reranker scored
   together compete by score (`tree`'s summaries and passages, RAPTOR's collapsed tree: cut per kind, `tree` at
-  `top_k` 3 returned passages in place of the summaries ranked first), and the shares are Sainte-Laguë's, compared in
-  exact integers, so a larger `top_k` never drops a record a smaller one returned. `mcp.max_response_chars` trims
+  `top_k` 3 returned passages in place of the summaries ranked first), and the shares are Huntington-Hill's, compared in
+  exact integers: every kind with records gets one once `top_k` reaches the number of kinds (the graph records survive
+  beside the chunks that outnumber them: `top_k` 2 returns a chunk and a relationship), and a larger `top_k` never
+  drops a record a smaller one returned. `mcp.max_response_chars` trims
   `kg_search` the same way, to the largest such cut that fits: it trimmed the tail, so with `mcp.max_top_k` raised to
   60 and long chunks the graph records were dropped again. An answer's context keeps the
   strategy's pools, and `kg_answer`'s `top_k` schema says so.

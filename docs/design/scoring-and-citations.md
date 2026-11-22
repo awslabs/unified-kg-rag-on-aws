@@ -17,9 +17,11 @@ the section numbers: they never change.
 - **A search's cut** (`GraphRAGChain.asearch`, so `kg_search` and `run-rag
   --mode search`) bounds the strategy's results to `top_k` times
   `retrieval_multiplier` the same way: each score scale keeps its share of
-  what the strategy returned (the Sainte-Laguë divisor method,
-  `domain/retrieval/kind_shares.py`: unbiased between large and small groups,
-  and a larger bound never drops a record a smaller one kept) and its own
+  what the strategy returned (the Huntington-Hill divisor method,
+  `domain/retrieval/kind_shares.py`: every group with records gets a seat
+  once the bound reaches the number of groups, so the graph records survive
+  beside the reranked chunks that outnumber them, and a larger bound never
+  drops a record a smaller one kept) and its own
   best-ranked records. A scale is the records the reranker scored together
   (flagged `reranked`, whatever their kind: `tree` reranks its summaries and
   passages in one pool, RAPTOR's collapsed tree, and a summary's expanded

@@ -31,16 +31,16 @@ from unified_kg_rag.domain.retrieval.kind_shares import (
 pytestmark = pytest.mark.unit
 
 
-def test_apportion_splits_the_seats_by_sainte_lague() -> None:
+def test_apportion_splits_the_seats_by_huntington_hill() -> None:
     assert apportion(
         {"text": 4, "entity": 4, "relationship": 4, "community": 1}, 5
     ) == {
-        # Quotients 4, 4, 4, 1, then 4/3 each: the tied seats go in the
-        # order given (the strategy's rank).
+        # Each kind's first seat first (an infinite priority), in the order
+        # given (the strategy's rank), then 4/sqrt(2) each: text, first.
         "text": 2,
-        "entity": 2,
+        "entity": 1,
         "relationship": 1,
-        "community": 0,
+        "community": 1,
     }
     assert apportion({"text": 20, "entity": 40, "relationship": 40}, 10) == {
         "text": 2,
@@ -51,18 +51,34 @@ def test_apportion_splits_the_seats_by_sainte_lague() -> None:
     assert apportion({"text": 3}, 0) == {"text": 0}
 
 
+def test_a_small_kind_keeps_a_seat_beside_a_large_one() -> None:
+    # Sainte-Lague rounded a relationship's 0.47 of 2 seats to none, so
+    # kg_search at top_k 2 returned two chunks and no graph record; the cut
+    # exists so the graph records survive beside the chunks.
+    assert apportion({"text": 45, "relationship": 14}, 2) == {
+        "text": 1,
+        "relationship": 1,
+    }
+    assert apportion({"text": 45, "relationship": 14}, 1) == {
+        "text": 1,
+        "relationship": 0,
+    }
+
+
 def test_apportion_breaks_a_tie_in_exact_arithmetic() -> None:
     # R3B-3: largest remainder in floats read 4*2/6 - 1 as 0.33333333333333326,
-    # below text's and entity's 1/3, so text took relationship's seat.
+    # below text's and entity's 1/3, so text took relationship's seat. Two
+    # seats for three kinds: the first two ranked, each its first seat.
     assert apportion({"text": 1, "entity": 1, "relationship": 4}, 2) == {
-        "text": 0,
-        "entity": 0,
-        "relationship": 2,
+        "text": 1,
+        "entity": 1,
+        "relationship": 0,
     }
-    # The second seat ties (9/3 = 3/1): it goes to the kind ranked first.
-    assert apportion({"text": 9, "entity": 3}, 2) == {"text": 2, "entity": 0}
-    assert apportion({"entity": 3, "text": 9}, 2) == {"entity": 1, "text": 1}
-    assert apportion({"entity": 3, "text": 9}, 3) == {"entity": 1, "text": 2}
+    # The tenth seat ties exactly, 12/sqrt(8*9) = 2/sqrt(1*2), which floats
+    # read as 1.4142135623730951 against 1.414213562373095: the kind ranked
+    # first takes it, whichever that is.
+    assert apportion({"text": 12, "entity": 2}, 10) == {"text": 9, "entity": 1}
+    assert apportion({"entity": 2, "text": 12}, 10) == {"entity": 2, "text": 8}
 
 
 def test_a_larger_bound_never_takes_a_kinds_seat() -> None:
@@ -73,20 +89,27 @@ def test_a_larger_bound_never_takes_a_kinds_seat() -> None:
     assert apportion(counts, 4) == {"text": 1, "entity": 2, "relationship": 1}
 
 
-def _sainte_lague(counts: dict[str, int], seats: int) -> dict[str, int]:
-    """The same method as a priority list: every quotient count / (2j + 1)
-    of every kind, in exact fractions, largest first (a tie: the kind first
-    in ``counts``, then its own earlier quotient), the first ``seats``."""
+def _huntington_hill(counts: dict[str, int], seats: int) -> dict[str, int]:
+    """The same method as a priority list: every priority count /
+    sqrt(j (j + 1)) of every kind (infinite at j = 0), its square in exact
+    fractions, largest first (a tie: the kind first in ``counts``, then its
+    own earlier priority), the first ``seats``."""
     order = {kind: i for i, kind in enumerate(counts)}
-    quotients = sorted(
+    priorities = sorted(
         (
-            (-Fraction(count, 2 * j + 1), order[kind], j, kind)
+            (
+                j > 0,
+                -Fraction(count * count, j * (j + 1)) if j else 0,
+                order[kind],
+                j,
+                kind,
+            )
             for kind, count in counts.items()
             for j in range(count)
         ),
     )
     given = dict.fromkeys(counts, 0)
-    for *_, kind in quotients[: max(seats, 0)]:
+    for *_, kind in priorities[: max(seats, 0)]:
         given[kind] += 1
     return given
 
@@ -99,10 +122,23 @@ def test_apportion_gives_each_kind_its_exact_seats(
     counts: dict[str, int], seats: int
 ) -> None:
     given_seats = apportion(counts, seats)
-    assert given_seats == _sainte_lague(counts, seats)
+    assert given_seats == _huntington_hill(counts, seats)
     assert sum(given_seats.values()) == min(max(seats, 0), sum(counts.values()))
     for kind, count in counts.items():
         assert 0 <= given_seats[kind] <= count
+
+
+@given(_COUNTS, st.integers(0, 120))
+def test_every_kind_with_records_gets_a_seat_when_the_seats_reach_the_kinds(
+    counts: dict[str, int], seats: int
+) -> None:
+    kinds = [kind for kind, count in counts.items() if count]
+    given_seats = apportion(counts, seats)
+    if seats >= len(kinds):
+        assert all(given_seats[kind] >= 1 for kind in kinds)
+    else:
+        # Fewer seats than kinds: one each, to the kinds ranked first.
+        assert [kind for kind in kinds if given_seats[kind]] == kinds[:seats]
 
 
 @given(_COUNTS, st.integers(0, 120))
