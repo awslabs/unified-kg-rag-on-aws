@@ -344,6 +344,9 @@ describe("an entity's panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show all relationships" }));
     expect(list()).toHaveLength(total);
     expect(screen.queryByRole("button", { name: "Show all relationships" })).toBeNull();
+    // The button went: focus is on the first relationship it added, not
+    // on the page (R3C-4).
+    expect(document.activeElement).toBe(list()[NEIGHBOURS_SHOWN]?.querySelector("button"));
   });
 });
 

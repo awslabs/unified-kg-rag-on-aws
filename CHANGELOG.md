@@ -820,6 +820,8 @@ Bugs present in 0.3.0.
 - The console's Settings page said a deprecated key is removed by "a later release"; every other surface names it
   (`removed in 0.5.0`). The settings view sends each deprecated key's `removed_in`, and the page names that release
   in all its languages.
+- The console Graph page's "Show all relationships" left keyboard focus on the page once the list was whole (the
+  button goes): focus moves to the first relationship it added.
 
 ## [0.3.0] - 2026-11-14
 
