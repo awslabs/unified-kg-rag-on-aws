@@ -61,13 +61,15 @@ filter leaves them out.
 The stamped values are NFC, and a query's `attr_file` and `attr_folder`
 values match their NFC form too, so a folder name the file system gave
 decomposed (NFD Hangul from macOS or an archive tool) matches the name as
-typed. A `:` in a name is kept (`notes 10:30.txt`, `a:b.txt`). A path that
-starts with a Windows drive (`C:`, `C:/x`) or a URL scheme (`s3://`) is
-not under the corpus root, so its document (a pre-parsed document that
-names where it lived, or a corpus file in a folder named like a drive,
-`x:/y.txt`) gets no path filters and matches no path filter; ingestion
-names such documents in a WARNING, and the rest of the namespace keeps its
-path filters.
+typed. A `:` in a name is kept (`notes 10:30.txt`, `a:b.txt`), and a
+corpus folder named like a drive (`x:/y.txt`, as an archive of a Windows
+drive unpacks) is a folder: the corpus walk found it under the root. A
+path recorded for a document instead (a pre-parsed document that names
+where it lived, an `InputDocument.id`) that is absolute, starts with a
+Windows drive (`C:`, `C:/x`) or a URL scheme (`s3://`), or climbs out with
+`..` is not under the corpus root, so its document gets no path filters and
+matches no path filter; ingestion names such documents in a WARNING, and
+the rest of the namespace keeps its path filters.
 
 A namespace built before ingestion stamped them (its build record names no
 `document_filter_keys`), or indexed incrementally since such a build, holds

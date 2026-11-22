@@ -16,13 +16,18 @@ the section numbers: they never change.
   `search.reranking.required`.
 - **A search's cut** (`GraphRAGChain.asearch`, so `kg_search` and `run-rag
   --mode search`) bounds the strategy's results to `top_k` times
-  `retrieval_multiplier` the same way: each kind keeps its share of what the
-  strategy returned (largest remainder, `domain/retrieval/kind_shares.py`)
-  and its own best-ranked records. Scores are compared only within a kind: a
-  reranked chunk carries the reranker's score (0-1, or a logit) and a graph
-  record its fusion score (about 1/61 under RRF), so one cut by score across
-  kinds would keep whichever scale is larger. An answer's context is not cut
-  here.
+  `retrieval_multiplier` the same way: each score scale keeps its share of
+  what the strategy returned (the Sainte-Laguë divisor method,
+  `domain/retrieval/kind_shares.py`: unbiased between large and small groups,
+  and a larger bound never drops a record a smaller one kept) and its own
+  best-ranked records. A scale is the records the reranker scored together
+  (flagged `reranked`, whatever their kind: `tree` reranks its summaries and
+  passages in one pool, RAPTOR's collapsed tree, and a summary's expanded
+  passages take its score), else one kind. Scores are compared only within a
+  scale: a reranked chunk carries the reranker's score (0-1, or a logit) and
+  an unreranked graph record its fusion score (about 1/61 under RRF), so one
+  cut by score across them would keep whichever scale is larger. An answer's
+  context is not cut here.
 - **TokenManager** (`adapters/retrieval/token_manager.py`) packs the context
   into the answer model's budget. Each section type gets a hard-capped share
   (`search.token_manager.type_budgets`); within it sections go in score order

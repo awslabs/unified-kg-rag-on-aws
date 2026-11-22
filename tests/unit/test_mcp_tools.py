@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -43,6 +44,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
+from unified_kg_rag.domain.retrieval.kind_shares import apportion
 from unified_kg_rag.shared.exceptions import (
     INTERNAL_ERROR_MESSAGE,
     ConfigurationError,
@@ -514,6 +516,53 @@ async def test_text_is_cut_and_the_response_capped() -> None:
     assert result.truncated and result.omitted == 40 - len(result.records)
     assert sum(len(r.model_dump_json()) for r in result.records) <= 5000
     assert [r.rank for r in result.records] == list(range(1, len(result.records) + 1))
+
+
+async def test_the_response_cap_keeps_each_score_groups_share() -> None:
+    # R3B-2: the cap trimmed the search's cut from its tail, and the tail is
+    # the graph (fusion scores about 0.016, below every reranked chunk), so
+    # with mcp.max_top_k raised to 60 and long chunks a search returned
+    # chunks only, the symptom the search's cut by kind had fixed.
+    chain = FakeChain()
+    texts = []
+    for i in range(40):
+        text = _text(f"unit-{i}", "word " * 1000)  # 5000 characters
+        text.score = 0.99 - 0.01 * i
+        text.metadata["reranked"] = True
+        texts.append(text)
+    graph = []
+    for i in range(10):
+        entity = _entity(f"Hub{i}")
+        relationship = _relationship().model_copy(update={"source": f"r-{i}"})
+        entity.score = relationship.score = 0.016 - 0.0001 * i
+        graph += [entity, relationship]
+    chain.results = texts + graph
+    tools = _tools(chain, max_top_k=60)
+    result = await tools.search("q", top_k=60)
+    assert result.truncated and 0 < len(result.records) < 60
+    assert result.omitted == 60 - len(result.records)
+    # The cap measures each record before its documents are resolved.
+    measured = [r.model_copy(update={"documents": []}) for r in result.records]
+    assert sum(len(r.model_dump_json()) for r in measured) <= 60000
+    kinds = Counter(r.kind for r in result.records)
+    assert kinds["entity"] and kinds["relationship"], kinds
+    # Each group's share of the 60 (40 chunks, 20 graph records) and its
+    # best-ranked records, in rank order.
+    groups = {"text": "reranked", "entity": "entity", "relationship": "relationship"}
+    assert Counter(groups[r.kind] for r in result.records) == {
+        group: seats
+        for group, seats in apportion(
+            {"reranked": 40, "entity": 10, "relationship": 10}, len(result.records)
+        ).items()
+        if seats
+    }
+    ranks = [r.rank for r in result.records]
+    assert ranks == sorted(ranks)
+    for kind in ("text", "entity", "relationship"):
+        own = [r.rank for r in result.records if r.kind == kind]
+        first = {"text": 1, "entity": 41, "relationship": 42}[kind]
+        step = 1 if kind == "text" else 2
+        assert own == list(range(first, first + step * len(own), step)), kind
 
 
 async def test_a_record_lists_at_most_twenty_text_units() -> None:

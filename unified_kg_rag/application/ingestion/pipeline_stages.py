@@ -3419,9 +3419,11 @@ class IndexingStage(_RegistryStage):
         )
         if not rewritten and (unstamped := _unstamped_documents(text_units)):
             logger.warning(
-                "%s document(s) carry no path filters (file, folder): their "
-                "path is not relative to the corpus root, so attr_file and "
-                "attr_folder never match them: %s",
+                "%s document(s) carry no path filters (file, folder): the "
+                "path recorded for them (not one the corpus walk found under "
+                "its root) is absolute, starts with a drive or URL scheme, or "
+                "climbs out with '..', so attr_file and attr_folder never "
+                "match them: %s",
                 len(unstamped),
                 first_names(unstamped),
             )

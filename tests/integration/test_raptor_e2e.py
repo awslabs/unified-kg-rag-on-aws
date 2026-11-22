@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The raptor methodology end to end on the embedded stores (no AWS, no
-container; docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
+container, except a search's cut, also on the containers under
+``LOCAL_STORES=1``; docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
 
 A raptor-only ingestion runs no graph stage and builds a summary tree over
 the stored text units; adding raptor to an existing namespace builds only
@@ -943,6 +944,131 @@ def test_tree_reads_what_the_namespace_holds_under_any_config(
         assert not by_type(out, "summary")
     finally:
         chain.close()
+
+
+def _on_containers(config: Config) -> None:
+    """``config`` on the Gremlin and OpenSearch containers, in a namespace of
+    its own."""
+    import uuid
+
+    from tests.fixtures.store_backends import local_store_config
+
+    local = local_store_config()
+    config.providers.graph.kind = "gremlin"
+    config.providers.vector.kind = "opensearch"
+    config.aws.opensearch = local.aws.opensearch
+    config.aws.neptune = local.aws.neptune
+    config.indexing.neptune.vertex_ids = local.indexing.neptune.vertex_ids
+    config.indexing.additional_suffix = f"tc{uuid.uuid4().hex[:8]}"
+
+
+def _clear(providers: Providers) -> None:
+    from tests.fixtures.store_backends import clear_extraction_records
+
+    graph = providers.build_graph_indexer()
+    vectors = providers.build_vector_indexer()
+    try:
+        graph.clear(["default"])
+        vectors.clear(["default"])
+        clear_extraction_records(vectors, ["default"])
+    finally:
+        graph.close()
+        vectors.close()
+
+
+@pytest.mark.parametrize(
+    "stores", ["embedded", pytest.param("container", marks=pytest.mark.local_stores)]
+)
+def test_a_tree_search_is_cut_in_the_rerankers_order(
+    tmp_path: Path,
+    no_aws,  # noqa: F811 - the fixture
+    stores: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # R3B-1: tree reranks its summaries and passages in one pool (RAPTOR's
+    # collapsed tree), yet a search's cut gave each kind its share: the
+    # passages, many more, took the seats of summaries the reranker scored
+    # 1.0, and top_k 8 kept passages it scored 0. Reranked together, they
+    # are cut by score; unreranked, each kind keeps its share.
+    import httpx
+
+    from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
+    from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
+    from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.retrieval import rag_chain
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
+    from unified_kg_rag.domain.models import SearchStrategy
+    from unified_kg_rag.domain.retrieval.kind_shares import cut_by_kind
+
+    config, providers, server, _ = setup(tmp_path)
+    # Fewer text units than the corpus holds: each summary's expanded
+    # passages, scored on its scale, join the ranked list.
+    config.search.tree_search.text_top_k = 2
+    if stores == "container":
+        _on_containers(config)
+        providers = e2e._providers(
+            config, server, e2e.FakeCrossEncoder("synthetic-reranker")
+        )
+    context = ingest(config, providers, corpus(tmp_path), tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    cuts: list[tuple[list[Any], list[Any]]] = []
+
+    def spy(items: Any, bound: int, kind: Any) -> list[Any]:
+        kept = cut_by_kind(items, bound, kind)
+        cuts.append((list(items), kept))
+        return kept
+
+    monkeypatch.setattr(rag_chain, "cut_by_kind", spy)
+    # Whether a cut per kind would have kept other records.
+    bites: list[bool] = []
+    unreranked = config.model_copy(deep=True)
+    unreranked.providers.rerank.kind = "none"
+    transport = httpx.MockTransport(server)
+    plain = build_providers(
+        unreranked,
+        llm_factory=OllamaLanguageModelFactory(unreranked, transport=transport),
+        embedding_factory=OllamaEmbeddingFactory(unreranked, transport=transport),
+    )
+    try:
+        for name, query_config, query_providers in (
+            ("reranked", config, providers),
+            ("unreranked", unreranked, plain),
+        ):
+            chain = GraphRAGChain(query_config, providers=query_providers)
+            try:
+                for top_k in (3, 8):
+                    cuts.clear()
+                    out = chain.search(
+                        RAGInput(
+                            query=QUESTION,
+                            search_strategy=SearchStrategy.TREE,
+                            top_k=top_k,
+                        )
+                    )
+                    kept = out.search_results.results
+                    assert len(kept) == top_k
+                    ((ranked, cut),) = cuts
+                    assert cut == kept
+                    by_kind = cut_by_kind(ranked, top_k, lambda r: r.retriever_type)
+                    if name == "reranked":
+                        assert all(r.metadata.get("reranked") for r in ranked)
+                        assert kept == ranked[:top_k], top_k
+                        bites.append(by_kind != ranked[:top_k])
+                        scores = [r.score for r in ranked]
+                        assert min(r.score for r in kept) >= max(
+                            scores[top_k:], default=0.0
+                        )
+                    else:
+                        assert not any(r.metadata.get("reranked") for r in ranked)
+                        assert kept == by_kind, top_k
+                        assert {r.retriever_type for r in kept} == {"summary", "text"}
+            finally:
+                chain.close()
+        # The test bites: cut per kind, a reranked list differed.
+        assert any(bites), bites
+    finally:
+        if stores == "container":
+            _clear(providers)
 
 
 def test_a_filter_key_no_held_index_declares_is_refused(

@@ -158,7 +158,9 @@ def distinct_references(
     refs: Any, files: list[frozenset[str]] | None = None
 ) -> dict[str, str]:
     """``{match key: display name}`` of the distinct references of ``refs``
-    (``reference_sources``), against the ranked ``files`` (``ranked_files``).
+    (``reference_sources``), against the ranked ``files`` (``ranked_files``;
+    a metric at a cutoff passes the files within it, so a file ranked past
+    the cutoff never changes it).
 
     References with the same key are one. A reference spelled as others'
     stem (``report-a`` beside ``Report-A.pdf``, whose keys hold
@@ -286,9 +288,8 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             skipped[EvaluationMetricType.ATTRIBUTABLE_FRACTION.value] = "no_sources"
 
         files = ranked_files(sources, source_types)
-        references = distinct_references(
-            result.metadata.get("reference_sources"), files
-        )
+        given = result.metadata.get("reference_sources")
+        references = distinct_references(given, files)
         metadata: dict[str, Any] = {
             **self._extract_search_metadata(result),
             "k": self.k,
@@ -326,10 +327,10 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             skipped.update({m.value: skip_reason for m in rank_metrics})
             skipped.update(dict.fromkeys(self._further_names(), skip_reason))
         else:
-            scores, matched_at_k, first_rank = self._rank_scores(files, references)
+            scores, matched_at_k, first_rank = self._rank_scores(files, given)
             values.update(scores)
             for k in self.further_k:
-                at_k, _, _ = self._rank_scores(files, references, k)
+                at_k, _, _ = self._rank_scores(files, given, k)
                 further.update({(m, k): at_k[m] for m in AT_K_METRICS})
             metadata["matched_references_at_k"] = matched_at_k
             metadata["first_relevant_rank"] = first_rank
@@ -343,7 +344,7 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
                     ]
                 )
                 if type_files:
-                    type_scores, _, _ = self._rank_scores(type_files, references)
+                    type_scores, _, _ = self._rank_scores(type_files, given)
                     by_type[source_type] = {m.value: v for m, v in type_scores.items()}
             metadata[BY_SOURCE_TYPE_KEY] = by_type
         if skipped:
@@ -376,12 +377,16 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
     def _rank_scores(
         self,
         files: list[frozenset[str]],
-        references: dict[str, str],
+        given: Any,
         k: int | None = None,
     ) -> tuple[dict[EvaluationMetricType, float], list[str], int | None]:
         """(hit@k / recall@k / nDCG@k / MRR, matched references at k, first
-        match rank), at ``k`` (the first cutoff by default)."""
+        match rank), at ``k`` (the first cutoff by default), against the
+        distinct references of ``given`` (``reference_sources``) as the
+        files within ``k`` tell them apart: a file ranked past the cutoff
+        never changes a score at it."""
         k = self.k if k is None else k
+        references = distinct_references(given, files[:k])
 
         def _matched(keys: list[frozenset[str]]) -> set[str]:
             return {

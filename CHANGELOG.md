@@ -340,8 +340,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   depth on every store, from a directory corpus too (only `InputDocument.filters` gave a document filters before).
   A key a document's own filters give keeps its value, in NFC too. The values are NFC, and a query's values match
   their NFC form too, so a name the file system gave decomposed (NFD Hangul) matches as typed; a `:` in a name is kept
-  (`a:b.txt` too), and a path that starts with a Windows drive (`C:/`) or a URL scheme gets none: that document
-  matches no path filter, and ingestion names it in a WARNING. The build record names the keys
+  (`a:b.txt` too, and a corpus folder named like a drive, `x:/`), and a path recorded for a document (a pre-parsed
+  document's, an `InputDocument.id`) that starts with a Windows drive (`C:/`) or a URL scheme gets none: that
+  document matches no path filter, and ingestion names it in a WARNING. The build record names the keys
   (`document_filter_keys`), and a namespace built without them refuses them, in `kg_get_chunks` too
   ([Path filters](docs/reference/filters.md#path-filters)).
 - MCP `kg_get_chunks(ids)`: an agent reads the chunks a record cites (`chunk_id`, `text_unit_ids`) by id, with their
@@ -490,14 +491,20 @@ Bugs present in 0.3.0.
   rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
   results to `top_k` (times `retrieval_multiplier`), each kind of result keeping its share of the strategy's results
   and its own best-ranked records: one cut by score across kinds compares a reranked chunk's score (0-1) with a graph
-  record's fusion score (about 0.016), and kept chunks only for every graph strategy. An answer's context keeps the
+  record's fusion score (about 0.016), and kept chunks only for every graph strategy. Kinds the reranker scored
+  together compete by score (`tree`'s summaries and passages, RAPTOR's collapsed tree: cut per kind, `tree` at
+  `top_k` 3 returned passages in place of the summaries ranked first), and the shares are Sainte-Laguë's, compared in
+  exact integers, so a larger `top_k` never drops a record a smaller one returned. `mcp.max_response_chars` trims
+  `kg_search` the same way, to the largest such cut that fits: it trimmed the tail, so with `mcp.max_top_k` raised to
+  60 and long chunks the graph records were dropped again. An answer's context keeps the
   strategy's pools, and `kg_answer`'s `top_k` schema says so.
 - `cjk_script_split` on OpenSearch put a space between halfwidth Katakana and the Hangul after it (`ｶﾀｶﾅ한글` lost the
   `ナ한` bigram) where the embedded engine, which folds width first, did not: its split reads U+FF65-FF9F as Kana. An
   index's analysis is set when it is created, so an index built before keeps the old split until a reset.
 - `retrieval`'s nDCG@k counted two references a single file matches (`report-a` beside `Report-A.pdf`) as two
   relevant documents, so perfect retrieval scored 0.61. A reference spelled as others' stem is one with them when
-  every retrieved file it matches one of them matches too, the specific spelling kept. A file only the stem matches
+  every file retrieved within the cutoff it matches one of them matches too, the specific spelling kept (a file past
+  the cutoff never changes a score at it: `a.txt` at rank 20 lowered nDCG@5 to 0.61). A file only the stem matches
   is another document, so a title another title begins with (`Amazon` beside `Amazon.com`) stays its own reference,
   and two files of one stem stay two.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid

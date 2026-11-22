@@ -196,17 +196,21 @@ def path_filters(relative_path: str) -> dict[str, str | list[str]]:
     return filters
 
 
-def stamp_path_filters(document: Document, relative_path: str) -> None:
+def stamp_path_filters(
+    document: Document, relative_path: str, *, under_root: bool = False
+) -> None:
     """Add :func:`path_filters` of ``document``'s ``relative_path`` to its
     ``filters`` metadata, in place (a new dict: the metadata's may be
     shared), keeping a key its filters already give, in NFC as a stamped
     one (:func:`path_filter_value`). No stamp for a path that is not
     relative to the corpus root (``safe_relative_path``: a document parsed
-    outside the pipeline names where it lived)."""
+    outside the pipeline names where it lived); ``under_root`` (the corpus
+    walk's own path) reads a first folder named like a drive (``x:``) as a
+    folder."""
     key = Constants.FILTERS.value
     given = document.metadata.get(key)
     given = _nfc_path_filters(given) if isinstance(given, dict) else {}
-    relative = safe_relative_path(relative_path)
+    relative = safe_relative_path(relative_path, under_root=under_root)
     if relative is None:
         if given:
             document.metadata[key] = given

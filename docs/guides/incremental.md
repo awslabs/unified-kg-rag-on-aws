@@ -157,9 +157,13 @@ description (a summary stays as it was) and appends the delta's new lines,
 and its text unit ids are a full build's, possibly in another order. On
 OpenSearch, lexical scores count deleted documents until their segments
 merge, so after a run that removed or rewrote documents, ranks can differ
-from a clean build's; for an exact comparison, set
-`index.merge.policy.expunge_deletes_allowed: 0` on the indexes and call
-`_forcemerge?only_expunge_deletes=true`. Two
+from a clean build's. For an exact comparison, set
+`index.merge.policy.expunge_deletes_allowed: 0` on the indexes and wait
+about a minute after the run's last write: OpenSearch keeps deleted
+documents for about 30-40 s after it (the shard's soft-delete retention
+lease), and a merge before then keeps them. Then call
+`_forcemerge?only_expunge_deletes=true` and `_refresh`, and check that
+`_cat/indices?h=index,docs.deleted` shows `0` for each index. Two
 signals tell you when a rebuild is due. Neither resets anything on its own.
 
 ### Community drift (per run)

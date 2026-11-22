@@ -191,7 +191,7 @@ from unified_kg_rag.domain.retrieval.filters import (
     typed_filter_values,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
-from unified_kg_rag.domain.retrieval.kind_shares import cut_by_kind
+from unified_kg_rag.domain.retrieval.kind_shares import cut_by_kind, score_group
 from unified_kg_rag.domain.retrieval.no_context import (
     NO_CONTEXT_ANSWERS,
     is_no_context_answer,
@@ -2671,10 +2671,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """A search's output: its results cut to at most ``top_k`` (times
         ``retrieval_multiplier``), after fusion and rerank, the bound a
         search names (``kg_search``'s ``mcp.max_top_k``, ``run-rag --mode
-        search --top-k``). Each kind keeps its share of the strategy's
-        results and its own best-ranked items (``cut_by_kind``): a reranked
-        chunk's score and a graph record's fusion score are on different
-        scales, so one cut by score would keep only the larger scale. A
+        search --top-k``). Each score scale (``score_group``: the records
+        the reranker scored together, else one kind's) keeps its share of
+        the strategy's results and its own best-ranked items
+        (``cut_by_kind``): a reranked chunk's score and an unreranked graph
+        record's fusion score are on different scales, so one cut by score
+        would keep only the larger scale, while ``tree``'s summaries and
+        passages, reranked in one pool, compete by score. A
         strategy reads wider pools than that (LightRAG's
         ``kg_stream_top_k``/``chunk_stream_top_k`` floors, graph expansion,
         iterative's rounds, ppr's passages and entities), which an answer's
@@ -2683,9 +2686,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         sr.search_strategy = state["resolved_strategy"].value
         bound = state.get("top_k", 10) * state.get("retrieval_multiplier", 1)
         if len(sr.results) > bound:
-            sr.results = cut_by_kind(
-                sr.results, bound, lambda result: result.retriever_type
-            )
+            sr.results = cut_by_kind(sr.results, bound, score_group)
             sr.total_results = len(sr.results)
 
         metadata = {

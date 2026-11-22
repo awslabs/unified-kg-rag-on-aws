@@ -46,7 +46,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 
 | 도구 | 하는 일 | 모델 호출 |
 |---|---|---|
-| `kg_search` | 검색만 합니다. 질의(어느 언어든)에 대한 근거 콘텐츠를 최대 `top_k`개 돌려주며(항목 종류마다 전략 결과에서 차지하는 비율을 유지하고 그 종류의 상위 항목을 남깁니다), `strategy`, `search_type`, `top_k`, `filters`는 `run-rag --mode search`와 같습니다 | 전략의 질의 처리, 질의 임베딩, 재순위화 |
+| `kg_search` | 검색만 합니다. 질의(어느 언어든)에 대한 근거 콘텐츠를 최대 `top_k`개 돌려주며(항목 종류마다 전략 결과에서 차지하는 비율을 유지하고 그 종류의 상위 항목을 남깁니다. `tree`의 요약과 구절처럼 재순위화 모델이 함께 점수를 매긴 종류는 점수로 겨룹니다), `strategy`, `search_type`, `top_k`, `filters`는 `run-rag --mode search`와 같습니다 | 전략의 질의 처리, 질의 임베딩, 재순위화 |
 | `kg_answer` | RAG 답변 전체와 답변 거절 필드(`abstained`, `abstention_reason`)를 먼저, 그다음 답변의 근거 레코드와 `usage`. `records`: `cited`(기본값: 답변이 인용한 출처와 모델 작성 섹션. `global`이나 `drift` 답변처럼 하나도 인용하지 않으면 앞의 `mcp.uncited_records`개, `records_kept: top`), `all`(답변 모델이 본 모든 출처. 답변이 인용할 수 있는 모델 작성 섹션인 global 검색의 핵심 요점과 DRIFT의 중간 답변이 먼저), `none`. 실제 적용된 값은 `records_kept`. `degraded`는 답변이 빠뜨린 단계(부분 답변: 각 `step`, `reason`, `error_type`), `citations_unresolved`는 실패한 계보(lineage) 읽기입니다. 후속 질문이면 지금까지의 대화를 `history`로 넘깁니다(아래 참고) | 위의 호출, `history`가 있으면 후속 질문 재작성, 답변 생성 |
 | `kg_get_entity` | `id`, `iri`, `name`으로 엔터티를 찾습니다(이름은 먼저 정확히 일치하는 것을 찾고(전략이 이름을 연결하는 방식대로 대소문자, 아랍어 알레프 형태, `ё`/`е` 차이는 무시), 없으면 가장 비슷한 이름을 찾고 `match: search`로 표시) | 없음 |
 | `kg_neighbors` | 한 엔터티에서 `max_hops` 안에 있는 엔터티와 그 사이의 관계 | 없음 |
@@ -100,7 +100,8 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `citation`, `cited` | `kg_answer`만: 답변 컨텍스트가 레코드에 붙인 `[n]` 표식과 답변이 그것을 인용했는지([인용](./query.ko.md#인용)). `kg_search`에서, 그리고 인용하지 않는 전략(기본값으로는 `global`과 `drift`)의 `kg_answer`에서는 `null` |
 
 응답이 `mcp.max_response_chars`를 넘으면 순위가 낮은 레코드부터 빼고 그 사실을
-알립니다(`truncated`, `omitted`).
+알립니다(`truncated`, `omitted`). `kg_search`는 `top_k`로 자를 때처럼 종류마다 비율을
+유지하며 빼므로, 줄어든 응답에도 점수가 더 높은 재순위화 청크 옆에 그래프 레코드가 남습니다.
 
 ### 레코드가 인용한 청크 읽기
 

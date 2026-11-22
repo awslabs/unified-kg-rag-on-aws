@@ -229,6 +229,7 @@ class SourceFileParser:
             self.source_directory,
             self.config.indexing.additional_suffix,
             store_namespace_tag(self.config.indexing),
+            walked=True,
         )
         return document
 

@@ -90,6 +90,7 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
     held_artifacts_of,
     readable_artifacts,
 )
+from unified_kg_rag.domain.retrieval.kind_shares import RERANKED
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
@@ -1697,7 +1698,7 @@ class BaseSearchStrategy(ABC):
                         "kg_rag.results_out": len(results),
                         "kg_rag.rerank_status": rerank_trace.stages[-1].status.value,
                         "kg_rag.reranked": sum(
-                            bool((r.metadata or {}).get("reranked")) for r in results
+                            bool((r.metadata or {}).get(RERANKED)) for r in results
                         ),
                         # The fused (and reranked) order and its scores.
                         **_ranked_attributes(results),

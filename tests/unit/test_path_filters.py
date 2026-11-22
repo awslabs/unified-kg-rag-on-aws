@@ -199,6 +199,31 @@ def test_only_a_drive_or_a_url_scheme_is_not_a_relative_path(
     assert document.metadata.get("filters") == expected
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("x:/y.txt", {"file": "x:/y.txt", "folder": ["x:"]}),
+        ("C:/corpus/r.txt", {"file": "C:/corpus/r.txt", "folder": ["C:", "C:/corpus"]}),
+    ],
+)
+def test_a_folder_the_walk_found_named_like_a_drive_is_a_folder(
+    path: str, expected: dict
+) -> None:
+    # R3B-6: a corpus folder named "x:" (legal on POSIX; an archive of a
+    # Windows drive unpacks so) was refused as a Windows path, so a filter
+    # on it was silently empty. The walk found it under the root.
+    document = _document(path)
+    assign_document_identity(document, "/corpus", walked=True)
+    assert document.metadata["relative_path"] == path
+    assert document.metadata.get("filters") == expected
+    # The same path a document records for itself (an InputDocument id, a
+    # pre-parsed document's) may name a drive: no stamp.
+    recorded = _document(path)
+    assign_document_identity(recorded, "/corpus")
+    assert recorded.metadata["relative_path"] == path
+    assert recorded.metadata.get("filters") is None
+
+
 def _unit(unit_id: str, filters: dict | None) -> TextUnit:
     attributes = None if filters is None else {"filters": filters}
     return TextUnit(id=unit_id, text="Vendor supplies widgets.", attributes=attributes)

@@ -233,6 +233,66 @@ async def test_a_cut_search_keeps_the_graph_beside_reranked_chunks(
             assert ids == wide_kinds[kind][: len(ids)], kind
 
 
+@pytest.fixture(scope="module")
+def long_index(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Index]:
+    # 24 documents of about 4,800-character chunks (the default chunk size's
+    # order): at mcp.max_top_k 60, a search's records pass the default
+    # mcp.max_response_chars (60,000).
+    root = tmp_path_factory.mktemp("mcp-long")
+    config = _config(root / "stores", root / "viz")
+    config.mcp.max_top_k = 60
+    chunking = config.processing.chunking
+    chunking.max_chunk_size = 6000
+    chunking.fallback_chunk_size = 4800
+    chunking.pre_chunk_size = 12500
+    server = FakeOllama(_respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("graded", relevant=None))
+    source = root / "corpus"
+    source.mkdir()
+    for i in range(24):
+        a, b = NAMES[i % 5], NAMES[(i * 3 + 1) % 5]
+        ledger = " ".join(
+            f"Line {j} of the lot {i} ledger records routine handling of crates."
+            for j in range(140)
+        )
+        (source / f"d{i:02d}.txt").write_text(
+            f"{a} ships widgets to {b} in lot {i}. {b} stores widgets for {a}. "
+            + ledger[:9400],
+            encoding="utf-8",
+        )
+    context = _ingest(config, providers, source, root / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    yield Index(config, providers, root, server)
+
+
+@pytest.mark.parametrize("strategy", ["local", "mix", "hybrid", "ppr"])
+async def test_the_response_cap_keeps_the_graph_beside_long_chunks(
+    long_index: Index, strategy: str
+) -> None:
+    # R3B-2: the cap trimmed the cut from its tail, the graph records (their
+    # fusion scores below every reranked chunk), so at max_top_k 60 a search
+    # returned text chunks only.
+    chain = long_index.chain()
+    try:
+        tools = KnowledgeGraphTools(chain)
+        result = await tools.search(
+            "Who stores the widgets for Vendor?", strategy=strategy, top_k=60
+        )
+    finally:
+        await chain.aclose()
+    kinds = _by_kind(result.records)
+    assert result.truncated and result.omitted, kinds
+    assert "text" in kinds and set(kinds) - {"text"}, kinds
+    chunks = [r for r in result.records if r.kind == "text"]
+    assert max(len(r.text) for r in chunks) == tools.settings.max_text_chars
+    measured = [r.model_copy(update={"documents": []}) for r in result.records]
+    assert sum(len(r.model_dump_json()) for r in measured) <= (
+        tools.settings.max_response_chars
+    )
+    ranks = [r.rank for r in result.records]
+    assert ranks == sorted(ranks)
+
+
 async def test_kg_answer_answers_with_its_sources(tools: KnowledgeGraphTools) -> None:
     result = await tools.answer("Who stores the widgets for Vendor?", strategy="mix")
     assert result.answer == ANSWER
