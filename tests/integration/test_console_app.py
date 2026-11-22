@@ -900,9 +900,11 @@ def test_an_incomplete_cache_ingests_again_once_its_question_is_confirmed(
     # A completed stage whose output the cache lost: the run asks before it
     # writes, and the job names the question instead of failing for good.
     second = _ingest(client, "uploads:damaged")
-    assert second["status"] == "failed"
-    assert second["confirmation"] == "integrity", second["error"]
-    assert second["confirmation_reason"] == "cache", second["error"]
+    # The whole record on a failure (exit code, error, log tail): R4C-1's
+    # flake read only "None".
+    assert second["status"] == "failed", second
+    assert second["confirmation"] == "integrity", second
+    assert second["confirmation_reason"] == "cache", second
     third = _ingest(client, "uploads:damaged", confirm_integrity=True)
     assert "--confirm-integrity" in third["command"]
     assert third["status"] == "succeeded", third["log"]
