@@ -450,7 +450,10 @@ class TestGeneration:
         found = asyncio.run(generator._reduce_call(candidate, batched=True)())
         # Three batches (2, 2, 1 claims), then the reduce over 3 partials.
         assert len(prompts) == 4
-        assert [p.count("ID: claim_") for p in prompts] == [2, 2, 1, 3]
+        # The batches run concurrently, so they reach the model in any order;
+        # the reduce comes after all of them.
+        counts = [p.count("ID: claim_") for p in prompts]
+        assert sorted(counts[:3]) == [1, 2, 2] and counts[3] == 3
         assert [a.statement for a in found] == [
             "Final [c0 + c1]",
             "Final [c2 + c3]",
