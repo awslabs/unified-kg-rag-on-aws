@@ -138,12 +138,17 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   for "NYC") or covering either way seeds as before, so the measured
   seeding is otherwise unchanged. Requiring full coverage, as `cover` does,
   is an unmeasured experiment. A focus none of whose names is a stored
-  entity among its own hits, a word of the query, or covers its own top
-  hit's name or is covered by it (`focus_names_anything`: the placeholder
-  a model writes for a query that names no entity, "none" or "Empty" in
-  any language, while "Beatles" for the stored "The Beatles" or "New York
-  City" for "New York" stays) is read as no focus: every section then
-  searches by the query, as without one. With
+  entity among its own hits, a word of the query, or holds its own top
+  hit's whole name (`focus_names_anything`: whole words, and a run in a
+  script written without spaces from the start of one of its words) is read
+  as no focus: every section then searches by the query, as without one.
+  That drops the placeholder a model writes for a query that names no
+  entity ("none" or "Empty" in any language) and keeps "New York City" for
+  the stored "New York" or 東京都 for 東京. A name a stored one only
+  contains does not count, as a placeholder is a word of many names ("None
+  of the Above", "Second to None", 梨なし園) and a part of a name one of
+  other entities' ("York", 京都 in 東京都): "Beatles" for the stored "The
+  Beatles" is searched as the query. With
   `search.local_search.include_bridge_relationships` (default on), the
   relationships incident to the expanded entities are fetched too (one
   request naming both endpoint fields, `SearchQuery.any_of`, of at most

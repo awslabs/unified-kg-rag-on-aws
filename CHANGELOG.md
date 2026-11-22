@@ -804,8 +804,9 @@ Bugs present in 0.3.0.
   the fallback counted.
 - The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
   searched for as a focus entity. Local search now reads a focus that names no stored entity, no word of the query
-  and nothing its own top hit's name covers or is covered by (a placeholder such as "none" or "Empty", in any
-  language; "Beatles" for the stored "The Beatles" is kept) as no focus and searches by the query, and the prompt
+  and does not hold its own top hit's whole name (a placeholder such as "none" or "Empty", in any language; "New
+  York City" for the stored "New York" is kept, "Beatles" for "The Beatles" or 京都 for 東京都 is not, as "none" for
+  "None of the Above" is not) as no focus and searches by the query, and the prompt
   asks for an empty answer without naming a placeholder: a wording that named "none" made a 3B model answer "none"
   for 8 of 30 MuSiQue questions that do name entities.
 - The embedded engine's `cjk` analyzer (the `ja` and `zh` default) did not fold width or drop stop words as

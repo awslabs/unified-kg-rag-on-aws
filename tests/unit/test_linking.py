@@ -357,27 +357,51 @@ def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> No
         (["东芝"], [[]], "东芝电子的总部在哪里", True),
         # A hit without a source links nothing.
         (["Vendor"], [[_hit("Vendor", 0.9, source="")]], "q", False),
-        # R2A-4: a name the model normalized or made explicit, neither
-        # stored nor written so: its own top hit covers it, or it the hit.
-        (
-            ["Beatles"],
-            [[_hit("The Beatles", 0.8)]],
-            "Who drummed for the Fab Four?",
-            True,
-        ),
+        # R2A-4: a name the model made explicit, neither stored nor written
+        # so: it holds its own top hit's whole name.
         (
             ["New York City"],
             [[_hit("New York", 0.8), _hit("York", 0.7)]],
             "What is the population of the Big Apple?",
             True,
         ),
-        (["東京"], [[_hit("東京都", 0.8)]], "首都の人口はどれくらいですか", True),
+        (["東京都"], [[_hit("東京", 0.8)]], "首都の人口はどれくらいですか", True),
+        # A run without spaces is read whole, whatever spaces split it.
+        (["ธนาคารกรุงเทพ"], [[_hit("ธนาคาร กรุงเทพ", 0.8)]], "ใคร", True),
         # Only the top hit: a lower one is no evidence of the name.
-        (["Beatles"], [[_hit("Vendor", 0.9), _hit("The Beatles", 0.4)]], "q", False),
+        (
+            ["New York City"],
+            [[_hit("Vendor", 0.9), _hit("New York", 0.4)]],
+            "q",
+            False,
+        ),
         # A placeholder shares no term with the hit its search returns.
         (["none"], [[_hit("Acme", 0.4)]], "Which label released it?", False),
         (["N/A"], [[_hit("Vendor", 0.3)]], "Summarize the key points.", False),
         (["なし"], [[_hit("東京都", 0.3)]], "要点は何ですか", False),
+        # R3A-2: nor does one a stored name only contains: a placeholder is
+        # a word of many names, a part of a name one of other entities'
+        # (probes/probe_focus3.py). "Beatles" is searched as the query too.
+        (["none"], [[_hit("None of the Above", 0.8)]], "Which album?", False),
+        (["none"], [[_hit("Second to None", 0.8)]], "Which album?", False),
+        (["Unknown"], [[_hit("Tomb of the Unknown Soldier", 0.8)]], "q", False),
+        (["Nothing"], [[_hit("Nothing Compares 2 U", 0.8)]], "q", False),
+        (["N/A"], [[_hit("N.A. Smith", 0.8)]], "Who wrote the song?", False),
+        (["Empty"], [[_hit("Empty Quarter", 0.8)]], "Which desert?", False),
+        (["なし"], [[_hit("梨なし園", 0.8)]], "固有名はありますか", False),
+        (["없음"], [[_hit("대책없음 밴드", 0.8)]], "개체가 있나요", False),
+        (["无"], [[_hit("无锡", 0.8)]], "这个问题有实体吗", False),
+        (["York"], [[_hit("New York", 0.8)]], "Which minster?", False),
+        (["Jordan"], [[_hit("Jordan River", 0.8)]], "Which team?", False),
+        (["Beatles"], [[_hit("The Beatles", 0.8)]], "Who drummed?", False),
+        (["東京"], [[_hit("東京都", 0.8)]], "首都の人口はどれくらいですか", False),
+        # Letters inside a word without spaces are no name it holds (the
+        # bigrams covers compares would read 京都 in 東京都, 北京 in 東北京浜).
+        (["京都"], [[_hit("東京都", 0.8)]], "古都の有名な寺はどこ?", False),
+        (["北京"], [[_hit("東北京浜", 0.8)]], "北の首都はどこ?", False),
+        (["東京都"], [[_hit("京都", 0.8)]], "首都の人口はどれくらいですか", False),
+        # Whole words: "York" is no word of "Yorkshire Dales".
+        (["Yorkshire Dales"], [[_hit("York", 0.8)]], "q", False),
     ],
 )
 def test_a_focus_names_something_stored_or_written_in_the_query(
