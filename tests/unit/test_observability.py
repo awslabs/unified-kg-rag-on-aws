@@ -2438,3 +2438,98 @@ async def test_run_eval_reports_stage_latency_from_spans(tracing) -> None:
     assert cost["strategies"]["local"]["stage_latency_seconds"] == (
         summary.stage_latency_seconds
     )
+
+
+@pytest.mark.parametrize(
+    ("held", "strategy", "named"),
+    [
+        ("admission", "simple", None),
+        ("before-route", "simple", "simple"),
+        ("routed", "auto", "simple"),
+        ("past-deadline", "simple", None),
+    ],
+)
+async def test_an_mcp_call_whose_client_left_names_its_strategy_on_its_span(
+    tracing: Tracing,
+    monkeypatch: pytest.MonkeyPatch,
+    held: str,
+    strategy: str,
+    named: str | None,
+) -> None:
+    # Regression (R3C-1): an MCP kg_answer whose client left once the chain
+    # took it (a task cancel, not a reader stop) named its strategy in its
+    # audit record and metrics, but its kg_rag.query span had none. Its
+    # span now names the one its metrics do. Left during its admission it
+    # has no query span yet: the tool span says it was cancelled, the
+    # metrics name the strategy. Cancelled past its deadline (a host's
+    # backstop) it is a timed-out query: none, as its audit record names.
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    from unified_kg_rag.application.retrieval import rag_chain
+
+    exporter = tracing()
+    chain = _simple_chain()
+    sink = _RecordingSink()
+    chain.providers.metrics_sink = sink
+    reached = asyncio.Event()
+
+    async def hold(*_: Any, **__: Any) -> None:
+        reached.set()
+        await asyncio.sleep(10)
+
+    async def unwatched(*_: Any, **__: Any) -> None:
+        # Work that does not stop at its deadline's cancellation.
+        reached.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            await asyncio.sleep(10)
+
+    if held == "admission":
+        monkeypatch.setattr(GraphRAGChain, "_check_holdings", hold)
+    elif held == "past-deadline":
+        chain.config.search.query_timeout_seconds = 0.05
+        monkeypatch.setattr(GraphRAGChain, "_screen_input", unwatched)
+    elif held == "before-route":
+        monkeypatch.setattr(GraphRAGChain, "_screen_input", hold)
+    else:
+
+        async def route(
+            self: GraphRAGChain, state: dict[str, Any], *_: Any, **__: Any
+        ) -> dict[str, Any]:
+            state["resolved_strategy"] = SearchStrategy.SIMPLE
+            return state
+
+        real_emit = rag_chain._emit
+
+        async def held_at_route(event: Any) -> None:
+            await real_emit(event)
+            if isinstance(event, rag_chain.QueryRouted):
+                await hold()
+
+        monkeypatch.setattr(GraphRAGChain, "_resolve_strategy", route)
+        monkeypatch.setattr(rag_chain, "_emit", held_at_route)
+    tools = KnowledgeGraphTools(chain)
+    try:
+        task = asyncio.create_task(tools.answer("Who ships?", strategy=strategy))
+        await reached.wait()
+        if held == "past-deadline":
+            await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        await chain.aclose()
+    ((_, values, properties),) = sink.emitted
+    assert values["query_failed"] == (1.0 if held == "past-deadline" else 0.0)
+    assert properties["Strategy"] == (named or strategy)
+    assert _attrs(_one(exporter, "kg_rag.mcp.tool"))["kg_rag.cancelled"] is True
+    queries = _by_name(exporter).get("kg_rag.query", [])
+    if held == "admission":
+        assert queries == []
+        return
+    (query,) = queries
+    if named is None:
+        assert "kg_rag.strategy" not in _attrs(query)
+        return
+    assert _attrs(query)["kg_rag.requested_strategy"] == strategy
+    assert _attrs(query)["kg_rag.strategy"] == named

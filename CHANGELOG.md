@@ -812,6 +812,11 @@ Bugs present in 0.3.0.
   once it ended (`ModelCallStillRunningError` when it still runs a call timeout later).
 - An index creation the search engine refused (a language analyzer whose plugin is not installed, say) said `..`
   between the engine's message and the hint when the message ended a sentence.
+- An MCP `kg_answer` or `kg_search` whose client left once the chain took it (a cancelled call, not a stopped
+  reader) named its strategy in its audit record and metrics but not on its `kg_rag.query` span: the span now names
+  it by the same rule (the route, else an explicit request; none for a query cancelled past its deadline, a
+  timeout). Telemetry reference: an `auto` query stopped before its route has audit `strategy: null` and a metric
+  `Strategy` of `auto` (the requested one, as for a failed query), not `null`.
 
 ## [0.3.0] - 2026-11-14
 

@@ -2833,6 +2833,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except asyncio.CancelledError:
             # Its caller left during the admission (or cut it off at its
             # deadline): recorded as below, then the cancellation goes on.
+            # No query span is open yet: its audit record and metrics name
+            # the strategy, the host's span (an MCP tool call's) the cancel.
             self._record_cancelled(started, input, deadline, search, query_id)
             raise
         finally:
@@ -2843,6 +2845,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         log_tokens = bind_contextvars(**log_context)
         ids: tuple[str, str] | None = None
         meter: UsageMeter | None = None
+        # Whether its deadline had passed when its caller cancelled it,
+        # read once, so its span and its records tell one story.
+        timed_out: bool | None = None
         try:
             # The root span of a query trace: the strategy, retrieval, fusion,
             # rerank, context build and model calls nest under it, each
@@ -2891,9 +2896,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         # budget spent for nobody); the span ends without
                         # error, naming the strategy it ran, as its metrics
                         # do.
-                        if (ran := _stopped_strategy(rag_input)) is not None:
-                            span.set_attributes({"kg_rag.strategy": ran.value})
+                        _name_stopped_strategy(span, rag_input)
                         raise _ReaderStopped() from None
+                    if isinstance(e, asyncio.CancelledError):
+                        # Its caller cancelled it (below): stopped, its span
+                        # names the strategy as its records do; timed out,
+                        # none (a failed query's).
+                        timed_out = deadline.passed()
+                        if not timed_out:
+                            _name_stopped_strategy(span, rag_input)
                     raise
                 finally:
                     _LEFTOVER_EXTRACTIONS.reset(token)
@@ -2949,6 +2960,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 trace_ids=ids,
                 usage=meter.snapshot() if meter is not None else None,
                 build=build,
+                timed_out=timed_out,
             )
             raise
         except _ReaderStopped:
@@ -2992,12 +3004,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         trace_ids: tuple[str, str] | None = None,
         usage: Mapping[str, Any] | None = None,
         build: Mapping[str, Any] | None = None,
+        timed_out: bool | None = None,
     ) -> None:
         """Record a query cancelled from outside the chain: a stopped
         reader (ADR 0007: no failure, its latency and usage up to there),
         or, cancelled once its deadline had passed (the backstop of a host
-        that bounds the call, as the MCP server's), a timed-out query."""
-        if deadline.passed():
+        that bounds the call, as the MCP server's), a timed-out query.
+        ``timed_out``: whether it had passed when its span was named (read
+        now when ``None``)."""
+        if deadline.passed() if timed_out is None else timed_out:
             error = deadline.scope()._expired()
             tag_query_failure(error, query_id, trace_ids[0] if trace_ids else None)
             self._record_query(
@@ -4742,6 +4757,14 @@ def _stopped_strategy(query: RAGInput | Mapping[str, Any]) -> SearchStrategy | N
     stopped in this context."""
     fields = query if isinstance(query, Mapping) else getattr(query, "__dict__", {})
     return stopped_strategy(fields.get("search_strategy"), _routed_strategy())
+
+
+def _name_stopped_strategy(span: observability.SpanHandle, query: RAGInput) -> None:
+    """Name on a stopped query's span (its reader stopped, or its caller
+    cancelled it) the strategy its audit record and metrics name
+    (:func:`_stopped_strategy`), when there is one."""
+    if (ran := _stopped_strategy(query)) is not None:
+        span.set_attributes({"kg_rag.strategy": ran.value})
 
 
 class _Ledgered(Runnable[Any, Any]):
