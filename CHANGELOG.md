@@ -856,6 +856,17 @@ Bugs present in 0.3.0.
 - A run killed after a deletion's strip noted the items it stripped (`stripped-summaries`) and before its commit
   deleted the note left the note for good when the resume had nothing to remove or index: its commit never read it.
   Every commit reads it now, delta or none, and deletes it once its writes succeed, as the unkilled run's does.
+- A console job read `failed` before its error and question were set: its status was set, then its log's warnings
+  were read (an await), and only then its error and integrity or deletions question. A poll in that window, which the
+  job panel takes as the job's last (it stops polling there), showed no error and no confirm button until a reload,
+  and a finished job's warnings as 0. Every await now runs first; the status, error, question and warnings change
+  together.
+- The console's `#n` links of a source's "Cited by" and "Stated in passages" were 13-20 px wide and 20 px high, under
+  WCAG 2.2's 24 px target size: each is a 24 px target now.
+- `run-mcp-server --help` said its `--log-level` logs are plain lines "with --output-format text", a flag it does not
+  have: it names `logging.log_format` (structured JSON records by default), the format its logs take on stderr.
+- The console's `/api/history` rows name the `namespace` a question asked and, under `--trusted-identity-header`,
+  the `user_id` who asked it (new keys; the console's `console.sqlite3` gains a `user_id` column on open).
 
 ## [0.3.0] - 2026-11-14
 
