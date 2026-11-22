@@ -123,14 +123,19 @@ def file_name(metadata: Mapping[str, Any]) -> str | None:
 _DRIVE_OR_SCHEME = re.compile(r"^(?:[A-Za-z]:(?:/|$)|[A-Za-z][A-Za-z0-9+.-]*://)")
 
 
-def safe_relative_path(value: Any) -> str | None:
+def safe_relative_path(value: Any, *, under_root: bool = False) -> str | None:
     """``value`` as a path relative to the corpus root, or ``None`` when it
     is not one (absolute, a drive or URL, or climbing out with ``..``): a
-    surface never names where the corpus lived on the indexing host."""
+    surface never names where the corpus lived on the indexing host.
+
+    ``under_root``: ``value`` is the corpus walk's own path of a file under
+    the root (``relative_source_path``), relative by construction, so a
+    first folder named like a drive (``x:/y.txt``, legal on POSIX, as an
+    archive of a Windows drive unpacks) is a folder name."""
     if not isinstance(value, str) or not value.strip():
         return None
     path = value.strip().replace("\\", "/")
-    if path.startswith("/") or _DRIVE_OR_SCHEME.match(path):
+    if path.startswith("/") or (not under_root and _DRIVE_OR_SCHEME.match(path)):
         return None
     parts = [p for p in path.split("/") if p not in ("", ".")]
     if not parts or ".." in parts:

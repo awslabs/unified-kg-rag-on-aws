@@ -148,6 +148,8 @@ def assign_document_identity(
     source_root: str | Path,
     additional_suffix: str | None = None,
     store_tag: str | None = None,
+    *,
+    walked: bool = False,
 ) -> None:
     """Re-derive ``document``'s identity against the corpus root, in place.
 
@@ -167,19 +169,25 @@ def assign_document_identity(
 
     A corpus document also gets the path filters of that relative path
     (:func:`stamp_path_filters`: ``file``, ``folder``); a seed graph's
-    items carry their seed graph's filters instead.
+    items carry their seed graph's filters instead. ``walked``: ``document``
+    was parsed from the corpus file at its ``file_path``, which the walk
+    found under the root, so its path is relative whatever its first folder
+    is named (``x:``); a path a document records for itself (a pre-parsed
+    document's, an ``InputDocument`` id) is checked.
     """
     if is_seed_document(document):
         relative = document.metadata[RELATIVE_PATH_KEY]
     else:
+        under_root = relative_source_path(document.file_path, source_root)
         relative = (
-            relative_source_path(document.file_path, source_root)
+            under_root
             or document.metadata.get(RELATIVE_PATH_KEY)
             or normalize_source_path(document.file_path)
         )
+        stamp_path_filters(
+            document, relative, under_root=walked and under_root is not None
+        )
     document.metadata[RELATIVE_PATH_KEY] = relative
-    if not is_seed_document(document):
-        stamp_path_filters(document, relative)
     document.metadata[REGISTRY_NAMESPACE_KEY] = registry_namespace(
         _document_suffix(document), additional_suffix, store_tag
     )

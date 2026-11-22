@@ -83,7 +83,6 @@ from unified_kg_rag.domain.models.config import (
     ChunkLengthUnit,
     LanguageCode,
 )
-from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
@@ -1174,7 +1173,8 @@ def test_concurrent_same_text_queries_each_name_their_own_failure(
 # question to a file or a folder at any depth. One folder is named in
 # decomposed Hangul (NFD, as macOS gives it), files hold a ':' (one after a
 # single letter, as a Windows drive is written), and one folder is named
-# like a drive (``x:``), whose file cannot be told from a Windows path.
+# like a drive (``x:``): the corpus walk found it under the root, so it is
+# a folder, not a Windows path.
 _NFD_FOLDER = unicodedata.normalize("NFD", "서류")
 _FOLDERED = {
     "contracts/2024/acme.txt": "Vendor supplies widgets to Buyer.",
@@ -1189,12 +1189,17 @@ _FOLDERED = {
 
 
 def _cited_paths(out: RAGOutput) -> set[str]:
-    """The documents an answer's text units come from, by relative path."""
+    """The documents an answer's text units come from, by their stamped
+    path (the ``file`` path filter)."""
     return {
         path
         for result in out.search_results.results
-        if result.metadata.get("section_type") in (None, "text_unit")
-        and (path := source_fields.relative_path(result.metadata))
+        if result.retriever_type == "text"
+        and (
+            path := (
+                (result.metadata.get("attributes") or {}).get("filters") or {}
+            ).get("file")
+        )
     }
 
 
@@ -1218,10 +1223,11 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
     with caplog.at_level(logging.WARNING):
         context = _ingest(config, providers, source, tmp_path / "run-1")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
-    # The one file that cannot be stamped is named; it does not take the
-    # path filters from the rest of the namespace (R2B-3).
-    (warning,) = [r for r in caplog.records if "carry no path filters" in r.message]
-    assert warning.message.endswith(": y.txt"), warning.message
+    # Every file the walk found is stamped, the one in a folder named like a
+    # drive too: it was refused as a Windows path, so a filter on its folder
+    # was silently empty and a WARNING said its path was not relative to
+    # the corpus root (R3B-6).
+    assert not [r for r in caplog.records if "carry no path filters" in r.message]
 
     vectors = providers.build_vector_indexer()
     try:
@@ -1235,7 +1241,7 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
         for row in rows
         if "filters" in (row["attributes"] or {})
     }
-    assert len(rows) == len(stamped) + 1
+    assert len(rows) == len(stamped)
     # Stamped NFC, whatever form the file system gave.
     assert stamped == {
         "contracts/2024/acme.txt": ["contracts", "contracts/2024"],
@@ -1244,6 +1250,7 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
         "서류/ledger.txt": ["서류"],
         "logistics/notes 10:30.txt": ["logistics"],
         "a:b.txt": None,
+        "x:/y.txt": ["x:"],
         "notes.txt": None,
     }
 
@@ -1262,11 +1269,11 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
         ),
         "attr_folder NFC over an NFD name": (
             {"attr_folder": "서류"},
-            {f"{_NFD_FOLDER}/ledger.txt"},
+            {"서류/ledger.txt"},
         ),
         "attr_folder NFD": (
             {"attr_folder": _NFD_FOLDER},
-            {f"{_NFD_FOLDER}/ledger.txt"},
+            {"서류/ledger.txt"},
         ),
         "attr_file with ':'": (
             {"attr_file": "logistics/notes 10:30.txt"},
@@ -1275,6 +1282,11 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
         "attr_file after a single letter and ':'": (
             {"attr_file": "a:b.txt"},
             {"a:b.txt"},
+        ),
+        "attr_folder named like a drive": ({"attr_folder": "x:"}, {"x:/y.txt"}),
+        "attr_file in a folder named like a drive": (
+            {"attr_file": "x:/y.txt"},
+            {"x:/y.txt"},
         ),
     }
     chain = GraphRAGChain(config, providers=providers)

@@ -340,8 +340,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   depth on every store, from a directory corpus too (only `InputDocument.filters` gave a document filters before).
   A key a document's own filters give keeps its value, in NFC too. The values are NFC, and a query's values match
   their NFC form too, so a name the file system gave decomposed (NFD Hangul) matches as typed; a `:` in a name is kept
-  (`a:b.txt` too), and a path that starts with a Windows drive (`C:/`) or a URL scheme gets none: that document
-  matches no path filter, and ingestion names it in a WARNING. The build record names the keys
+  (`a:b.txt` too, and a corpus folder named like a drive, `x:/`), and a path recorded for a document (a pre-parsed
+  document's, an `InputDocument.id`) that starts with a Windows drive (`C:/`) or a URL scheme gets none: that
+  document matches no path filter, and ingestion names it in a WARNING. The build record names the keys
   (`document_filter_keys`), and a namespace built without them refuses them, in `kg_get_chunks` too
   ([Path filters](docs/reference/filters.md#path-filters)).
 - MCP `kg_get_chunks(ids)`: an agent reads the chunks a record cites (`chunk_id`, `text_unit_ids`) by id, with their
