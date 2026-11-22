@@ -500,6 +500,132 @@ def test_a_collected_chain_whose_loop_ended_holds_up_no_later_release(
     later.close()
 
 
+class _LoopBound:
+    """A retriever that counts its closes; ``gate`` (when given) holds its
+    ``aclose`` open after it starts, on the loop it runs on."""
+
+    def __init__(self, gate: asyncio.Event | None = None) -> None:
+        self.gate = gate
+        self.closed = 0
+        self.aclosed = 0
+        self.started = threading.Event()
+
+    def close(self) -> None:
+        self.closed += 1
+
+    async def aclose(self) -> None:
+        self.started.set()
+        if self.gate is not None:
+            await self.gate.wait()
+        self.aclosed += 1
+
+
+def _close_on_thread(
+    retriever: _LoopBound, loop: asyncio.AbstractEventLoop
+) -> tuple[threading.Thread, list[bool]]:
+    """``_aclose_on_their_loop`` (waiting) on a thread of its own; its
+    answer lands in the returned list."""
+    answer: list[bool] = []
+    closer = threading.Thread(
+        target=lambda: answer.append(
+            rag_chain_module._aclose_on_their_loop([retriever], loop, wait=True)  # type: ignore[list-item]
+        ),
+        daemon=True,
+    )
+    closer.start()
+    return closer, answer
+
+
+def test_a_close_queued_on_a_loop_that_stops_is_cancelled_there(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A loop that stops (not closed) with the close still queued: the caller
+    # closes the retrievers itself (False), and the queued close is
+    # cancelled, so running that loop again closes nothing twice.
+    monkeypatch.setattr(rag_chain_module, "_TEARDOWN_TIMEOUT_SECONDS", 10 * BACKSTOP)
+    submitted: list[concurrent.futures.Future[None]] = []
+    submit = asyncio.run_coroutine_threadsafe
+
+    def spy(coro: Any, loop: asyncio.AbstractEventLoop) -> Any:
+        submitted.append(submit(coro, loop))
+        return submitted[-1]
+
+    monkeypatch.setattr(rag_chain_module.asyncio, "run_coroutine_threadsafe", spy)
+    loop = _EndingLoop()
+    retriever = _LoopBound()
+    try:
+        loop.hold()
+        closer, answer = _close_on_thread(retriever, loop)
+        assert loop.submitted.wait(BACKSTOP)
+        loop._held.set()  # the held iteration stops the loop, queue left
+        loop._thread.join(BACKSTOP)
+        closer.join(BACKSTOP)
+        assert answer == [False]
+        assert submitted[0].cancelled()
+        loop.run_until_complete(asyncio.sleep(0))  # the loop run again
+        assert retriever.aclosed == 0 and not retriever.started.is_set()
+    finally:
+        loop.close()
+
+
+def test_a_close_that_started_on_a_loop_that_then_stops_is_left_to_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The loop took the close (it holds the claim) and stopped before the
+    # close ended: the caller must not close the retrievers as well (True).
+    monkeypatch.setattr(rag_chain_module, "_TEARDOWN_TIMEOUT_SECONDS", 10 * BACKSTOP)
+    loop = asyncio.new_event_loop()
+    running = threading.Thread(target=loop.run_forever, daemon=True)
+    running.start()
+    gate = asyncio.Event()
+    retriever = _LoopBound(gate)
+    try:
+        closer, answer = _close_on_thread(retriever, loop)
+        assert retriever.started.wait(BACKSTOP)
+        loop.call_soon_threadsafe(loop.stop)
+        running.join(BACKSTOP)
+        closer.join(BACKSTOP)
+        assert answer == [True]
+        assert retriever.closed == 0
+        loop.run_until_complete(_open(gate))  # the started close ends there
+        assert retriever.aclosed == 1 and retriever.closed == 0
+    finally:
+        loop.close()
+
+
+async def _open(gate: asyncio.Event) -> None:
+    gate.set()
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+
+def test_a_close_still_running_past_the_teardown_timeout_stops_the_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A close slower than the teardown timeout on a loop that keeps running:
+    # the waiter returns then (True: it ends there), not when the close does.
+    timeout = 0.2
+    monkeypatch.setattr(rag_chain_module, "_TEARDOWN_TIMEOUT_SECONDS", timeout)
+    loop = asyncio.new_event_loop()
+    running = threading.Thread(target=loop.run_forever, daemon=True)
+    running.start()
+    gate = asyncio.Event()
+    retriever = _LoopBound(gate)
+    try:
+        closer, answer = _close_on_thread(retriever, loop)
+        closer.join(25 * timeout)  # a hang guard: it ends at the timeout
+        assert not closer.is_alive(), "the wait outlived the teardown timeout"
+        assert answer == [True]
+        assert retriever.closed == 0 and retriever.aclosed == 0
+    finally:
+        asyncio.run_coroutine_threadsafe(_open(gate), loop).result(BACKSTOP)
+        loop.call_soon_threadsafe(loop.stop)
+        running.join(BACKSTOP)
+        closer.join(BACKSTOP)
+        loop.close()
+    assert retriever.aclosed == 1
+
+
 def test_runner_rejects_reentrant_sync_call() -> None:
     runner = _LoopRunner()
 
