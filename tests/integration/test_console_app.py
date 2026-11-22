@@ -273,6 +273,9 @@ def test_a_trusted_identity_header_names_who_asked(workspace: Path) -> None:
                 headers={**HEADERS, "x-amzn-oidc-identity": ""},
             )
             assert refused.status_code == 401
+            # R4C-7: the history names who asked, and the namespace.
+            (row,) = identified.get("/api/history").json()["queries"]
+            assert (row["user_id"], row["namespace"]) == ("user-42", "default")
     finally:
         audit.removeHandler(handler)
         audit.setLevel(saved)
@@ -1368,6 +1371,14 @@ def test_the_history_records_the_namespace_asked(client: Any) -> None:
     _ask(client, query="Who carries the lidar units?", search_strategy="local")
     (latest,) = client.app.state.console.store.queries(limit=1)
     assert latest["suffix"] == "default"
+    # R4C-7: the history's rows name it too (and no user: no trusted
+    # identity header is configured).
+    row = client.get("/api/history").json()["queries"][0]
+    assert (row["id"], row["namespace"], row["user_id"]) == (
+        latest["id"],
+        "default",
+        None,
+    )
 
 
 @pytest.mark.parametrize(

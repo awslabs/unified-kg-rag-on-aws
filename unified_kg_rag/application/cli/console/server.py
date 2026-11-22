@@ -786,17 +786,22 @@ def create_app(
         return {
             "queries": [
                 {
-                    k: r[k]
-                    for k in (
-                        "id",
-                        "created",
-                        "question",
-                        "requested_strategy",
-                        "strategy",
-                        "outcome",
-                        "latency_seconds",
-                        "cost_usd",
-                    )
+                    **{
+                        k: r[k]
+                        for k in (
+                            "id",
+                            "created",
+                            "question",
+                            "requested_strategy",
+                            "strategy",
+                            "outcome",
+                            "latency_seconds",
+                            "cost_usd",
+                            "user_id",
+                        )
+                    },
+                    # The namespace it asked (the store's suffix column).
+                    "namespace": r["suffix"],
                 }
                 for r in rows
             ]

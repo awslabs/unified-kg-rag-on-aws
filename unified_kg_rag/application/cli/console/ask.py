@@ -459,6 +459,8 @@ class AskService:
             "question": request.query,
             "requested_strategy": request.search_strategy.value,
             "suffix": request.namespace,
+            # The trusted identity header's (--trusted-identity-header).
+            "user_id": caller_user_id(),
             "outcome": "failed",
         }
 
