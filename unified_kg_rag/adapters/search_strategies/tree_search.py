@@ -48,6 +48,7 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
     held_artifacts_of,
     readable_artifacts,
 )
+from unified_kg_rag.domain.retrieval.kind_shares import RERANKED
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
@@ -345,8 +346,10 @@ class TreeSearchStrategy(BaseSearchStrategy):
     ) -> list[RetrievalResult]:
         """Up to ``expand_children`` passages of each kept summary's own
         lineage, searched by the query under the caller's filters, scored
-        just below the summary; a passage already in ``results`` (or another
-        summary's) is not repeated."""
+        just below the summary, on its scale (a reranked summary's passages
+        are flagged ``reranked`` too: a search's cut compares them with the
+        summaries, ``score_group``); a passage already in ``results`` (or
+        another summary's) is not repeated."""
         count = self.config.search.tree_search.expand_children
         retriever = self.document_retriever
         summaries = [
@@ -393,6 +396,11 @@ class TreeSearchStrategy(BaseSearchStrategy):
                             "metadata": {
                                 **(hit.metadata or {}),
                                 "expanded_from": summary.source,
+                                **(
+                                    {RERANKED: True}
+                                    if (summary.metadata or {}).get(RERANKED)
+                                    else {}
+                                ),
                             },
                         }
                     )

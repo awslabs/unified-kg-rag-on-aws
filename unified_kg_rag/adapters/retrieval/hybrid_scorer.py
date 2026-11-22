@@ -18,6 +18,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
 )
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
+from unified_kg_rag.domain.retrieval.kind_shares import RERANKED
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
 from unified_kg_rag.shared.logging import log_error, log_failure
@@ -657,7 +658,7 @@ class HybridScorer:
                         )
                         reranked_result.metadata.update(
                             {
-                                "reranked": True,
+                                RERANKED: True,
                                 "rerank_position": i + 1,
                                 "original_score": doc.metadata.get(
                                     "original_score", 0.0

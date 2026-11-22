@@ -490,7 +490,10 @@ Bugs present in 0.3.0.
   rounds), so `mcp.max_top_k` bounded nothing. `GraphRAGChain.asearch` (`kg_search`, `run-rag --mode search`) cuts its
   results to `top_k` (times `retrieval_multiplier`), each kind of result keeping its share of the strategy's results
   and its own best-ranked records: one cut by score across kinds compares a reranked chunk's score (0-1) with a graph
-  record's fusion score (about 0.016), and kept chunks only for every graph strategy. An answer's context keeps the
+  record's fusion score (about 0.016), and kept chunks only for every graph strategy. Kinds the reranker scored
+  together compete by score (`tree`'s summaries and passages, RAPTOR's collapsed tree: cut per kind, `tree` at
+  `top_k` 3 returned passages in place of the summaries ranked first), and the shares are Sainte-Laguë's, compared in
+  exact integers, so a larger `top_k` never drops a record a smaller one returned. An answer's context keeps the
   strategy's pools, and `kg_answer`'s `top_k` schema says so.
 - `cjk_script_split` on OpenSearch put a space between halfwidth Katakana and the Hangul after it (`ｶﾀｶﾅ한글` lost the
   `ナ한` bigram) where the embedded engine, which folds width first, did not: its split reads U+FF65-FF9F as Kana. An

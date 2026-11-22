@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from fractions import Fraction
 
 import pytest
@@ -20,7 +21,12 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
-from unified_kg_rag.domain.retrieval.kind_shares import apportion, cut_by_kind
+from unified_kg_rag.domain.retrieval.kind_shares import (
+    RERANKED,
+    apportion,
+    cut_by_kind,
+    score_group,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -176,3 +182,27 @@ def test_a_searchs_cut_keeps_the_graph_beside_reranked_chunks() -> None:
     ]
     assert out.search_results.total_results == 6
     assert out.metadata["total_results"] == 6
+
+
+def _reranked(kind: str, score: float, n: int) -> RetrievalResult:
+    result = _result(kind, score, n)
+    result.metadata = {RERANKED: True}
+    return result
+
+
+def test_records_the_reranker_scored_together_compete_by_score() -> None:
+    # R3B-1: tree reranks its summaries and passages in one pool (RAPTOR's
+    # collapsed tree). Cut per kind, the passages (many more: each kept
+    # summary's expanded children) took the seats of summaries the
+    # reranker ranked above every passage.
+    summaries = [_reranked("summary", 0.95 - 0.01 * i, i) for i in range(3)]
+    passages = [_reranked("text", 0.9 - 0.01 * i, i) for i in range(12)]
+    ranked = sorted(summaries + passages, key=lambda r: r.score, reverse=True)
+    kept = cut_by_kind(ranked, 3, score_group)
+    assert [r.source for r in kept] == ["summary-0", "summary-1", "summary-2"]
+    assert cut_by_kind(ranked, 8, score_group) == ranked[:8]
+    # Unreranked records keep a seat per kind beside the reranked ones.
+    graph = [_result("entity", 0.016 - 0.0001 * i, i) for i in range(5)]
+    mixed = ranked + graph
+    kinds = Counter(score_group(r) for r in cut_by_kind(mixed, 4, score_group))
+    assert kinds == {RERANKED: 3, "entity": 1}

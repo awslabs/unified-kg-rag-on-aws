@@ -531,7 +531,8 @@ def build_mcp_server(
         ),
         top_k_parameter(
             "The most records returned, each kind keeping its share of the "
-            "strategy's results"
+            "strategy's results (kinds the reranker scored together compete "
+            "by score)"
         ),
         _parameter(
             "filters",
