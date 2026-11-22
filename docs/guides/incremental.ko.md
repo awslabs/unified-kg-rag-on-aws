@@ -128,8 +128,11 @@ WARNING을 남기고 재구축이 재사용하는 것을 그대로 재사용하�
 ID는 전체 빌드와 같지만 순서는 다를 수 있습니다. OpenSearch에서는 세그먼트가 병합될
 때까지 어휘 검색(BM25) 점수가 삭제된 문서도 셉니다. 그래서 문서를 지우거나 다시 쓴 실행 뒤에는 순위가
 새로 만든 빌드와 다를 수 있습니다. 정확히 비교하려면 인덱스에
-`index.merge.policy.expunge_deletes_allowed: 0`을 설정하고
-`_forcemerge?only_expunge_deletes=true`를 호출하세요. 재구축할 때가 되었는지는
+`index.merge.policy.expunge_deletes_allowed: 0`을 설정하고 실행의 마지막 쓰기 뒤
+1분쯤 기다리세요. OpenSearch는 마지막 쓰기 뒤 30-40초쯤 삭제된 문서를 남겨 두므로(샤드의
+소프트 삭제 보존 임대(soft-delete retention lease)) 그 전에 병합하면 삭제된 문서가 남습니다.
+그다음 `_forcemerge?only_expunge_deletes=true`와 `_refresh`를 호출하고
+`_cat/indices?h=index,docs.deleted`에서 인덱스마다 `0`인지 확인하세요. 재구축할 때가 되었는지는
 두 가지 신호로 알 수 있습니다. 어느 쪽도 스스로 재구축하지는 않습니다.
 
 ### 커뮤니티 드리프트 (실행 단위)
