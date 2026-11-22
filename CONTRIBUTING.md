@@ -173,8 +173,8 @@ so an inline `# gitleaks:allow` added later does not clear it. A test that needs
 
 gitleaks (default rules) finds no secret in the tree or the history. Its false positives are allowed in
 [`.gitleaks.toml`](./.gitleaks.toml), which gitleaks loads from the scanned directory: each entry names the rule and
-a pattern of the line's text, with what it matched, so it holds for the tree and every commit and no edit elsewhere
-in a file moves it. The `gitleaks` job of [`security.yml`](./.github/workflows/security.yml) scans the tree and a
+a whole-match pattern of the secret it reports, with what it matched, so it holds for the tree and every commit, no
+edit elsewhere in a file moves it, and a real key beside the text is still found. The `gitleaks` job of [`security.yml`](./.github/workflows/security.yml) scans the tree and a
 pull request's commits (the whole branch on a push). Scan a clone locally, not the work tree (`gitleaks dir` also
 reads untracked files such as `__pycache__/`), with the image pinned by digest:
 
@@ -189,7 +189,8 @@ docker run --rm -v /tmp/gitleaks-scan:/repo:ro -w /repo \
 it from the clone's root, `-w /repo` and `.`: gitleaks loads `.gitleaks.toml` from the scanned directory.)
 
 A new finding that is not a secret gets an entry in `.gitleaks.toml`: scope it to the rule (`targetRules`) and match
-the shortest text that identifies the line, so a real key on any other line is still found.
+the secret gitleaks reports (`regexTarget = "secret"`), pinned at both ends (`^...$`), so a real key is still found on any line,
+that one included.
 
 ### Pins Dependabot does not move
 

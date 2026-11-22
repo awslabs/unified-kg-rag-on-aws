@@ -118,7 +118,6 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
    `answer_scoring.answer_contains_reads` and is refused as `--baseline-results` (or in a rebuilt comparison) beside a
    run of now. Score its saved answers again, with no new answer: `run-eval --from-results <old results> --rescore`
    (an `extracted` `answer_span` calls only the answer-span model), then compare against the re-scored run.
-   run of now. Re-run the baseline.
 11. A script that reads the CLIs' log lines, or the EMF records of `--metrics-sink cloudwatch`, from stdout reads
     them from stderr now, in text mode too (*Breaking changes*): stdout holds only the run's output (`2>&1` keeps both
     on one stream).
@@ -411,11 +410,13 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   custom backend may) skips the visualization export with one WARNING saying why, as the `summary_tree` stage skips its
   tree; it logged `Visualization data export failed: [configuration] ...` on every build. The store conformance suites
   also run on a custom backend that `UKR_TEST_BACKEND` names, without editing the test fixtures ([extend
-  guide](docs/guides/extend.md#custom-backends-run-without-aws)): a test of a method the backend leaves at its port's
-  default skips, naming the method, and the summary-tree suite runs on it too. A run on such a store whose
-  `ExtractionRecordStore` is left at its default logs one WARNING at its first recovery note: the notes of a removal
-  and a commit (`pending-strip`, `pending-commit`, `pending-writes`, `stripped-summaries`, `outdated-reports`) live in
-  that store, so a run stopped mid-removal or mid-commit cannot resume them.
+  guide](docs/guides/extend.md#custom-backends-run-without-aws)): a test skips only on a method it reads that the
+  backend leaves at its port's "cannot" default, naming the method (a default that derives its answer, as
+  `holds_any_item`'s from `read_schema_annotations`, runs it), and the summary-tree suite runs on it too. A run on
+  such a store whose `ExtractionRecordStore` is left at its default logs one WARNING at its first recovery note: the
+  notes of a removal and a commit (`pending-strip`, `pending-commit`, `pending-writes`, `stripped-summaries`,
+  `outdated-reports`, `removed-records`) live in that store, so a run stopped mid-removal or mid-commit cannot resume
+  them.
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0
@@ -826,6 +827,10 @@ Bugs present in 0.3.0.
   washes a CIELAB difference of 2.8 apart under simulated tritanopia in the light theme, 5.9 in the dark one): a
   warning is now orange-brown with a warning sign, its wash at least 10 from the trace and error washes under normal
   vision and the three simulations in both themes, and a seed, running or pending badge is outlined in ink.
+- On a custom vector store that keeps extraction records but leaves `find_documents` at its port's default (`None`:
+  it cannot tell), a commit read "cannot tell" as "no text unit names these" and deleted every record the removed
+  text units named, those a changed document's unchanged chunks still name too (extracted again on its next change).
+  The records and their note are kept there now.
 
 ## [0.3.0] - 2026-11-14
 

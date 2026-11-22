@@ -6,12 +6,13 @@ describes: a ``VectorIndexer`` with only its abstract writes and
 
 ``TOY_BACKEND`` registers it with the store conformance suites
 (``UKR_TEST_BACKEND=tests.fixtures.toy_vector_backend:TOY_BACKEND``), as a
-backend author registers theirs.
+backend author registers theirs. ``BROKEN_TOY_BACKEND`` overrides some
+optional methods wrongly, so the suites must fail it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from tests.fixtures.fakes.stores import FakeGraphStore
@@ -104,8 +105,43 @@ class ToyVectorStore(VectorIndexer):
         self.items.clear()
 
 
-def _providers(config: Config, embedding_factory: Any) -> Providers:
-    vectors = ToyVectorStore(config)
+class BrokenToyVectorStore(ToyVectorStore):
+    """The toy with a summary tree that reports a write it never keeps and
+    a text-unit probe that always answers no; ``read_text_unit_fields``,
+    which the port lets a tree store leave at its default (a caller scans
+    instead), is left there. A store an author got wrong: the suites fail
+    the tests of what it overrides and skip only that default's."""
+
+    def embed_summary_texts(
+        self, texts: list[str], suffix: str | None
+    ) -> list[list[float] | None] | None:
+        return [[0.0] for _ in texts]
+
+    def write_summary_tree(
+        self,
+        nodes: list[Any],
+        vectors: Mapping[str, Collection[float]],
+        suffix: str | None,
+        record: dict[str, Any],
+    ) -> IndexingStats:
+        return IndexingStats(total_items=len(nodes), successful_items=len(nodes))
+
+    def read_summary_nodes(
+        self, suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
+        return []
+
+    def read_summary_tree_record(self, suffix: str | None) -> dict[str, Any] | None:
+        return None
+
+    def holds_any_text_unit(self, suffix: str | None = None) -> bool | None:
+        return False
+
+
+def _providers(
+    config: Config, embedding_factory: Any, store: type[ToyVectorStore] = ToyVectorStore
+) -> Providers:
+    vectors = store(config)
     graph = FakeGraphStore(config)
     return Providers(
         config,
@@ -116,3 +152,9 @@ def _providers(config: Config, embedding_factory: Any) -> Providers:
 
 
 TOY_BACKEND = ExtraBackend(name="toy", providers=_providers)
+BROKEN_TOY_BACKEND = ExtraBackend(
+    name="brokentoy",
+    providers=lambda config, embeddings: _providers(
+        config, embeddings, BrokenToyVectorStore
+    ),
+)

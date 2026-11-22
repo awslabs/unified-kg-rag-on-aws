@@ -1198,17 +1198,20 @@ class TextUnitRemoval:
                 )
                 if not keys:
                     continue
-                naming: set[str] = set()
-                for kind in RECORD_KINDS:
-                    naming.update(
-                        vector.find_documents(
-                            prefix,
-                            f"attributes.{RECORD_KEYS_ATTRIBUTE}.{kind}",
-                            sorted(keys),
-                            suffix,
-                        )
-                        or {}
+                naming = _units_naming(vector, prefix, keys, suffix)
+                if naming is None:
+                    # The store cannot tell which text units name them (its
+                    # find_documents left at the port's default): every
+                    # record is kept, the note with them (garbage costs
+                    # space only; a live unit's record deleted costs its
+                    # extraction again).
+                    logger.info(
+                        "Keeping the removed text units' extraction records "
+                        "of '%s': the vector store cannot tell which text "
+                        "units name them",
+                        suffix,
                     )
+                    continue
                 still_named = {
                     key
                     for attributes in vector.read_text_unit_attributes(
@@ -1392,3 +1395,21 @@ def _gains_a_statement(derived: Relationship, stored: Relationship) -> bool:
 def _rejected(results: Mapping[str, IndexingStats]) -> bool:
     """Whether a store rejected a write (or a read failed) of ``results``."""
     return any(stats.failed_items for stats in results.values() if stats)
+
+
+def _units_naming(
+    vector: Any, prefix: str, keys: Collection[str], suffix: str
+) -> set[str] | None:
+    """The ids of ``suffix``'s text units that name any of the extraction
+    record ``keys``, of every record kind; ``None`` when the store cannot
+    tell (``find_documents`` left at the port's default), which is no "none
+    names them"."""
+    naming: set[str] = set()
+    for kind in RECORD_KINDS:
+        found = vector.find_documents(
+            prefix, f"attributes.{RECORD_KEYS_ATTRIBUTE}.{kind}", sorted(keys), suffix
+        )
+        if found is None:
+            return None
+        naming.update(found)
+    return naming

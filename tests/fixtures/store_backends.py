@@ -275,28 +275,43 @@ class StoreHarness:
         """Prepare the vector store for writes (the indexer's ``initialize``)."""
         self.vector_indexer.initialize()
 
+    def implements(self, method: str) -> bool:
+        """Whether the vector store answers ``method``'s contract: a
+        packaged backend always does; an :class:`ExtraBackend`'s when it
+        overrides the method, or leaves a default that derives its answer
+        from methods it does override (``holds_any_item`` from
+        ``read_schema_annotations``: a working default, not a "cannot")."""
+        if self.kind in _PACKAGED:
+            return True
+        if _implements(self.vector_indexer, VectorIndexer, method):
+            return True
+        sources = _DERIVED_DEFAULTS.get(method)
+        return sources is not None and all(self.implements(m) for m in sources)
+
     def needs(self, *methods: str) -> None:
         """Skip on an :class:`ExtraBackend` whose vector store leaves any of
-        ``methods`` at its port's "cannot" default: a choice the port allows
-        (a capability the backend lacks), not a broken contract, so the test
-        skips naming each method by its port. The packaged backends
-        implement every method a suite calls: on them nothing is skipped
-        and the test states the contract."""
-        if self.kind in _PACKAGED:
-            return
+        ``methods`` (the ones the test reads) at its port's "cannot"
+        default: a choice the port allows (a capability the backend lacks),
+        not a broken contract, so the test skips naming each method by its
+        port. A method the store overrides, or a working default
+        (:meth:`implements`), runs the test. The packaged backends implement
+        every method a suite calls: on them nothing is skipped and the test
+        states the contract."""
         left = [
             f"{_owner(method)}.{method}"
             for method in methods
-            if not _implements(self.vector_indexer, VectorIndexer, method)
+            if not self.implements(method)
         ]
         if left:
             defaults = "its default" if len(left) == 1 else "their defaults"
             pytest.skip(f"{self.kind} leaves {', '.join(left)} at {defaults}")
 
     def needs_port(self, port: type) -> None:
-        """:meth:`needs` every public method of ``port`` (a concern port
-        ``VectorIndexer`` inherits); a store that overrides none of them
-        skips naming the port."""
+        """Skip on an :class:`ExtraBackend` whose vector store overrides
+        none of ``port``'s public methods (a concern port ``VectorIndexer``
+        inherits), naming the port. One that overrides any runs the suite:
+        each test then :meth:`needs` the methods it reads, so a method left
+        at its default skips only those tests, never the port's others."""
         methods = [
             name
             for name, value in vars(port).items()
@@ -306,7 +321,6 @@ class StoreHarness:
             _implements(self.vector_indexer, VectorIndexer, m) for m in methods
         ):
             pytest.skip(f"{self.kind} leaves {port.__name__} at its defaults")
-        self.needs(*methods)
 
     # --- reads ---------------------------------------------------------------
 
@@ -441,6 +455,14 @@ class StoreHarness:
             raise AssertionError(
                 f"{self.kind} teardown left data behind: {', '.join(errors)}"
             )
+
+
+# Port defaults that are a working derivation, not a "cannot": the method
+# answers its contract whenever the store implements the ones named.
+_DERIVED_DEFAULTS: dict[str, tuple[str, ...]] = {
+    "holds_any_item": ("read_schema_annotations",),
+    "stored_extraction_record_keys": ("read_extraction_records",),
+}
 
 
 def _owner(method: str) -> str:

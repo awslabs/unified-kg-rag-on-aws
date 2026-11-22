@@ -476,11 +476,19 @@ UKR_TEST_BACKEND=my_backend.conformance:BACKEND \
 The module must be importable from the repository root (`PYTHONPATH`, or
 the package installed in the environment), and `-k` takes the
 `ExtraBackend.name` (it is the backend's test id: `test_...[my-backend]`).
-A test of a method the backend leaves at its port's "cannot" default skips,
-naming the method by its port (`my-backend leaves
-VectorIndexer.find_documents at its default`): that is a capability it
-lacks, as the table above says. A method it overrides runs the test, which
-states that method's contract, so a wrong store fails it. A test needing a
+Each test skips only on the methods it reads: one of them left at its
+port's "cannot" default skips it, naming the method by its port
+(`my-backend leaves VectorIndexer.find_documents at its default`), as that
+is a capability the backend lacks (the table above). A default that derives
+its answer from methods the backend overrides is no "cannot" default
+(`holds_any_item` from `read_schema_annotations`) and runs its tests. So a
+method it overrides runs every test that reads it, which states that
+method's contract, and a wrong store fails it, whatever it leaves at its
+defaults beside it; a port it overrides no method of skips its suite,
+naming the port (`my-backend leaves SummaryTreeStore at its defaults`).
+`BROKEN_TOY_BACKEND` in `tests/fixtures/toy_vector_backend.py`, wrong on
+purpose, fails them (`tests/integration/test_toy_vector_backend.py` checks
+that too). A test needing a
 capability the backend does not declare (`ExtraBackend.capabilities`)
 skips too: `RETRIEVERS` (the harness builds its retrievers) or
 `INDEX_ADMIN` (OpenSearch-protocol internals: aliases, mappings,

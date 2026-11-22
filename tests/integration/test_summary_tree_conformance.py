@@ -89,6 +89,8 @@ def _node(
 
 
 def _tree(harness: StoreHarness, nodes: list[SummaryNode], suffix: str | None = None):
+    # The writes every tree test makes; a test needs the reads it asserts.
+    harness.needs("embed_summary_texts", "write_summary_tree")
     indexer = harness.vector_indexer
     vectors = indexer.embed_summary_texts([n.text for n in nodes], suffix)
     assert vectors is not None and all(v is not None for v in vectors)
@@ -103,6 +105,7 @@ def _tree(harness: StoreHarness, nodes: list[SummaryNode], suffix: str | None = 
 def test_text_units_are_paged_in_id_order_without_seed_units(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("scan_text_unit_pages")
     indexer = harness.vector_indexer
     seed = TextUnit(id=seed_unit_id("seed-doc", 1), text="seed statement")
     stats = indexer.index_text_units([*_units(25), seed])
@@ -131,6 +134,7 @@ def test_text_units_are_read_by_id_with_float32_vectors(
 ) -> None:
     import numpy as np
 
+    harness.needs("read_text_unit_fields")
     indexer = harness.vector_indexer
     stats = indexer.index_text_units(_units(5))
     assert stats.failed_items == 0, stats.errors
@@ -160,6 +164,7 @@ def test_text_units_are_read_by_id_with_float32_vectors(
 def test_a_tree_is_written_whole_with_its_record_and_swapped_in(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("read_summary_tree_record", "read_summary_nodes")
     indexer = harness.vector_indexer
     indexer.index_text_units(_units(4))
     first = [_node("n1", 1, ["u000", "u001"], ["u000", "u001"])]
@@ -332,6 +337,9 @@ def test_a_failed_summary_deletion_read_deletes_nothing(
 def test_removed_text_takes_its_summaries_and_every_node_above(
     harness: StoreHarness,
 ) -> None:
+    harness.needs(
+        "delete_summary_nodes_citing", "read_summary_nodes", "read_summary_tree_record"
+    )
     indexer = harness.vector_indexer
     tenant = harness.suffix("other")
     nodes = [
@@ -368,6 +376,9 @@ def test_removed_text_takes_its_summaries_and_every_node_above(
 def test_a_full_build_drops_the_summaries_of_text_it_did_not_write(
     harness: StoreHarness,
 ) -> None:
+    harness.needs(
+        "delete_summary_nodes_outside", "read_summary_nodes", "read_summary_tree_record"
+    )
     indexer = harness.vector_indexer
     _tree(
         harness,
@@ -404,7 +415,7 @@ def test_stored_summary_vectors_are_reused(harness: StoreHarness) -> None:
 
 
 def test_the_build_record_gains_the_summary_tree(harness: StoreHarness) -> None:
-    harness.needs_port(BuildRecordStore)
+    harness.needs("record_build", "add_build_artifacts", "read_build_record")
     indexer = harness.vector_indexer
     indexer.index_text_units(_units(2), suffixes=["default"])
     record = IndexBuildRecord(
@@ -451,6 +462,7 @@ def _manager(harness: StoreHarness) -> Any:
 def test_a_removal_deletes_the_summaries_of_removed_text(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("delete_summary_nodes_citing", "read_summary_nodes")
     manager = _manager(harness)
     manager.index_all_data(text_units=_units(4))
     _tree(
@@ -473,6 +485,7 @@ def test_a_removal_deletes_the_summaries_of_removed_text(
 def test_a_full_build_sweeps_the_summaries_of_text_it_no_longer_holds(
     harness: StoreHarness,
 ) -> None:
+    harness.needs("delete_summary_nodes_outside", "read_summary_nodes")
     from unified_kg_rag.domain.models import Methodology
 
     harness.config.indexing.methodologies = [Methodology.RAPTOR]
@@ -499,6 +512,9 @@ def test_a_full_build_sweeps_the_summaries_of_text_it_no_longer_holds(
 
 
 def test_a_full_build_without_raptor_deletes_the_tree(harness: StoreHarness) -> None:
+    harness.needs(
+        "delete_summary_tree", "read_summary_nodes", "read_summary_tree_record"
+    )
     from unified_kg_rag.domain.models import Methodology
 
     harness.config.indexing.methodologies = [Methodology.RAPTOR]
@@ -806,6 +822,11 @@ def test_a_cut_lineage_is_read_from_the_descendants(harness: StoreHarness) -> No
 
 
 def test_a_leaf_past_a_nodes_cut_lineage_takes_the_node(harness: StoreHarness) -> None:
+    harness.needs(
+        "delete_summary_nodes_citing",
+        "delete_summary_nodes_outside",
+        "read_summary_nodes",
+    )
     # A unit placed directly under a higher node (a singleton cluster, or a
     # member of a cluster whose summary failed) can fall past that node's
     # lineage cut: listed in its child_ids, not in its text_unit_ids. Looked
