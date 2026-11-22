@@ -826,6 +826,10 @@ Bugs present in 0.3.0.
   washes a CIELAB difference of 2.8 apart under simulated tritanopia in the light theme, 5.9 in the dark one): a
   warning is now orange-brown with a warning sign, its wash at least 10 from the trace and error washes under normal
   vision and the three simulations in both themes, and a seed, running or pending badge is outlined in ink.
+- On a custom vector store that keeps extraction records but leaves `find_documents` at its port's default (`None`:
+  it cannot tell), a commit read "cannot tell" as "no text unit names these" and deleted every record the removed
+  text units named, those a changed document's unchanged chunks still name too (extracted again on its next change).
+  The records and their note are kept there now.
 
 ## [0.3.0] - 2026-11-14
 
