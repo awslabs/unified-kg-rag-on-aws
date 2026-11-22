@@ -657,6 +657,16 @@ kbd {
 .link-button:hover {
   text-decoration-thickness: 2px;
 }
+/* A source's "#n" links: a 24 px target at least (WCAG 2.2 2.5.8, the
+   one- and two-digit numbers were 13-20 px wide, 6 px apart), centred. */
+.rank-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  line-height: 1;
+}
 
 /* ---------------------------------------------------------------- fields */
 
