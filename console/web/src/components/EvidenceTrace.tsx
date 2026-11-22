@@ -321,7 +321,7 @@ function RankLinks({ ranks, onJump, none }: { ranks: number[]; onJump: (rank: nu
   return (
     <span className="row" style={{ gap: 6 }}>
       {ranks.map((rank) => (
-        <button key={rank} className="link-button mono" onClick={() => onJump(rank)}>
+        <button key={rank} className="link-button rank-link mono" onClick={() => onJump(rank)}>
           #{rank}
         </button>
       ))}

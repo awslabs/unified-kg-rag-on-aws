@@ -242,7 +242,10 @@ document, printed while it serves, has no `exit_code`. The document holds:
   the `failed_renderers` (each failed renderer's error) and the
   `skipped_renderers` (each default renderer left out for a missing extra,
   with why); an empty list (nothing rendered) or a failed renderer exits `1`.
-- **`run-describe`**: the namespace's description (`suffix`, the namespace, `namespace`, the index namespace,
+- **`run-describe`**: the namespace's description (`suffix`, the namespace
+  (`--namespace`, `processing.document_parsing.namespace`; the key keeps
+  its old name), `namespace`, the registry namespace (the namespace,
+  `indexing.additional_suffix` and the store tag),
   `build`, `build_record` (`present` or `missing`: then `artifacts` are
   what the config builds), `artifacts`, `methodologies`, `strategies`, `auto_routes`,
   `indices`, `registry`, `rebuild` (each reason's `kind`, `remedy`, `detail`

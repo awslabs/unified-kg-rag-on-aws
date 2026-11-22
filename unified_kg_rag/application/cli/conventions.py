@@ -657,19 +657,28 @@ def add_output_format_argument(parser: argparse.ArgumentParser) -> None:
         "stdout (for a run that failed or was stopped before it, a status with "
         "the exit code and the error) and everything else to stderr",
     )
-    add_log_level_and_version_arguments(parser)
+    add_log_level_and_version_arguments(
+        parser,
+        logs="With --output-format text the logs are plain lines unless "
+        "logging.log_format is set",
+    )
 
 
-def add_log_level_and_version_arguments(parser: argparse.ArgumentParser) -> None:
+def add_log_level_and_version_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    logs: str = "The logs go to stderr in logging.log_format (default: "
+    "structured, JSON records)",
+) -> None:
     """Add ``--log-level`` and ``--version`` (a CLI whose stdout is a
-    protocol, run-mcp-server, takes these without ``--output-format``)."""
+    protocol, run-mcp-server, takes these without ``--output-format``);
+    ``logs`` ends the help with the format the CLI's logs take."""
     parser.add_argument(
         "--log-level",
         type=str.upper,
         choices=LOG_LEVELS,
         help="Log level of this run (default: logging.level, INFO; DEBUG logs "
-        "hold user and corpus text). With --output-format text the logs are "
-        "plain lines unless logging.log_format is set",
+        f"hold user and corpus text). {logs}",
     )
     parser.add_argument(
         "--version",

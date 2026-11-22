@@ -4,7 +4,8 @@
 it ran, in one SQLite file under its cache directory (``console.sqlite3``).
 
 The dashboard reads it. It holds the question text (the Ask page lists
-recent questions), never an answer or a source; delete the file, or use
+recent questions) and who asked it (the trusted identity header's, when
+the console takes one), never an answer or a source; delete the file, or use
 the dashboard's Clear, to forget them.
 """
 
@@ -34,7 +35,8 @@ CREATE TABLE IF NOT EXISTS queries (
     usage TEXT,
     cost_usd REAL,
     trace_id TEXT,
-    error TEXT
+    error TEXT,
+    user_id TEXT
 );
 CREATE INDEX IF NOT EXISTS queries_created ON queries (created);
 CREATE TABLE IF NOT EXISTS jobs (
@@ -62,12 +64,14 @@ QUERY_COLUMNS = (
     "cost_usd",
     "trace_id",
     "error",
+    "user_id",
 )
 
 # The query columns added after the first release of the file, each with the
 # statement that adds it: an existing file gains them on open.
 _ADDED_QUERY_COLUMNS = {
     "abstention_reason": "ALTER TABLE queries ADD COLUMN abstention_reason TEXT",
+    "user_id": "ALTER TABLE queries ADD COLUMN user_id TEXT",
 }
 
 

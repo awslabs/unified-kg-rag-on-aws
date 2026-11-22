@@ -707,22 +707,33 @@ class JobManager:
         assert job.process is not None and job.process.stdout is not None
         stdout = await job.process.stdout.read()
         code = await job.process.wait()
-        job.ended = time.time()
-        job.exit_code = code
+        ended = time.time()
         document = _last_json(stdout.decode("utf-8", errors="replace"))
-        job.result = document
-        stopped = job.status is JobStatus.STOPPING
+        # Every await before the ended record: a poll reads the job running,
+        # or ended with its error, question and warnings, never between
+        # (the page stops polling at the first ended record it reads).
+        warning_count, warnings = await asyncio.to_thread(_log_warnings, job.log_path)
         if code == 0:
-            job.status = JobStatus.SUCCEEDED
-        elif stopped or code in (
+            status = JobStatus.SUCCEEDED
+        elif job.status is JobStatus.STOPPING or code in (
             128 + signal.SIGTERM,
             128 + signal.SIGINT,
             -signal.SIGTERM,
             -signal.SIGKILL,
         ):
-            job.status = JobStatus.STOPPED
+            status = JobStatus.STOPPED
         else:
-            job.status = JobStatus.FAILED
+            status = JobStatus.FAILED
+        error: str | None = None
+        confirmation: tuple[str | None, str | None] = (None, None)
+        if status is JobStatus.FAILED:
+            error = (document or {}).get("error") or _last_error(self.log_tail(job))
+            confirmation = confirmation_needed(error)
+        job.ended, job.exit_code, job.result = ended, code, document
+        job.warning_count, job.warnings = warning_count, warnings
+        job.error = error
+        job.confirmation, job.confirmation_reason = confirmation
+        job.status = status
         if job.kind is JobKind.INGEST:
             job.final_progress = self.progress(job)
         if job.kind is JobKind.INGEST and self.on_ingest_end is not None:
@@ -738,12 +749,6 @@ class JobManager:
                     job.id,
                     error=e,
                 )
-        job.warning_count, job.warnings = await asyncio.to_thread(
-            _log_warnings, job.log_path
-        )
-        if job.status is JobStatus.FAILED:
-            job.error = (document or {}).get("error") or _last_error(self.log_tail(job))
-            job.confirmation, job.confirmation_reason = confirmation_needed(job.error)
         self.store.save_job(job.record())
         logger.info(
             "%s job %s ended: %s (exit %s)",

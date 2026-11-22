@@ -219,6 +219,34 @@ for (const locale of ["en", "de"]) {
   });
 }
 
+// Regression (R4C-5): a source's "Cited by" and "Stated in passages" #n
+// links were 13-20 px wide and 20 px high, 6 px apart, under WCAG 2.2's
+// 24 px target size (2.5.8). Each is 24 px at least, and axe agrees.
+test("a source's passage links are 24 px targets", async ({ page, baseURL }) => {
+  const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+  await page.getByLabel("Question").fill("Who carries the lidar units to Kestrel Depot?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".answer-meta").first()).toBeVisible({ timeout: 60_000 });
+  await page.locator(".answer-text .cite-link").first().click();
+  await page.locator('.source[data-kind="entity"] > button').first().click();
+  await expect(page.getByText("Stated in passages")).toBeVisible();
+  const links = page.locator(".source-trail .rank-link");
+  await expect(links.first()).toBeVisible();
+  const boxes = await links.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect()).map(({ width, height }) => ({ width, height })));
+  expect(boxes.filter(({ width, height }) => width < 24 || height < 24), JSON.stringify(boxes)).toEqual([]);
+  await page.evaluate(axeSource);
+  const violations = await page.evaluate(async () => {
+    const axe = (window as unknown as { axe: { run: (context: Document, options: object) => Promise<{ violations: { id: string; nodes: { target: string[] }[] }[] }> } }).axe;
+    const { violations } = await axe.run(document, { runOnly: { type: "rule", values: ["target-size"] } });
+    return violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(" ")).join(", ")}`);
+  });
+  expect(violations).toEqual([]);
+});
+
 // Regression (arch E14): the Graph page's Analysis tables (schema
 // conformance, evidence) cut off their last column in the side panel at
 // 1440 and 1920 px in English and German. Every table there fits its panel.

@@ -194,6 +194,20 @@ def test_every_cli_offers_json_output(cli: str) -> None:
 
 
 @pytest.mark.parametrize("cli", ALL_PARSERS)
+def test_a_flag_s_help_names_only_flags_its_cli_has(cli: str) -> None:
+    # R4C-6: run-mcp-server's --log-level help said "With --output-format
+    # text ...", a flag that command does not have.
+    for command in _commands(ALL_PARSERS[cli]()):
+        own = {option for a in command._actions for option in a.option_strings}
+        named = {
+            (tuple(a.option_strings), flag)
+            for a in command._actions
+            for flag in re.findall(r"(?<![\w-])--[a-z][a-z0-9-]*", a.help or "")
+        }
+        assert {(o, f) for o, f in named if f not in own} == set(), command.prog
+
+
+@pytest.mark.parametrize("cli", ALL_PARSERS)
 def test_every_cli_has_version_and_log_level(cli: str, capsys) -> None:
     from unified_kg_rag import __version__
 

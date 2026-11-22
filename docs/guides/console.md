@@ -32,7 +32,8 @@ keeps it in an HttpOnly cookie, and every request without it is refused.
   questions) and the `uploads/` folder uploads go to. Default: the working
   directory.
 - `--cache-directory` (default `cache`) holds the ingestion jobs' pipeline
-  caches and the console's own records in `console/`: the questions asked
+  caches and the console's own records in `console/`: the questions asked,
+  with their namespace and, under `--trusted-identity-header`, who asked
   (`console.sqlite3`), the jobs and their logs.
 - `--config-path` is the file the Settings page edits and every job runs
   with. Without one the console runs on the defaults and saves nothing.

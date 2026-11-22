@@ -1242,6 +1242,46 @@ async def test_a_job_records_its_warnings_and_a_stopped_one_no_error(
     assert stopped.status is JobStatus.STOPPED and stopped.error is None
 
 
+async def test_a_job_reads_ended_only_with_its_error_question_and_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R4C-1: the status was set before the warnings were read off the log
+    # (an await) and the error and question after it, so a poll in between
+    # read "failed" with neither; the page stops polling at the first ended
+    # record, and its confirm button never showed.
+    import threading
+
+    reading, release = threading.Event(), threading.Event()
+    log_warnings = jobs_module._log_warnings
+
+    def blocked(path: Path) -> tuple[int, list[str]]:
+        reading.set()
+        release.wait(10)
+        return log_warnings(path)
+
+    monkeypatch.setattr(jobs_module, "_log_warnings", blocked)
+    manager = _manager(tmp_path)
+    question = next(iter(INTEGRITY_QUESTIONS.values()))
+    error = f"Confirmation required ({question}); pass --confirm-integrity"
+    job = _ingest_job(
+        manager, tmp_path, json.dumps({"status": "failed", "error": error}), code=1
+    )
+    job.log_path.write_text(_event("warning", "w") + "\n", encoding="utf-8")
+    watcher = asyncio.create_task(manager._watch(job))
+    assert await asyncio.to_thread(reading.wait, 10)
+    try:
+        polled = manager.get(job.id)
+        assert polled["status"] == "running", polled
+        assert polled["exit_code"] is None and polled["ended"] is None, polled
+    finally:
+        release.set()
+        await watcher
+    ended = manager.get(job.id)
+    assert ended["status"] == "failed" and ended["error"] == error, ended
+    assert ended["confirmation"] == "integrity", ended
+    assert ended["warnings"]["count"] == 1, ended
+
+
 def test_a_failed_job_s_error_is_its_last_error_event_not_a_banner() -> None:
     banner = "│ Continue on Error: False │"
     assert (

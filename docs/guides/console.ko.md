@@ -31,7 +31,8 @@ uv run run-console --config-path config.yaml --source-directory ./workspace
   `uploads/` 폴더가 여기에 있습니다. 기본값은 작업 디렉터리입니다.
 - `--cache-directory`(기본값 `cache`)에는 수집 작업의 파이프라인 캐시와
   콘솔 자체 기록(`console/`: 질문 기록 `console.sqlite3`, 작업과 그 로그)이
-  있습니다.
+  있습니다. 질문 기록에는 질문한 네임스페이스와, `--trusted-identity-header`를
+  쓰면 질문한 사용자도 남습니다.
 - `--config-path`는 설정 페이지가 편집하고 모든 작업이 쓰는 파일입니다.
   없으면 기본값으로 실행되고 아무것도 저장하지 않습니다. 불러올 수 없는
   파일이어도 콘솔은 시작하며, 모든 페이지에 오류를 보여 주고 설정
