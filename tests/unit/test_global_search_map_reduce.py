@@ -1015,7 +1015,6 @@ class _HangingMapChain:
         return _map_payload(("late", 50))
 
 
-@pytest.mark.timeout(30)
 async def test_a_deadline_cancels_the_map_calls_and_starts_no_more() -> None:
     # Regression: the map calls ran in a worker thread (BatchProcessor), so a
     # query deadline or a closed chain left them running and the queued ones
@@ -1027,7 +1026,8 @@ async def test_a_deadline_cancels_the_map_calls_and_starts_no_more() -> None:
     rater = strat.map_rater
 
     async def until(done: Any) -> None:
-        deadline = time.monotonic() + 10
+        # A hang guard, not a timing claim: each wait ends on a cue.
+        deadline = time.monotonic() + 60
         while not done():
             assert time.monotonic() < deadline, "timed out waiting for the map"
             await asyncio.sleep(0.01)

@@ -148,7 +148,9 @@ def test_an_abandoned_batch_cuts_a_backoff_wait_short() -> None:
             [{"x": 1}], lambda items: items, fails, "task", show_progress=False
         )
     started = time.time()
-    calls[0].join(timeout=10)
+    calls[0].join(timeout=60.0 / 2)
     assert not calls[0].is_alive()
-    assert time.time() - started < 5
+    # Half the 60 s backoff: a call that waits it out fails, a loaded
+    # runner's scheduling delay (seconds) does not.
+    assert time.time() - started < 60.0 / 2
     assert len(calls) == 1

@@ -40,19 +40,28 @@ from unified_kg_rag.shared import StoreConnectionError
 pytestmark = pytest.mark.unit
 
 
+# A hang guard, not a timing claim: every wait below ends on a cue the code
+# under test sets (a close, a thread's end), so only a hang reaches it.
+BACKSTOP = 60.0
+
+
 class _Retriever:
     def __init__(self) -> None:
         self.loop = asyncio.get_running_loop()
         self.closed = 0
         self.aclosed = 0
         self.aclose_loop: asyncio.AbstractEventLoop | None = None
+        # Set by either close: the cue that the release reached it.
+        self.released = threading.Event()
 
     def close(self) -> None:
         self.closed += 1
+        self.released.set()
 
     async def aclose(self) -> None:
         self.aclosed += 1
         self.aclose_loop = asyncio.get_running_loop()
+        self.released.set()
 
 
 def _run_on_fresh_loop(coro: Any) -> Any:
@@ -289,21 +298,17 @@ def test_dropped_chain_releases_its_retrievers_when_collected() -> None:
     del chain
     gc.collect()
 
-    # Released on a thread of its own (the collector may run anywhere).
-    _until(lambda: built[0].aclosed == 1 and built[1].closed == 1)
-    _until(lambda: not thread.is_alive())
+    # Released on a thread of its own (the collector may run anywhere),
+    # after any other dropped chain the collection found.
+    assert all(r.released.wait(BACKSTOP) for r in built)
+    thread.join(BACKSTOP)
+    assert not thread.is_alive()
     assert len(built) == 2
     # The runner-bound retriever is closed on its own loop ...
+    assert built[0].aclosed == 1 and built[0].closed == 0
     assert built[0].aclose_loop is built[0].loop
     # ... the one whose loop is gone, synchronously.
-    assert built[1].closed == 1
-
-
-def _until(condition: Any, within: float = 10.0) -> None:
-    deadline = time.monotonic() + within
-    while not condition():
-        assert time.monotonic() < deadline, "timed out"
-        time.sleep(0.01)
+    assert built[1].closed == 1 and built[1].aclosed == 0
 
 
 class _ThreadClosingRetriever(_Retriever):
@@ -314,7 +319,9 @@ class _ThreadClosingRetriever(_Retriever):
         await super().aclose()
 
 
-def test_collecting_a_dropped_chain_never_waits_where_it_is_collected() -> None:
+def test_collecting_a_dropped_chain_never_waits_where_it_is_collected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Regression (CI python-3-13, a 120 s hang): the collector ran a dropped
     # chain's finalizer on another chain's loop thread inside
     # ThreadPoolExecutor.submit, under the executors' global lock; the
@@ -323,27 +330,47 @@ def test_collecting_a_dropped_chain_never_waits_where_it_is_collected() -> None:
     # finalizer must return at once wherever it runs.
     import concurrent.futures.thread as pool_threads
 
+    # A finalizer that waits for the release would now wait past the
+    # backstop instead of 30 s, so the test tells "returns" from "waits"
+    # by cues alone, not by how long the collection took.
+    monkeypatch.setattr(rag_chain_module, "_TEARDOWN_TIMEOUT_SECONDS", 10 * BACKSTOP)
     chain, built = _chain(_ThreadClosingRetriever)
     chain.invoke({"query": "q"})  # type: ignore[arg-type]
-    started = time.monotonic()
-    with pool_threads._global_shutdown_lock:
-        del chain
-        gc.collect()
-        waited = time.monotonic() - started
-    assert waited < 5, waited
-    _until(lambda: built[0].aclosed == 1)
+    dropped = [chain]
+    del chain
+    collected, unlock = threading.Event(), threading.Event()
+
+    def collect_under_the_lock() -> None:
+        with pool_threads._global_shutdown_lock:
+            dropped.clear()
+            gc.collect()
+            collected.set()
+            unlock.wait(BACKSTOP)
+
+    collector = threading.Thread(target=collect_under_the_lock, daemon=True)
+    collector.start()
+    try:
+        assert collected.wait(BACKSTOP), "the collection waited for the release"
+        # The close needs the lock the collector holds: not released yet.
+        assert built[0].aclosed == 0
+    finally:
+        unlock.set()
+        if collected.is_set():  # else it is stuck in the collection
+            collector.join(BACKSTOP)
+    assert built[0].released.wait(BACKSTOP)
+    assert built[0].aclosed == 1
 
 
 _COLLECTED_UNDER_THE_SHUTDOWN_LOCK = """
-import gc, sys, threading, time
-from tests.unit.test_rag_chain_event_loop import _chain, _ThreadClosingRetriever, _until
+import gc, threading
+from tests.unit.test_rag_chain_event_loop import BACKSTOP, _chain, _ThreadClosingRetriever
 chain, built = _chain(_ThreadClosingRetriever)
 chain.invoke({"query": "q"})
 with threading._shutdown_locks_lock:
     del chain
     gc.collect()
-_until(lambda: built[0].aclosed == 1)
-print("released")
+if built[0].released.wait(BACKSTOP) and built[0].aclosed == 1:
+    print("released")
 """
 
 
@@ -374,6 +401,103 @@ def test_collecting_a_dropped_chain_starts_no_thread_where_it_is_collected() -> 
         },
     )
     assert done.stdout.strip() == "released", done.stderr[-2000:]
+
+
+class _EndingLoop(asyncio.SelectorEventLoop):
+    """A loop on a thread of its own that can be made to end with a close
+    submitted to it still queued: :meth:`hold` blocks it, ``submitted`` is
+    set by the next submission from another thread, and :meth:`end_queued`
+    stops it before it runs that submission, then closes it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.submitted = threading.Event()
+        self._held = threading.Event()
+        self._thread = threading.Thread(target=self.run_forever, daemon=True)
+        self._thread.start()
+
+    def call_soon_threadsafe(  # type: ignore[override]
+        self, callback: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        handle = super().call_soon_threadsafe(callback, *args, **kwargs)
+        self.submitted.set()
+        return handle
+
+    def hold(self) -> None:
+        def held() -> None:
+            self._held.wait(BACKSTOP)
+            self.stop()  # this iteration is the last: the queue is left
+
+        super().call_soon_threadsafe(held)
+        self.submitted.clear()
+
+    def end_queued(self) -> None:
+        self._held.set()
+        self._thread.join(BACKSTOP)
+        self.close()
+
+
+def _closing_on(close: Any) -> tuple[_EndingLoop, list[_Retriever], threading.Thread]:
+    """A chain whose retriever is bound to an :class:`_EndingLoop`, closed by
+    ``close(chain)`` on another thread, the loop ending with that close
+    queued on it."""
+    loop = _EndingLoop()
+    chain, built = _chain()
+    query = chain.ainvoke({"query": "q"})  # type: ignore[arg-type]
+    asyncio.run_coroutine_threadsafe(query, loop).result(BACKSTOP)
+    loop.hold()
+    closing = threading.Thread(target=close, args=(chain,), daemon=True)
+    closing.start()
+    assert loop.submitted.wait(BACKSTOP)
+    loop.end_queued()
+    return loop, built, closing
+
+
+@pytest.mark.parametrize(
+    "close",
+    [GraphRAGChain.close, lambda chain: asyncio.run(chain.aclose())],
+    ids=["close", "aclose"],
+)
+def test_retrievers_whose_loop_ends_before_their_close_runs_are_closed(
+    close: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (CI python-3-13, "coroutine '_aclose_retrievers' was never
+    # awaited"): a close submitted to a loop that then ended never ran nor
+    # resolved, so the retrievers stayed open and the closer waited out the
+    # whole teardown timeout (now past the backstop). They are closed here
+    # instead, once.
+    monkeypatch.setattr(rag_chain_module, "_TEARDOWN_TIMEOUT_SECONDS", 10 * BACKSTOP)
+    _, built, closing = _closing_on(close)
+    assert built[0].released.wait(BACKSTOP)
+    closing.join(BACKSTOP)
+    assert not closing.is_alive()
+    assert built[0].closed == 1 and built[0].aclosed == 0
+
+
+def test_a_collected_chain_whose_loop_ended_holds_up_no_later_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same on the release worker, which releases every dropped chain one
+    # after another: it waited out the teardown timeout before the next one.
+    monkeypatch.setattr(rag_chain_module, "_TEARDOWN_TIMEOUT_SECONDS", 10 * BACKSTOP)
+
+    def drop(chain: GraphRAGChain) -> None:
+        rag_chain_module._release_collected(
+            chain._retriever_cache,
+            chain._strategy_cache,
+            chain._cache_lock,
+            chain._loop_runner,
+            chain._background_closes,
+        )
+
+    _, first, _ = _closing_on(drop)
+    later, built = _chain()
+    later.invoke({"query": "q"})  # type: ignore[arg-type]
+    drop(later)
+    assert built[0].released.wait(BACKSTOP)
+    assert first[0].released.is_set()
+    assert first[0].closed == 1 and first[0].aclosed == 0
+    later.close()
 
 
 def test_runner_rejects_reentrant_sync_call() -> None:
@@ -700,9 +824,12 @@ def test_close_and_aclose_stop_the_loop_even_if_waiting_for_closes_fails(
         assert thread is not None and not thread.is_alive()
 
 
-def test_stop_cancels_a_task_no_call_awaits() -> None:
+def test_stop_cancels_a_task_no_call_awaits(monkeypatch: pytest.MonkeyPatch) -> None:
     # A task a call spawned and left running (a shared embedding future,
     # say) is cancelled and ended before the loop stops, not waited for.
+    # Waiting for it would now outlast the backstop (not 30 s), so a stop
+    # that waits is told from one that does not by its end alone.
+    monkeypatch.setattr(rag_chain_module, "_TEARDOWN_TIMEOUT_SECONDS", 10 * BACKSTOP)
     runner = _LoopRunner()
     spawned: list[asyncio.Task[None]] = []
 
@@ -710,10 +837,11 @@ def test_stop_cancels_a_task_no_call_awaits() -> None:
         spawned.append(asyncio.ensure_future(asyncio.Event().wait()))
 
     runner.run(spawn())
-    started = time.monotonic()
-    runner.stop()
+    stopping = threading.Thread(target=runner.stop, daemon=True)
+    stopping.start()
+    stopping.join(BACKSTOP)
+    assert not stopping.is_alive(), "stop waited for the task"
     assert spawned[0].cancelled()
-    assert time.monotonic() - started < 5
 
 
 def test_calls_racing_stop_never_hang() -> None:
@@ -736,7 +864,7 @@ def test_calls_racing_stop_never_hang() -> None:
     threads = [threading.Thread(target=calls, daemon=True) for _ in range(4)]
     for thread in threads:
         thread.start()
-    deadline = time.monotonic() + 20
+    deadline = time.monotonic() + BACKSTOP
     try:
         while time.monotonic() < deadline and any(t.is_alive() for t in threads):
             runner.stop()

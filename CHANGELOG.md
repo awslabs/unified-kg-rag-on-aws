@@ -452,6 +452,9 @@ Each name below warns and still works, and is removed in 0.5.0
 
 ### Fixed
 
+- Closing a chain (or the garbage collector releasing a dropped one) whose retrievers are bound to an event loop that
+  ends before it runs their close now closes them synchronously instead of leaving them open and waiting 30 s; that
+  wait also held up the release of every chain dropped after it.
 - The console's Dashboard no longer shows "Loading..." under the error of a failed read.
 - The console's Ask page: an opened source keeps a line break that stands between two highlighted phrases (it read
   "Kestrel DepotKestrel Depot will add...").

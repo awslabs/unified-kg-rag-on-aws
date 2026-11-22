@@ -322,7 +322,9 @@ def test_sync_invoke_past_the_deadline_raises() -> None:
         started = time.monotonic()
         with pytest.raises(QueryTimeoutError):
             chain.invoke(_query())
-        assert time.monotonic() - started < 0.5 + 5
+        # Half the model's 60 s: a call that waits for it fails, a loaded
+        # runner's scheduling delay (seconds) does not.
+        assert time.monotonic() - started < 60 / 2
     finally:
         chain.close()
 
@@ -375,12 +377,14 @@ async def test_the_deadline_covers_a_new_chains_methodology_check(
         _config(query_timeout_seconds=0.3), _StalledRecordRetriever(stall=60)
     )
     started = time.monotonic()
+    # Half the store's 60 s stall: a query that waits for it fails, a loaded
+    # runner's scheduling delay (seconds) does not.
     with pytest.raises(QueryTimeoutError):
         if stream:
-            await asyncio.wait_for(_drain(chain.astream(_query())), timeout=10)
+            await asyncio.wait_for(_drain(chain.astream(_query())), timeout=60 / 2)
         else:
-            await asyncio.wait_for(chain.ainvoke(_query()), timeout=10)
-    assert time.monotonic() - started < 5
+            await asyncio.wait_for(chain.ainvoke(_query()), timeout=60 / 2)
+    assert time.monotonic() - started < 60 / 2
 
 
 async def _drain(chunks: AsyncIterator[str]) -> None:
@@ -1015,11 +1019,12 @@ async def test_ignore_errors_answers_a_timeout_during_the_admission(
         chunks = [c async for c in chain.astream(_query())]
         assert "".join(chunks) == DEFAULT_ERROR_MESSAGE
     else:
-        out = await asyncio.wait_for(chain.ainvoke(_query()), timeout=10)
+        out = await asyncio.wait_for(chain.ainvoke(_query()), timeout=60 / 2)
         assert isinstance(out, RAGOutput)
         assert out.answer == DEFAULT_ERROR_MESSAGE and out.metadata["error"] is True
         assert "search.query_timeout_seconds" in out.search_results.metadata["error"]
-    assert time.monotonic() - started < 5
+    # Half the store's 60 s stall (as above).
+    assert time.monotonic() - started < 60 / 2
 
 
 def test_a_caller_deadline_bounds_a_query_without_its_own_timeout() -> None:

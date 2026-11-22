@@ -218,8 +218,9 @@ def _auto() -> RAGInput:
     return RAGInput(query="What does Vendor supply?", search_strategy="auto")
 
 
-async def _until(check: Any, within: float = 10.0) -> None:
-    """Wait (bounded) until ``check()`` holds."""
+async def _until(check: Any, within: float = 60.0) -> None:
+    """Wait until ``check()`` holds; ``within`` is a hang guard, not a
+    timing claim (a loaded runner may take seconds to schedule the cue)."""
     deadline = time.monotonic() + within
     while not check():
         assert time.monotonic() < deadline, "timed out"
@@ -476,8 +477,9 @@ def test_close_ends_the_sync_paths_background_extraction(
         assert chain._background_extractions._snapshot()
         started = time.monotonic()
         chain.close()
-        # Generous headroom: the extraction would take 30 s, the cancel ms.
-        assert time.monotonic() - started < 5
+        # Half the extraction's 30 s: a close that waits for it fails, a
+        # loaded runner's scheduling delay (seconds) does not.
+        assert time.monotonic() - started < 30.0 / 2
         gc.collect()
     assert model.cancelled == ["keywords"]
     assert not chain._background_extractions._snapshot()

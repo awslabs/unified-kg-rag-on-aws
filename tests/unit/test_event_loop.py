@@ -69,7 +69,9 @@ def test_a_cancelled_run_does_not_wait_for_the_executors_calls() -> None:
     try:
         with pytest.raises(asyncio.CancelledError):
             event_loop.run(main(), io_workers=2)
-        assert time.monotonic() - started < 5
+        # Half the calls' 30 s: a run that waits for them fails, a loaded
+        # runner's scheduling delay (seconds) does not.
+        assert time.monotonic() - started < 30 / 2
         assert ran == []  # the queued call was dropped
     finally:
         release.set()
