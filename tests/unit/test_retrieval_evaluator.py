@@ -217,6 +217,32 @@ class TestMetrics:
             "mrr": 1.0,
         }
 
+    def test_a_file_past_the_cutoff_never_changes_a_score_at_it(
+        self, config: Config
+    ) -> None:
+        # R3B-4: the stem merge read every ranked file, so a.txt at rank 20
+        # (past k 5) kept "a" a reference of its own and perfect retrieval
+        # at 5 scored nDCG 0.61.
+        config.evaluation.retrieval_k = 5
+        evaluator = RetrievalEvaluator(config)
+        alone = _score(evaluator, [["a.pdf"]], ["a", "a.pdf"])
+        assert alone["metrics"] == {
+            "hit_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_k": 1.0,
+            "mrr": 1.0,
+        }
+        ranked = [["a.pdf"]] + [[f"z{i}.txt"] for i in range(18)] + [["a.txt"]]
+        assert _score(evaluator, ranked, ["a", "a.pdf"])["metrics"] == alone["metrics"]
+        for k in range(1, 20):
+            config.evaluation.retrieval_k = k
+            evaluator = RetrievalEvaluator(config)
+            short = _score(evaluator, ranked[:k], ["a", "a.pdf"])["metrics"]
+            full = _score(evaluator, ranked, ["a", "a.pdf"])["metrics"]
+            assert {m: v for m, v in full.items() if m != "mrr"} == {
+                m: v for m, v in short.items() if m != "mrr"
+            }, k
+
     def test_two_files_of_one_stem_stay_two_references(self, config: Config) -> None:
         # a.pdf and a.docx are two documents; "a" is a spelling of either.
         config.evaluation.retrieval_k = 3
