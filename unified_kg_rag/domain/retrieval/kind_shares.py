@@ -44,29 +44,39 @@ def score_group(result: RetrievalResult) -> str:
     return str(result.retriever_type)
 
 
+def _outranks(count: int, given: int, other_count: int, other_given: int) -> bool:
+    """Whether ``count / sqrt(given (given + 1))`` exceeds the other kind's,
+    squared and cross-multiplied in exact integers: a kind without a seat
+    (``given`` 0, an infinite priority) outranks every kind with one, and
+    two without a seat tie."""
+    return count * count * other_given * (other_given + 1) > (
+        other_count * other_count * given * (given + 1)
+    )
+
+
 def apportion(counts: Mapping[str, int], seats: int) -> dict[str, int]:
     """``seats`` split across ``counts``' kinds in proportion to their
-    counts, by the Sainte-Lague (Webster) divisor method: each seat in turn
-    goes to the kind with the largest quotient ``count / (2 * given + 1)``
-    among those with a record left, compared in exact integers; a tie goes
+    counts, by the Huntington-Hill divisor method: each seat in turn goes
+    to the kind with the largest priority ``count / sqrt(given * (given +
+    1))`` among those with a record left, compared squared and
+    cross-multiplied in exact integers (no float square root); a tie goes
     to the kind first in ``counts`` (the first ranked, for
-    :func:`cut_by_kind`). Seats are handed out one by one, so a larger
-    ``seats`` never takes one from a kind (house monotone, which largest
-    remainder is not: ``{1, 3, 3}`` gave the first kind 1 of 3 seats and 0
-    of 4). Of the divisor methods it is the one biased toward neither large
-    nor small kinds; D'Hondt favours the largest, here the reranked chunks
-    the cut exists to keep from crowding out the graph. The seats sum to
-    ``min(seats, sum(counts))`` and no kind gets more than its count."""
+    :func:`cut_by_kind`). A kind's priority is infinite until it holds a
+    seat, so whenever ``seats`` reaches the number of kinds with records,
+    each of them gets one: the cut exists so the graph records survive
+    beside the reranked chunks that outnumber them (Sainte-Lague rounded a
+    relationship's 0.4 of a seat to none at ``top_k`` 2). Seats are handed
+    out one by one, so a larger ``seats`` never takes one from a kind
+    (house monotone, which largest remainder is not: ``{1, 3, 3}`` gave the
+    first kind 1 of 3 seats and 0 of 4). The seats sum to ``min(seats,
+    sum(counts))`` and no kind gets more than its count."""
     given = dict.fromkeys(counts, 0)
     for _ in range(min(max(seats, 0), sum(counts.values()))):
         best: str | None = None
         for kind, count in counts.items():
             if given[kind] >= count:
                 continue
-            # count / (2g + 1) > best's, cross-multiplied: no float ties.
-            if best is None or count * (2 * given[best] + 1) > counts[best] * (
-                2 * given[kind] + 1
-            ):
+            if best is None or _outranks(count, given[kind], counts[best], given[best]):
                 best = kind
         assert best is not None  # a kind has a record left below the sum
         given[best] += 1
