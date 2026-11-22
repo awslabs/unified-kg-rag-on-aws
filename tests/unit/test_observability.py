@@ -69,6 +69,7 @@ from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
 from unified_kg_rag.shared import ConfigurationError, PipelineInterrupted, observability
 from unified_kg_rag.shared.logging import _SHARED_PROCESSORS, add_trace_ids
+from unified_kg_rag.shared.query_stop import StopCause
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 pytestmark = pytest.mark.unit
@@ -2683,23 +2684,45 @@ async def test_a_query_its_reader_stopped_ends_its_spans_unset_and_stopped(
     assert all("error.type" not in _attrs(s) for s in spans if s.name in stopped)
 
 
-@pytest.mark.parametrize("where", ["retrieve", "model"])
-@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
-def test_a_cli_query_a_signal_stops_keeps_its_error_spans(
-    tracing: Tracing, signum: int, where: str
-) -> None:
-    # The maintainer decision: a process stopping (run-rag's Ctrl-C or
-    # SIGTERM, which cancel its main task) is not a reader's stop; its query
-    # span and the in-flight span stay ERROR, none marked stopped.
+async def _query_on(surface: str, chain: GraphRAGChain, tmp_path: Path) -> None:
+    """Run one query ``held`` holds the way ``surface`` runs it, until it is
+    stopped."""
+    from unified_kg_rag.application.cli.conventions import interruptible_turn
+
+    if surface == "run-rag":
+        await chain.ainvoke(_SIMPLE_QUERY)
+    elif surface == "run-rag-interactive":
+        await interruptible_turn(chain.ainvoke(_SIMPLE_QUERY))
+    elif surface == "mcp":
+        from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+
+        await KnowledgeGraphTools(chain).answer("Who ships?", strategy="simple")
+    else:
+        from unified_kg_rag.application.cli.console.ask import AskRequest, AskService
+        from unified_kg_rag.application.cli.console.store import ConsoleStore
+
+        service = AskService(
+            Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+        )
+        try:
+            async for _ in service.ask(
+                AskRequest(query="Who ships?", search_strategy="simple")
+            ):
+                pass
+        finally:
+            await service.close()
+
+
+def _signalled(
+    surface: str, held: _Held, chain: GraphRAGChain, tmp_path: Path, signum: int
+) -> int | str | None:
+    """Run ``surface``'s query under the CLI's signal handling
+    (``exits_on_sigterm`` + ``stoppable``), ``signum`` sent once the query is
+    held; the CLI's exit code."""
     from unified_kg_rag.application.cli.conventions import (
         exits_on_sigterm,
         stoppable,
     )
-
-    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
-    exporter = tracing()
-    held = _Held(where)
-    chain = held.chain()
 
     async def run() -> int:
         async def stop() -> None:
@@ -2708,7 +2731,7 @@ def test_a_cli_query_a_signal_stops_keeps_its_error_spans(
 
         stopper = asyncio.create_task(stop())
         try:
-            await chain.ainvoke(_SIMPLE_QUERY)
+            await _query_on(surface, chain, tmp_path)
         finally:
             stopper.cancel()
             await chain.aclose()
@@ -2718,21 +2741,153 @@ def test_a_cli_query_a_signal_stops_keeps_its_error_spans(
     def main() -> int:
         return asyncio.run(stoppable(run()))
 
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         with pytest.raises(SystemExit) as exited:
             main()
     finally:
         signal.signal(signal.SIGINT, previous)
-    assert exited.value.code == 128 + signum
+    return exited.value.code
+
+
+@pytest.mark.parametrize("where", ["retrieve", "model"])
+@pytest.mark.parametrize(
+    ("surface", "signum"),
+    [
+        ("run-rag", signal.SIGINT),
+        ("run-rag", signal.SIGTERM),
+        # A Ctrl-C there stops the question only (below).
+        ("run-rag-interactive", signal.SIGTERM),
+        ("mcp", signal.SIGINT),
+        ("mcp", signal.SIGTERM),
+        ("console", signal.SIGINT),
+        ("console", signal.SIGTERM),
+    ],
+)
+def test_a_cli_query_a_signal_stops_keeps_its_error_spans(
+    tracing: Tracing, tmp_path: Path, surface: str, signum: int, where: str
+) -> None:
+    # The maintainer decision: a process stopping (a CLI's Ctrl-C or
+    # SIGTERM, which cancel its main task) is not a reader's stop; its query
+    # span and the in-flight span stay ERROR, none marked stopped. R5D-1 /
+    # R5C-1: a server stopped so (run-mcp-server, whose tool calls run the
+    # query as their reader, and run-console, whose ask stream stops its
+    # query as its reader) ended them UNSET and stopped, as a client that
+    # left.
+    from unified_kg_rag.shared.query_stop import process_stopping
+
+    exporter = tracing()
+    held = _Held(where)
+    chain = held.chain()
+    assert _signalled(surface, held, chain, tmp_path, signum) == 128 + signum
+    assert not process_stopping()  # cleared once main returned (the suite)
     spans = exporter.get_finished_spans()
     errors = {
         s.name: _attrs(s).get("error.type")
         for s in spans
         if s.status.status_code == StatusCode.ERROR
     }
-    assert errors["kg_rag.query"] == "CancelledError"
-    assert errors[_Held.span[where]] == "CancelledError"
+    assert errors["kg_rag.query"] == "CancelledError", errors
+    assert errors[_Held.span[where]] == "CancelledError", errors
+    if surface == "console":
+        assert errors["kg_rag.console.ask"] == "CancelledError", errors
     assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)
+
+
+@pytest.mark.parametrize("where", ["retrieve", "model"])
+def test_an_interactive_question_ctrl_c_stops_ends_its_spans_unset_and_stopped(
+    tracing: Tracing, tmp_path: Path, where: str
+) -> None:
+    # R5C-2 (maintainer decision): a Ctrl-C on one question of run-rag
+    # --interactive, the session going on, is its reader's stop, as the
+    # console's Stop: its spans ended ERROR CancelledError. They end UNSET,
+    # marked stopped, and the CLI goes on (no stop of its own).
+    from unified_kg_rag.application.cli.conventions import TurnInterrupted
+
+    exporter = tracing()
+    held = _Held(where)
+    chain = held.chain()
+    interrupted: list[bool] = []
+
+    async def turn() -> None:
+        try:
+            await _query_on("run-rag-interactive", chain, tmp_path)
+        except TurnInterrupted:
+            interrupted.append(True)
+
+    from unified_kg_rag.application.cli import conventions
+
+    async def run() -> int:
+        async def stop() -> None:
+            await held.wait()
+            os.kill(os.getpid(), signal.SIGINT)
+
+        stopper = asyncio.create_task(stop())
+        try:
+            await turn()
+        finally:
+            stopper.cancel()
+            await chain.aclose()
+        return 0
+
+    @conventions.exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(conventions.stoppable(run()))
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        assert main() == 0
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert interrupted == [True]
+    spans = exporter.get_finished_spans()
+    assert [s.name for s in spans if s.status.status_code == StatusCode.ERROR] == []
+    stopped = {s.name for s in spans if _attrs(s).get("kg_rag.stopped") is True}
+    assert {"kg_rag.query", _Held.span[where]} <= stopped, sorted(stopped)
+
+
+def test_a_served_signal_marks_the_process_stopping() -> None:
+    # R5C-1: uvicorn takes SIGINT and SIGTERM while it serves (run-console,
+    # run-mcp-server over HTTP); a request its shutdown then cancels is the
+    # server stopping, not a client that left.
+    pytest.importorskip("uvicorn")
+    import uvicorn
+
+    from unified_kg_rag.application.cli.conventions import signal_stopped_server
+    from unified_kg_rag.shared.query_stop import (
+        mark_process_stopping,
+        process_stopping,
+    )
+
+    server = signal_stopped_server(uvicorn.Config(lambda *_: None))
+    assert not process_stopping()
+    try:
+        server.handle_exit(signal.SIGTERM, None)
+        assert process_stopping()
+        assert server.should_exit
+    finally:
+        mark_process_stopping(False)
+
+
+async def test_a_reader_stop_sets_no_stop_while_the_process_stops() -> None:
+    # The one mark every reader path reads (await_as_reader, aquery_events,
+    # the console's ask stream): set, a cancelled reader cancels its query
+    # with no stop set.
+    from unified_kg_rag.shared.query_stop import (
+        QueryStop,
+        mark_process_stopping,
+        stop_as_reader,
+    )
+
+    stop = QueryStop()
+    mark_process_stopping()
+    try:
+        stop_as_reader(stop)
+        assert not stop.is_set()
+    finally:
+        mark_process_stopping(False)
+    stop_as_reader(stop)
+    assert stop.is_set() and stop.cause is StopCause.READER
 
 
 @pytest.mark.parametrize("where", ["retrieve", "model"])

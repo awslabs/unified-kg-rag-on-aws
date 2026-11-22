@@ -48,8 +48,9 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from pathlib import Path
+from types import FrameType
 from typing import Any, NoReturn, ParamSpec, TypeVar
 
 from unified_kg_rag import __version__
@@ -63,6 +64,7 @@ from unified_kg_rag.shared.exceptions import (
     operator_error_text,
     query_failure_ids,
 )
+from unified_kg_rag.shared.query_stop import await_as_reader, mark_process_stopping
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -434,6 +436,9 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             turn.get_loop().call_soon_threadsafe(turn.cancel)
             return
         _stop["signum"] = signum
+        # Before the cancel: the queries it cancels end with their error
+        # status, not as a reader's stop (shared.query_stop).
+        mark_process_stopping()
         if _exit_at_once["enabled"]:
             _stop_started.set()
         if not in_loop:
@@ -460,6 +465,7 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             turn=None,
             turn_interrupted=False,
         )
+        mark_process_stopping(False)
         _start_stop_watchdog()
         if _json["enabled"]:
             console.stderr = True
@@ -507,12 +513,33 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
                     signum,
                     _stopped_in_teardown if _exit_at_once["enabled"] else handler,
                 )
+            if not _exit_at_once["enabled"]:
+                # main returned: the process goes on (the test suite).
+                mark_process_stopping(False)
         _exit_finished(code)
         if exited is not None:
             raise exited
         return result
 
     return wrapper
+
+
+def signal_stopped_server(config: Any) -> Any:
+    """A ``uvicorn.Server`` serving ``config`` (a ``uvicorn.Config``) whose
+    signal marks the process stopping (``shared.query_stop``), as
+    :func:`exits_on_sigterm`'s does: uvicorn takes ``SIGINT`` and
+    ``SIGTERM`` while it serves. Its shutdown lets the requests in flight
+    finish (their queries answer); one it then cancels (past its graceful
+    shutdown's timeout, or at a second ``Ctrl-C``) is the server stopping,
+    and its query ends with its error status, not as a reader that left."""
+    import uvicorn
+
+    class _Server(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+            mark_process_stopping()
+            super().handle_exit(sig, frame)
+
+    return _Server(config)
 
 
 async def stoppable(main: Awaitable[_R]) -> _R:
@@ -527,13 +554,19 @@ class TurnInterrupted(Exception):
     """A Ctrl-C ended an interactive turn (see :func:`interruptible_turn`)."""
 
 
-async def interruptible_turn(turn: Awaitable[_R]) -> _R:
+async def interruptible_turn(turn: Coroutine[Any, Any, _R]) -> _R:
     """Await ``turn`` (an interactive CLI's answer) as a task of its own,
     which a Ctrl-C cancels instead of the task :func:`stoppable` runs: the
     session goes on. Raises :class:`TurnInterrupted` once the cancelled
     turn has ended. A second Ctrl-C while it ends, and a SIGTERM, stop the
-    CLI as they do outside a turn (the stop cancels the turn too)."""
-    task = asyncio.ensure_future(turn)
+    CLI as they do outside a turn (the stop cancels the turn too).
+
+    The turn's query runs with this caller its reader
+    (``shared.query_stop.await_as_reader``): a Ctrl-C on one question is
+    its reader stopping, as the console's Stop (its spans end with no error
+    status, marked stopped), while a stop of the CLI is the process
+    stopping (they keep their error status)."""
+    task = asyncio.ensure_future(await_as_reader(turn))
     _stop.update(turn=task, turn_interrupted=False)
     try:
         return await task

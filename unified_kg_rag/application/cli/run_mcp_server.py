@@ -36,6 +36,7 @@ from unified_kg_rag.application.cli.conventions import (
     exits_on_sigterm,
     failed,
     is_loopback,
+    signal_stopped_server,
     stoppable,
     usage_error,
 )
@@ -223,7 +224,7 @@ async def serve_http(
         "Serving MCP over streamable HTTP on http://%s:%s/mcp", shown_host, port
     )
     config = uvicorn.Config(app, host=host, port=port, log_config=None)
-    await uvicorn.Server(config).serve()
+    await signal_stopped_server(config).serve()
 
 
 async def warn_of_missing_namespaces(

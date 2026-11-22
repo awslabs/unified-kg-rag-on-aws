@@ -33,6 +33,7 @@ from unified_kg_rag.application.cli.conventions import (
     json_output,
     print_json,
     setup_cli_logging,
+    signal_stopped_server,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import console, markup_safe
@@ -331,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    server = uvicorn.Server(
+    server = signal_stopped_server(
         uvicorn.Config(
             create_app(
                 options,

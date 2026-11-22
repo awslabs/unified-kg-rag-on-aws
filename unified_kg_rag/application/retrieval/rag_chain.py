@@ -257,6 +257,7 @@ from unified_kg_rag.shared.query_stop import (
     query_stopped,
     raise_if_stopped,
     reader_stopped,
+    stop_as_reader,
     wait_ended,
     window_stop_scope,
 )
@@ -4680,8 +4681,9 @@ class _EventChannel(_EventSink):
     def stop(self) -> None:
         """The reader stopped: the query, cancelled next, ends as
         :class:`_ReaderStopped`, and its worker threads send no model
-        request (``shared.query_stop``)."""
-        self.reader_stop.set()
+        request (``shared.query_stop``); while a signal stops the process,
+        it ends cancelled (``shared.query_stop.stop_as_reader``)."""
+        stop_as_reader(self.reader_stop)
 
 
 # Where the events of the query running in this context go (``None``: no

@@ -19,7 +19,7 @@ filters by it.
 | `kg_rag.ingestion.run` | root | `kg_rag.pipeline_id`, `kg_rag.mode` (`full`, `incremental`) and an incremental run's `kg_rag.delta.new` / `.changed` / `.deleted` counts; status `ERROR` when the run failed |
 | `kg_rag.ingestion.stage` | run | One per stage: input/output counts, status, the stage's numeric metrics as `kg_rag.stage.<metric>`, `error.type` and the exception when it crashed |
 | `kg_rag.batch` | stage, or root for `run-eval` answer generation | Item and failure counts; in `run-eval` the run's `kg_rag.eval.strategy` and `kg_rag.eval.repeat` (1-based), as on every span of the run |
-| `kg_rag.mcp.tool` | root | One per MCP tool call (`run-mcp-server`): `mcp.tool.name`, `kg_rag.records`, `kg_rag.cancelled` (its client left or the server stopped: no error status); with `capture_content` the redacted arguments as `input.value`. A `kg_search` or `kg_answer` call's `kg_rag.query` span nests under it |
+| `kg_rag.mcp.tool` | root, or the MCP SDK's `tools/call` span (with a global tracer provider, as the exporting backends set) | One per MCP tool call (`run-mcp-server`): `mcp.tool.name`, `kg_rag.records`, `kg_rag.cancelled` (its client left or the server stopped: no error status); with `capture_content` the redacted arguments as `input.value`. A `kg_search` or `kg_answer` call's `kg_rag.query` span nests under it |
 | `kg_rag.console.ask` | root | One per console question: `kg_rag.search_strategy`, `kg_rag.query_id` (the id its `kg_rag.query` span's log lines and result carry), `kg_rag.stopped` (Stop, or the page closed: no error status); the query span nests under it |
 | `kg_rag.query` | root, the `run-eval` batch, an MCP tool call, or a console question | `kg_rag.query_id`, `session.id` and `gen_ai.conversation.id` (the conversation id), `user.id`, `kg_rag.mode` (`rag`, or `search` for a retrieval-only search), `kg_rag.top_k`, `kg_rag.use_memory`, `kg_rag.requested_strategy` and `kg_rag.strategy` (the one that ran; of a query stopped early too, its reader gone or its caller cancelled it, as its audit record names it; a query its caller left during its admission, before any model call, has no `kg_rag.query` span, only the host's span, as an MCP call's `kg_rag.cancelled`), `kg_rag.blocked`, `kg_rag.degraded` (answered without a step), `kg_rag.query_limited` (its limits cut it short: the `query_limited` metric), `kg_rag.error_class` (of an error answer under `processing.ignore_errors`), `kg_rag.effort` (`RAGInput.effort`) and `kg_rag.limits.max_model_calls` / `kg_rag.limits.max_input_tokens` (the query's limits in force), when set; once it ends, `kg_rag.error` (an error answer), `kg_rag.abstained`, an answer's `kg_rag.sources` (how many the answer model was given) and `kg_rag.cited_source_ids` (the ids of the sections it cites, up to 50), and `kg_rag.cost_usd` when `models.prices` prices every language model and reranker it called (an embedding model without a price leaves its requests out); with `capture_content` the redacted query as `input.value` and the answer as `output.value` (a streamed one too). Its `kg_rag.query_id` and trace id are the result's `metadata.query_id` and `metadata.trace_id`, and its log lines carry `query_id` and `namespace` |
 | `kg_rag.strategy` | query | `kg_rag.rerank_status` for the whole query |
@@ -82,19 +82,23 @@ A query whose reader stopped ends its spans with no error status and
 `kg_rag.stopped: true`: the `kg_rag.query` span, the console's
 `kg_rag.console.ask` root and every span still open (a retrieval, a model
 call), as its query metrics (`query_failed` 0) and its audit record
-(`outcome: stopped`) count it. A reader stops when:
+(`outcome: stopped`) count it. A process stopped by a signal is not its
+queries' reader stopping: its queries keep the `ERROR` status. How each
+stop ends a query in flight:
 
-- an MCP client leaves a `kg_search` or `kg_answer` call (a disconnect, a
-  cancel notification) before the call's deadline;
-- the console's Stop is pressed, or its page is closed;
-- the reader of `GraphRAGChain.aquery_events` stops reading.
+| Stop | Examples | Spans | Audit `outcome` |
+|---|---|---|---|
+| Reader stop | An MCP client leaves a `kg_search` or `kg_answer` call before the call's deadline (a cancel notification, a disconnect, its stdin closed); the console's Stop, or its page closed; the reader of `GraphRAGChain.aquery_events` stops reading | No error status, `kg_rag.stopped: true` | `stopped` |
+| Interactive question stop | `Ctrl-C` on one question of `run-rag --interactive`; the session goes on | No error status, `kg_rag.stopped: true` | `stopped` |
+| Process signal | `Ctrl-C` or `SIGTERM` ending a CLI: `run-rag` (`--interactive` too: a `SIGTERM`), `run-eval`, `run-mcp-server` over stdio; a host cancelling `ainvoke` itself | `ERROR`, `error.type: CancelledError` | `stopped` |
+| Server shutdown | `Ctrl-C` or `SIGTERM` to `run-console` or to `run-mcp-server --transport streamable-http`: the server stops taking requests and lets those in flight finish | A query that finishes ends as it ends (answered); one the shutdown cancels (`run-console` past its 60 s graceful shutdown; either at a second `Ctrl-C`) `ERROR`, `error.type: CancelledError` | the query's own; `stopped` when cancelled |
+| Timeout | The query's deadline (`search.query_timeout_seconds`) or its answer stream's first-chunk window; an MCP client that leaves past the call's deadline | `ERROR`, `error.type: QueryTimeoutError` (`CancelledError` on a span the deadline cut off) | `failed`, `error_class` `timeout` |
 
-Other ends keep the `ERROR` status with `error.type`:
-
-- a process stopping: a CLI's `Ctrl-C` or `SIGTERM` (`CancelledError`; its
-  audit record still says `stopped`), or a host cancelling `ainvoke` itself;
-- a timeout (`QueryTimeoutError`, or `CancelledError` on a span its deadline
-  cut off), an MCP client that leaves past the call's deadline included.
+Once a signal stops the process, a reader that leaves during the stop (an
+MCP client, a console page) ends its query as the process stop does.
+`run-mcp-server` over streamable HTTP sets no limit to its graceful
+shutdown: a platform that stops it (ECS `stopTimeout`, 30 s by default)
+kills a longer call with no span and no audit record.
 
 ## Audit record
 
