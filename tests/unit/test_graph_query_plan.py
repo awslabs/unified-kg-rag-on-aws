@@ -44,7 +44,9 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     merge_declared,
     plan_operation,
     reference_execute,
+    render_answer,
     scalar_holds,
+    seed_properties,
     validate_plan,
 )
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError
@@ -428,6 +430,48 @@ def test_an_inconsistent_plan_names_its_field(plan: dict, field: str) -> None:
     assert error.value.field == field
 
 
+@pytest.mark.parametrize(
+    "returns,field,reason",
+    [
+        (
+            {"kind": "count_distinct", "vars": ["a", "b"]},
+            "returns.vars",
+            "count_distinct counts the vertices of one var",
+        ),
+        # Without vars it would count pairs of two vars, not vertices.
+        (
+            {"kind": "count_distinct"},
+            "returns.vars",
+            "count_distinct counts the vertices of one var",
+        ),
+        (
+            {"kind": "group_count", "vars": ["a", "b"], "group_by": {"var": "a"}},
+            "returns.vars",
+            "group_count counts the vertices of at most one var",
+        ),
+        (
+            {"kind": "aggregate"},
+            "returns.aggregate",
+            "aggregate needs an aggregate clause",
+        ),
+    ],
+)
+def test_a_return_that_cannot_be_computed_is_refused_saying_why(
+    returns: dict[str, Any], field: str, reason: str
+) -> None:
+    """The refusal is what the planner's repair prompt shows: it names the
+    field and the rule the plan broke."""
+    plan = {"nodes": [{"var": "a"}, {"var": "b"}], "edges": [{}], "returns": returns}
+    with pytest.raises(InvalidGraphQueryError) as error:
+        validated(plan, max_hops=3)
+    assert error.value.field == field
+    assert reason in str(error.value)
+    # One var: the same count is a valid plan.
+    if returns["kind"] == "count_distinct":
+        one = {**returns, "vars": ["b"]}
+        assert validated({**plan, "returns": one}, max_hops=3).returns.vars == ("b",)
+
+
 def test_declared_types_are_allowed_when_the_sample_missed_them() -> None:
     schema = ExtractionSchema.from_items(
         entity_types=["WAREHOUSE: A storage site"],
@@ -447,6 +491,43 @@ def test_declared_types_are_allowed_when_the_sample_missed_them() -> None:
     declared = {t.label: t for t in profile.entity_types}
     assert declared["WAREHOUSE"].declared and declared["WAREHOUSE"].count == 0
     assert declared["VENDOR"].count == 4
+
+
+def test_declared_patterns_join_the_observed_ones_without_their_counts() -> None:
+    schema = ExtractionSchema.from_items(
+        entity_types=["AGENCY", "PRODUCT", "Vendor", "Buyer"],
+        relationship_types=["STORES", "Supplies"],
+        relationship_patterns=[
+            "AGENCY -STORES-> PRODUCT",
+            # Observed six times: the declaration keeps the count.
+            "Vendor -Supplies-> Buyer",
+        ],
+    )
+    merged = merge_declared(profile_of(procurement_graph()), schema)
+    patterns = {(p.source, p.edge, p.target): p.count for p in merged.patterns}
+    assert patterns[("agency", "stores", "product")] == 0
+    assert patterns[("vendor", "supplies", "buyer")] == 6
+    assert len(patterns) == len(profile_of(procurement_graph()).patterns) + 1
+    # Ordered by count, not name: the declared-only pattern comes last.
+    assert merged.patterns[-1].source == "agency"
+
+
+def test_seed_properties_merge_their_json_values_and_skip_unreadable_ones() -> None:
+    vertex = {
+        "attr_seed_properties": [
+            '{"country": "Norland", "employees": 120}',
+            "{not json",
+            '["a list"]',
+            {"founded": 1999},
+            7,
+        ]
+    }
+    assert seed_properties(vertex) == {
+        "country": "Norland",
+        "employees": 120,
+        "founded": 1999,
+    }
+    assert seed_properties({}) == {}
 
 
 # --- rendering and operations ------------------------------------------------------
@@ -808,3 +889,21 @@ def test_a_property_holds_a_condition_by_any_of_its_values(
     prop = PropertyRef(name="p", key="p", source="vertex", kinds=(), multi=True)
     condition = ResolvedCondition(prop=prop, op=op, value=value)
     assert condition_holds(values, condition) is holds
+
+
+def test_a_rendered_answer_lists_max_lines_and_counts_the_rest() -> None:
+    plan = validated(CONFORMANCE_PLANS["paths_between"])
+    answer = _answer("paths_between")
+    assert len(answer.paths) == 2
+    graph = procurement_graph()
+    full = render_answer(plan, answer, graph.vertices).splitlines()
+    assert full[-1].startswith("2. Globex Parts (VENDOR) -[SUPPLIES]-> ")
+    cut = render_answer(plan, answer, graph.vertices, max_lines=1).splitlines()
+    assert cut[-2] == full[-2] and cut[-1] == "... and 1 more"
+    # Rows the store stopped listing by the plan's order: said so, no count.
+    rows = validated(CONFORMANCE_PLANS["korean_vendor_products"])
+    listed = _answer("korean_vendor_products").model_copy(update={"more": True})
+    text = render_answer(rows, listed, graph.vertices).splitlines()
+    assert (
+        text[-1] == f"(the first {len(listed.rows)} by the plan's order; more matched)"
+    )
