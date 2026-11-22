@@ -70,7 +70,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.logging import log_failure
+from unified_kg_rag.shared.logging import log_failure, warn_once
 from unified_kg_rag.shared.utils import (
     parse_llm_score,
     parse_model_object,
@@ -80,6 +80,17 @@ from unified_kg_rag.shared.utils import (
 from unified_kg_rag.shared.utils.concurrency import gather_bounded
 
 logger = get_logger(__name__)
+
+
+def _inherits_root_depth_default(retriever: BaseGraphRAGRetriever) -> bool:
+    """Whether ``retriever`` leaves ``aholds_root_depth_reports`` at the base
+    class's "cannot tell" default rather than answering for its store."""
+    method = getattr(retriever, "aholds_root_depth_reports", None)
+    return (
+        getattr(method, "__func__", method)
+        is BaseGraphRAGRetriever.aholds_root_depth_reports
+    )
+
 
 # The source id of each ranked key point (``_KEY_POINTS_SOURCE_<rank>``).
 _KEY_POINTS_SOURCE = "synthesized_key_points"
@@ -560,11 +571,24 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         a negative cut's filter on it would drop, so the coarser cut would
         cover the delta alone. Read off the reports, not the build record,
         which a search-only principal may not read and a rewritten one does
-        not date."""
+        not date. A retriever that leaves the method at its default (``None``)
+        is warned of once: global search stays at depth 0 on that store."""
         retriever = self.document_retriever
         if retriever is None:
             return False
-        if await retriever.aholds_root_depth_reports(query.suffix) is not False:
+        held = await retriever.aholds_root_depth_reports(query.suffix)
+        if held is None and _inherits_root_depth_default(retriever):
+            name = type(retriever).__name__
+            warn_once(
+                logger,
+                ("root_depth_reports_default", name),
+                "%s leaves aholds_root_depth_reports at its default (cannot "
+                "tell): global search steps no cut below depth 0 on that "
+                "store, so a cut over the report cap maps its most similar "
+                "reports; override it to step down to a coarser cut",
+                name,
+            )
+        if held is not False:
             return False
         probe = SearchQuery(
             query="",

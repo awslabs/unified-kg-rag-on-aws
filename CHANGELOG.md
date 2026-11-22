@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rebuild_due`. Both read the reports (one search for a report without the field), not the build record, which a
   principal without `indices:admin/mappings/get` cannot read and a record a later run rewrote does not date (a
   rewritten record stores no `package_version`).
+- Custom backends: the old-report gate reads two new methods, `BaseGraphRAGRetriever.aholds_root_depth_reports` (global
+  search) and `StoreInspection.holds_root_depth_reports` (the `community_depths` reason). Both default to `None`
+  (cannot tell), so a custom document retriever that does not override the first steps no cut below depth 0 and maps
+  the most similar reports of a cut over the cap (one WARNING names the retriever class), as before the coarser cut;
+  one that does not override the second never gets the `community_depths` reason. A retriever without a build
+  record used to be read off its reports alone. `docs/guides/extend.md` lists both.
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
   holds only a run's output; on a stdout or stderr that is no terminal no line is wrapped or cropped at 80 columns (a
   panel or table is drawn as wide as its widest line: `run-ingestion`'s source and cache paths lost their ends), and
