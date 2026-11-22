@@ -162,6 +162,47 @@ def test_a_larger_bound_keeps_every_record_a_smaller_one_kept(
     assert larger == sorted(larger)  # the ranked order
 
 
+@given(
+    st.lists(st.sampled_from(["text", "entity", "relationship", "summary"])),
+    st.integers(0, 40),
+    st.integers(0, 40),
+)
+def test_a_cut_of_a_cut_on_the_first_lists_counts_is_a_direct_cut(
+    kinds: list[str], outer: int, inner: int
+) -> None:
+    # R4B-4: cutting a cut again on its own composition apportioned the
+    # first cut's seats a second time, which differs from the direct cut
+    # (438,465 of the (outer, inner) pairs in probes/hh_props.py); on the
+    # uncut list's counts it is the direct cut.
+    items = list(enumerate(kinds))
+    kind = lambda item: item[1]  # noqa: E731
+    first = cut_by_kind(items, outer, kind)
+    counts = dict(Counter(kind(item) for item in items))
+    assert cut_by_kind(first, inner, kind, counts) == cut_by_kind(
+        items, min(inner, outer), kind
+    )
+
+
+def test_a_recut_on_its_own_composition_differs_from_a_direct_cut() -> None:
+    # The counterexample of the review: the chain's cut at 20 trimmed to 10.
+    counts = {"reranked": 40, "entity": 12, "relationship": 12, "community": 1}
+    items = [(i, k) for k, n in counts.items() for i in range(n)]
+    kind = lambda item: item[1]  # noqa: E731
+    first = cut_by_kind(items, 20, kind)
+    assert Counter(map(kind, cut_by_kind(first, 10, kind))) == {
+        "reranked": 6,
+        "entity": 2,
+        "relationship": 1,
+        "community": 1,
+    }
+    assert Counter(map(kind, cut_by_kind(first, 10, kind, counts))) == {
+        "reranked": 5,
+        "entity": 2,
+        "relationship": 2,
+        "community": 1,
+    }
+
+
 def _result(kind: str, score: float, n: int) -> RetrievalResult:
     return RetrievalResult(
         content=f"{kind} {n}", score=score, source=f"{kind}-{n}", retriever_type=kind

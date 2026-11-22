@@ -20,7 +20,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Callable, Collection, Coroutine, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Coroutine,
+    Mapping,
+    Sequence,
+)
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
@@ -58,7 +64,11 @@ from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import Degradation
-from unified_kg_rag.domain.retrieval.kind_shares import cut_by_kind, score_group
+from unified_kg_rag.domain.retrieval.kind_shares import (
+    CUT_GROUP_COUNTS,
+    cut_by_kind,
+    score_group,
+)
 from unified_kg_rag.domain.retrieval.source_fields import EntityRef
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
@@ -499,18 +509,35 @@ def _record(
     )
 
 
-def _cite_entities(records: list[SupportingContent]) -> None:
-    """Give each text record the entity records of the same response that
-    list its chunk among their text units."""
+def _citing_entities(records: list[SupportingContent]) -> dict[str, list[EntityRef]]:
+    """The entities of ``records``' entity records, by the chunk (text unit)
+    each lists."""
     citing: dict[str, list[EntityRef]] = {}
     for record in records:
         if record.kind != SectionType.ENTITY:
             continue
         for unit_id in record.text_unit_ids:
             citing.setdefault(unit_id, []).extend(record.entities)
+    return citing
+
+
+def _cited_chunk(
+    record: SupportingContent, citing: Mapping[str, list[EntityRef]]
+) -> str | None:
+    """``record``'s chunk when it is a text record an entity record of
+    ``citing`` lists, else ``None``."""
+    if record.kind == SectionType.TEXT and record.chunk_id in citing:
+        return record.chunk_id
+    return None
+
+
+def _cite_entities(records: list[SupportingContent]) -> None:
+    """Give each text record the entity records of the same response that
+    list its chunk among their text units."""
+    citing = _citing_entities(records)
     for record in records:
-        if record.kind == SectionType.TEXT and record.chunk_id in citing:
-            record.entities = citing[record.chunk_id]
+        if (chunk := _cited_chunk(record, citing)) is not None:
+            record.entities = citing[chunk]
 
 
 def _own_deadline(limits: Any) -> float | None:
@@ -838,42 +865,64 @@ class KnowledgeGraphTools:
         self,
         records: list[SupportingContent],
         groups: Sequence[str] | None = None,
+        counts: Mapping[str, int] | None = None,
+        *,
+        cite: bool = False,
     ) -> tuple[list[SupportingContent], int]:
         """``records`` (best first) without those past ``max_response_chars``
         of serialized records, and how many were left out; at least one is
-        kept.
+        kept. Each record is measured as it is returned (its ``documents``
+        resolved before), and with ``cite`` each kept chunk names the kept
+        entity records that cite it (:func:`_cite_entities`, applied to the
+        records kept and measured so).
 
         With ``groups`` (each record's score group, ``score_group``: a
         search's), the records kept are the largest cut of them that fits
         (``cut_by_kind``), as the chain cut the search: each group keeps its
         share and its best-ranked records. The groups' scales differ, so a
         trim of the tail dropped the lowest scale first, every unreranked
-        graph record below every reranked chunk. A larger cut keeps every
-        record a smaller one kept, so the largest that fits is found by
-        bisection."""
+        graph record below every reranked chunk. ``counts`` are the groups'
+        counts before the chain's cut (``CUT_GROUP_COUNTS``), so the kept
+        records are the cut a search to their number returns. Without
+        ``groups``, the kept records are a prefix. A larger cut keeps every
+        record a smaller one kept, and a kept chunk names more entities in
+        it, never fewer, so the largest that fits is found by bisection."""
         budget = self.settings.max_response_chars
         sizes = [len(record.model_dump_json()) for record in records]
-        if groups is None:
-            count, used = 0, 0
-            for size in sizes:
-                used += size
-                if used > budget and count:
-                    break
-                count += 1
-            return records[:count], len(records) - count
         positions = range(len(records))
 
         def cut(bound: int) -> list[int]:
-            return cut_by_kind(positions, bound, groups.__getitem__)
+            if groups is None:
+                return list(positions[:bound])
+            return cut_by_kind(positions, bound, groups.__getitem__, counts)
+
+        def size(kept: list[int]) -> int:
+            if not cite:
+                return sum(sizes[i] for i in kept)
+            citing = _citing_entities([records[i] for i in kept])
+            return sum(
+                (
+                    len(
+                        records[i]
+                        .model_copy(update={"entities": citing[chunk]})
+                        .model_dump_json()
+                    )
+                    if (chunk := _cited_chunk(records[i], citing)) is not None
+                    else sizes[i]
+                )
+                for i in kept
+            )
 
         low, high = min(1, len(records)), len(records)
         while low < high:
             middle = (low + high + 1) // 2
-            if sum(sizes[i] for i in cut(middle)) <= budget:
+            if size(cut(middle)) <= budget:
                 low = middle
             else:
                 high = middle - 1
         kept = [records[i] for i in cut(low)]
+        if cite:
+            _cite_entities(kept)
         return kept, len(records) - len(kept)
 
     async def _resolve_documents(
@@ -998,11 +1047,13 @@ class KnowledgeGraphTools:
         records: list[SupportingContent],
         filters: dict[str, Any] | None = None,
         groups: Sequence[str] | None = None,
+        counts: Mapping[str, int] | None = None,
     ) -> tuple[list[SupportingContent], int]:
-        _cite_entities(records)
-        kept, omitted = self._capped(records, groups)
-        await self._resolve_documents(suffix, kept, filters)
-        return kept, omitted
+        """``records`` as a response returns them: their documents resolved,
+        then capped (``_capped``) as so measured, each kept chunk naming the
+        kept entity records that cite it."""
+        await self._resolve_documents(suffix, records, filters)
+        return self._capped(records, groups, counts, cite=True)
 
     @staticmethod
     def _checked(output: RAGOutput | SearchOutput) -> QueryOutcome:
@@ -1077,11 +1128,13 @@ class KnowledgeGraphTools:
             output = await self.chain.asearch(rag_input)
             outcome = self._checked(output)
             results = output.search_results.results
+            counts = output.metadata.get(CUT_GROUP_COUNTS)
             records, omitted = await self._shaped(
                 str(rag_input.namespace),
                 [self._from_result(i, r) for i, r in enumerate(results, 1)],
                 rag_input.filters,
                 [score_group(r) for r in results],
+                counts if isinstance(counts, Mapping) else None,
             )
             return SearchToolResult(
                 namespace=str(rag_input.namespace),

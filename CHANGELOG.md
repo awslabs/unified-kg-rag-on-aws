@@ -903,6 +903,14 @@ Bugs present in 0.3.0.
   path, so `run-rag`, the console and MCP showed it as the root file of the same name and `kg_get_chunks` gave it no
   `relative_path` (`run-describe` listed its file name): the read side still refused the path as a Windows one. A
   stored `relative_path` that is the unit's stamped `file` filter is now read as its path.
+- MCP `kg_search` and `kg_answer`: `mcp.max_response_chars` measured each record before its `documents` were filled in
+  (up to 20 file names a graph record), so with a raised `mcp.max_top_k` or a lower cap a response's records ran 1.5
+  to 2.9 times the cap; and a kept chunk's `entities` could name entity records the cap had dropped. The records are
+  now measured as returned, the chunks naming only the entity records kept.
+- MCP `kg_search`: the response cap apportioned the seats of the search's cut again, so a trimmed response could
+  differ by a seat between kinds from a search at the smaller `top_k` (trimmed to 10, a cut of 20 kept 6 chunks, 2
+  entities, 1 relationship, 1 report; a search at `top_k` 10 returns 5, 2, 2, 1). The search output names its score
+  groups' counts before its cut (`metadata.cut_group_counts`), and the cap apportions on them.
 
 ## [0.3.0] - 2026-11-14
 
