@@ -928,6 +928,8 @@ Bugs present in 0.3.0.
   that question's reader stop, as the console's Stop (no error status, marked stopped); a `SIGTERM` stays `ERROR`. The
   [telemetry reference](docs/reference/telemetry.md#spans-of-a-stopped-query) has a table of every stop, and gives
   `kg_rag.mcp.tool`'s parent as the MCP SDK's `tools/call` span under a global tracer provider (it said root).
+- The console composer's "Search strategy" and "Options" toggles were 20 px high, under WCAG 2.2's 24 px target size
+  (axe passed them only on their spacing): each is a 24 px target now.
 
 ## [0.3.0] - 2026-11-14
 
