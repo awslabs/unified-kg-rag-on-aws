@@ -102,8 +102,6 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.document_identity import (
-    FILE_FILTER_KEY,
-    PATH_FILTER_KEYS,
     RELATIVE_PATH_KEY,
     config_registry_namespace,
     is_unparsed,
@@ -169,6 +167,10 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.methodology import recorded_artifacts
 from unified_kg_rag.domain.retrieval import source_fields
+from unified_kg_rag.domain.retrieval.source_fields import (
+    FILE_FILTER_KEY,
+    PATH_FILTER_KEYS,
+)
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import (
     BaseIndexer,

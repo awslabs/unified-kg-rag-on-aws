@@ -17,14 +17,12 @@ from unified_kg_rag.application.retrieval.filter_validation import (
     check_path_filter_keys,
 )
 from unified_kg_rag.domain.ingestion.delta_detector import assign_document_identity
-from unified_kg_rag.domain.ingestion.document_identity import (
-    PATH_FILTER_KEYS,
-    path_filters,
-)
+from unified_kg_rag.domain.ingestion.document_identity import path_filters
 from unified_kg_rag.domain.ingestion.methodologies import namespace_holdings
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_UNIT_PREFIX
 from unified_kg_rag.domain.models import Config, Document, IndexBuildRecord, TextUnit
 from unified_kg_rag.domain.retrieval.filters import typed_filter_values
+from unified_kg_rag.domain.retrieval.source_fields import PATH_FILTER_KEYS
 from unified_kg_rag.shared import InvalidFilterError
 
 pytestmark = pytest.mark.unit

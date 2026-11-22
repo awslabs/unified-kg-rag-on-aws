@@ -46,13 +46,18 @@ import codecs
 import hashlib
 import json
 import re
-import unicodedata
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.domain.models.config import Constants
-from unified_kg_rag.domain.retrieval.source_fields import safe_relative_path
+from unified_kg_rag.domain.retrieval.source_fields import (
+    FILE_FILTER_KEY,
+    FOLDER_FILTER_KEY,
+    PATH_FILTER_KEYS,
+    path_filter_value,
+    safe_relative_path,
+)
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared.utils.common import compute_hash, generate_stable_id
 
@@ -76,15 +81,6 @@ SOURCE_DIGEST_KEY = "source_digest"
 # parse (its source digest is the one its PROCESSED registry record holds):
 # that record's content hash. Its page_content is empty until it is read.
 UNPARSED_CONTENT_HASH_KEY = "unparsed_content_hash"
-
-# The document filters ingestion stamps on every corpus document (a seed
-# graph's shard aside), from its relative path, so a query is scoped to a
-# file (``attr_file``) or a folder at any depth (``attr_folder``) with the
-# filters every store already applies. A key the document's own filters
-# give (``InputDocument.filters``) is kept as given.
-FILE_FILTER_KEY = "file"
-FOLDER_FILTER_KEY = "folder"
-PATH_FILTER_KEYS: tuple[str, ...] = (FILE_FILTER_KEY, FOLDER_FILTER_KEY)
 
 # A document without an index value is registered under the default index
 # suffix.
@@ -163,14 +159,6 @@ def is_unparsed(document: Document) -> bool:
     """Whether ``document`` stands in for a source file this run did not
     parse (:data:`UNPARSED_CONTENT_HASH_KEY`)."""
     return isinstance(document.metadata.get(UNPARSED_CONTENT_HASH_KEY), str)
-
-
-def path_filter_value(value: str) -> str:
-    """A path filter's value in the one form ingestion stamps it and a query
-    compares it in: NFC. A file system may give a name decomposed (NFD
-    Hangul from macOS or an archive tool) while a user types it composed,
-    and the stores compare values as written."""
-    return unicodedata.normalize("NFC", value)
 
 
 def path_filters(relative_path: str) -> dict[str, str | list[str]]:

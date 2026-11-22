@@ -11,7 +11,6 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from unified_kg_rag.domain.ingestion.document_identity import PATH_FILTER_KEYS
 from unified_kg_rag.domain.models import Config, PipelineStageType
 from unified_kg_rag.domain.models.methodology import (
     ARTIFACT_SWITCHES,
@@ -22,6 +21,7 @@ from unified_kg_rag.domain.models.methodology import (
     methodologies_holding,
     parse_artifacts,
 )
+from unified_kg_rag.domain.retrieval.source_fields import PATH_FILTER_KEYS
 
 _S = PipelineStageType
 _A = IndexArtifact
