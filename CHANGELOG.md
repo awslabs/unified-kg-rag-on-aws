@@ -817,6 +817,9 @@ Bugs present in 0.3.0.
   it by the same rule (the route, else an explicit request; none for a query cancelled past its deadline, a
   timeout). Telemetry reference: an `auto` query stopped before its route has audit `strategy: null` and a metric
   `Strategy` of `auto` (the requested one, as for a failed query), not `null`.
+- The console's Settings page said a deprecated key is removed by "a later release"; every other surface names it
+  (`removed in 0.5.0`). The settings view sends each deprecated key's `removed_in`, and the page names that release
+  in all its languages.
 
 ## [0.3.0] - 2026-11-14
 

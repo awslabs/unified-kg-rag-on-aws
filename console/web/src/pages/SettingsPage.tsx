@@ -17,6 +17,8 @@ interface DeprecatedKey {
    * under the replacement's own entries), as the file loads. */
   values?: Record<string, unknown>;
   message: string;
+  /** The release that removes the key. */
+  removed_in: string;
 }
 
 /** A removed key a config sets, ignored (the reason in English). */
@@ -648,6 +650,7 @@ export function GoneKeys({
             {t("settings.deprecatedKey", {
               key: d.key,
               replacements: joinList(d.replacements, t),
+              removedIn: d.removed_in,
               count: d.replacements.length,
             })}
             {d.conflicts?.length ? (

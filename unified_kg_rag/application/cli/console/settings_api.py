@@ -42,6 +42,7 @@ from unified_kg_rag.domain.models.config import (
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError, InvalidArgumentError
+from unified_kg_rag.shared.utils.deprecation import REMOVED_IN
 from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
@@ -406,7 +407,7 @@ def gone_keys(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     warning the loader logs (``message``), so the page words them in its
     language.
 
-    A deprecated key lists its ``replacements`` (the keys it loads into),
+    A deprecated key names the release that removes it (``removed_in``) and lists its ``replacements`` (the keys it loads into),
     the ones ``data`` also sets to a different value (``conflicts``), which
     fail the load until one of the two goes, and each replacement's value
     once the key is retired into it (``values``, masked: a mapping merged
@@ -421,6 +422,8 @@ def gone_keys(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "conflicts": conflicts,
                 "values": _retired_values(data, old),
                 "message": deprecated_key_warning(old),
+                # The release that removes it, which the page words.
+                "removed_in": REMOVED_IN,
             }
             for old, conflicts in deprecated_keys(data).items()
         ],

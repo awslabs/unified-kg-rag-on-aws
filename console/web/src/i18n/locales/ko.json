@@ -616,7 +616,7 @@
   "settings.invalid": "로드되지 않습니다",
   "settings.warnings": "로드되지만 경고가 있습니다",
   "settings.goneKeysTitle": "지원 중단되었거나 제거된 키",
-  "settings.deprecatedKey_other": "{{key}} 키는 지원이 중단되었습니다. 값은 {{replacements}} 키로 옮겨져 로드됩니다. 이후 릴리스에서 이전 키가 제거되니 새 키를 설정하세요.",
+  "settings.deprecatedKey_other": "{{key}} 키는 지원이 중단되었습니다. 값은 {{replacements}} 키로 옮겨져 로드됩니다. 릴리스 {{removedIn}}에서 이전 키가 제거되니 새 키를 설정하세요.",
   "settings.removedKey": "{{key}} 키는 제거되어 무시됩니다.",
   "settings.removedReason.aws.bedrock.guardrail.apply_to": "가드레일은 사용자 질의와 답변만 검사합니다. 수집과 평가 모델은 검사하지 않습니다",
   "settings.removedReason.indexing.cross_run_merge": "증분 실행은 언제나 변경분을 저장된 그래프에 병합합니다. 병합하지 않으면(false, 0.2.3의 기본값) 다른 문서가 아직 인용하는 엔터티를 덮어썼습니다",

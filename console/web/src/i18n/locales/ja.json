@@ -616,7 +616,7 @@
   "settings.invalid": "読み込めません",
   "settings.warnings": "読み込めますが、警告があります",
   "settings.goneKeysTitle": "非推奨または削除されたキー",
-  "settings.deprecatedKey_other": "{{key}} は非推奨です。値は {{replacements}} に読み込まれます。後のリリースで古いキーは削除されるため、そちらを設定してください。",
+  "settings.deprecatedKey_other": "{{key}} は非推奨です。値は {{replacements}} に読み込まれます。リリース {{removedIn}} で古いキーは削除されるため、そちらを設定してください。",
   "settings.removedKey": "{{key}} は削除されており、無視されます：",
   "settings.removedReason.aws.bedrock.guardrail.apply_to": "ガードレールが検査するのはユーザーのクエリと回答だけです。取り込みと評価のモデルは検査しません",
   "settings.removedReason.indexing.cross_run_merge": "増分実行は常に差分を保存済みのグラフにマージします。マージしないと（false、0.2.3 の既定値）、ほかのドキュメントがまだ引用しているエンティティを上書きしていました",
