@@ -1,7 +1,7 @@
 # gitleaks configuration, loaded automatically from the scanned directory
 # (`gitleaks dir .` / `gitleaks git .`). It keeps gitleaks' default rules and
 # allows the two findings of `generic-api-key` that are not secrets. Each
-# entry matches the whole secret the rule reports (anchored), not the line
+# entry matches the whole secret the rule reports (whole-match), not the line
 # it is on, so a real key beside either text is still found; matching text,
 # not a line number, an edit elsewhere in the file cannot move it, and it
 # covers the tree and the history alike. How to run the scan:

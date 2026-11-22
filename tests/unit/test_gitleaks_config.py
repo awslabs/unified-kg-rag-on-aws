@@ -38,7 +38,7 @@ def test_the_allowlist_extends_the_default_rules_one_rule_at_a_time() -> None:
         for regex in allowlist["regexes"]:
             assert regex.startswith("^") and regex.endswith(
                 "$"
-            ), f"{regex}: anchored, or a key that contains the text passes"
+            ), f"{regex}: pinned at both ends, or a key that contains the text passes"
         assert set(allowlist) <= {
             "description",
             "targetRules",

@@ -29,11 +29,11 @@ def _note_keys() -> set[str]:
     return keys
 
 
-def _listing(text: str, anchor: str) -> str:
-    """The paragraph, bullet or table row of ``text`` that holds ``anchor``
+def _listing(text: str, marker: str) -> str:
+    """The paragraph, bullet or table row of ``text`` that holds ``marker``
     (its words, however the lines wrap)."""
-    found = re.search(r"\s+".join(map(re.escape, anchor.split())), text)
-    assert found, anchor
+    found = re.search(r"\s+".join(map(re.escape, marker.split())), text)
+    assert found, marker
     start = found.start()
     begin = max(text.rfind("\n\n", 0, start), text.rfind("\n- ", 0, start))
     end = min(
