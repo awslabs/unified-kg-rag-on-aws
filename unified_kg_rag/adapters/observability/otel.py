@@ -49,9 +49,10 @@ from unified_kg_rag.domain.models.config import (
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.extras import extra_hint
-from unified_kg_rag.shared.genai import ERROR_TYPE
+from unified_kg_rag.shared.genai import ERROR_TYPE, STOPPED
 from unified_kg_rag.shared.logging import get_logger
 from unified_kg_rag.shared.observability import SpanHandle, SpanKind, content_policy
+from unified_kg_rag.shared.query_stop import reader_stopped
 from unified_kg_rag.shared.utils import error_digest
 
 from .endpoints import ExportSettings, resolve_export_settings
@@ -195,7 +196,10 @@ class OTelTracerBackend:
     ) -> Iterator[SpanHandle]:
         # An escaping exception is recorded here (record_error: its type, not
         # its text) with the ERROR status and error.type; the SDK's own
-        # recording would export the message and stack.
+        # recording would export the message and stack. Past its query's
+        # reader stop (a client that left, the console's Stop or a closed
+        # page) whatever escapes is that stop's (as the query's records
+        # count it): no error, the span marked stopped.
         with self._tracer.start_as_current_span(
             name,
             kind=_SPAN_KINDS[kind],
@@ -205,20 +209,23 @@ class OTelTracerBackend:
         ) as otel_span:
             try:
                 yield OTelSpan(otel_span)
-            except Exception as e:
-                otel_span.set_attribute(ERROR_TYPE, type(e).__name__)
-                record_error(otel_span, e)
-                otel_span.set_status(Status(StatusCode.ERROR, type(e).__name__))
-                raise
             except BaseException as e:
-                # start_as_current_span leaves a BaseException UNSET, so an
-                # interrupted (KeyboardInterrupt, SIGTERM's SystemExit) or
-                # cancelled (asyncio.CancelledError: a query coroutine on
-                # Ctrl-C, or a host cancelling ainvoke) span would export as
-                # a success. Not an error: a closed generator, a clean exit.
-                if not isinstance(e, GeneratorExit) and not (
+                if reader_stopped():
+                    otel_span.set_attribute(STOPPED, True)
+                elif isinstance(e, Exception):
+                    otel_span.set_attribute(ERROR_TYPE, type(e).__name__)
+                    record_error(otel_span, e)
+                    otel_span.set_status(Status(StatusCode.ERROR, type(e).__name__))
+                elif not isinstance(e, GeneratorExit) and not (
                     isinstance(e, SystemExit) and e.code in (0, None)
                 ):
+                    # start_as_current_span leaves a BaseException UNSET, so
+                    # an interrupted (KeyboardInterrupt, SIGTERM's
+                    # SystemExit) or cancelled (asyncio.CancelledError: a
+                    # query coroutine on Ctrl-C, or a host cancelling
+                    # ainvoke, its deadline's backstop) span would export as
+                    # a success. Not an error: a closed generator, a clean
+                    # exit.
                     otel_span.set_attribute(ERROR_TYPE, type(e).__name__)
                     otel_span.set_status(Status(StatusCode.ERROR, type(e).__name__))
                 raise

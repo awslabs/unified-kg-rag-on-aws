@@ -171,7 +171,10 @@ id, 시드 그래프의 계보 유닛)나 호출의 `filters`가 제외한 청�
 지표와 [감사 레코드](../reference/telemetry.md#audit-record)(영문)에 그때까지의 지연 시간과 사용량을
 실패 없이 남깁니다).
 이 호출은 실패가 아닌 취소로 로그에 남고, `kg_rag.mcp.tool` 스팬은 오류 상태 없이
-`kg_rag.cancelled`를 가집니다.
+`kg_rag.cancelled`를 가집니다. 호출은 질의를 그 읽는 쪽(reader)으로서 실행하므로
+(`shared.query_stop.await_as_reader`) 질의 자신의 스팬도 같은 방식으로
+[오류 상태 없이 `kg_rag.stopped` 표시와 함께](../reference/telemetry.md#spans-of-a-stopped-query)(영문)
+끝납니다. 호출 기한이 지난 뒤 떠난 클라이언트의 질의는 시간 초과로 남습니다.
 **서버는 호출자를 인증하지 않습니다.**
 다른 주소에 바인딩하려면 `--allow-remote`가 필요하며, 이때 헤더 검사는 앞단의 프록시에
 맡깁니다.

@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import os
+import signal
 import subprocess
 import sys
 import textwrap
@@ -2523,13 +2525,244 @@ async def test_an_mcp_call_whose_client_left_names_its_strategy_on_its_span(
     assert values["query_failed"] == (1.0 if held == "past-deadline" else 0.0)
     assert properties["Strategy"] == (named or strategy)
     assert _attrs(_one(exporter, "kg_rag.mcp.tool"))["kg_rag.cancelled"] is True
+    # R4C-2 / R4D-3: its client leaving is its reader's stop, so no span of
+    # the call is an error (its query span was, with CancelledError); past
+    # its deadline it is a timeout, an error.
+    errors = [
+        s.name
+        for s in exporter.get_finished_spans()
+        if s.status.status_code == StatusCode.ERROR
+    ]
+    assert errors == (["kg_rag.query"] if held == "past-deadline" else []), errors
     queries = _by_name(exporter).get("kg_rag.query", [])
     if held == "admission":
         assert queries == []
         return
     (query,) = queries
+    assert _attrs(query).get("kg_rag.stopped") is (
+        None if held == "past-deadline" else True
+    )
     if named is None:
         assert "kg_rag.strategy" not in _attrs(query)
         return
     assert _attrs(query)["kg_rag.requested_strategy"] == strategy
     assert _attrs(query)["kg_rag.strategy"] == named
+
+
+class _Held:
+    """Where a query is held, in flight, until it is stopped: its
+    retrieval (``kg_rag.retrieve``) or its answer's model call (``chat
+    vendor.model-v1``, traced by the GenAI callback)."""
+
+    span = {"retrieve": "kg_rag.retrieve", "model": "chat vendor.model-v1"}
+
+    def __init__(self, where: str) -> None:
+        self.where = where
+        # Bound to the loop that first waits on it (its test's).
+        self.reached = asyncio.Event()
+
+    async def hold(self) -> None:
+        self.reached.set()
+        await asyncio.sleep(10)
+
+    async def wait(self) -> None:
+        await self.reached.wait()
+
+    def chain(self) -> GraphRAGChain:
+        held = self
+
+        class Retriever(_FakeRetriever):
+            async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+                if held.where == "retrieve":
+                    await held.hold()
+                return await super().aretrieve(query)
+
+        class Model(GenericFakeChatModel):
+            async def _agenerate(self, *args: Any, **kwargs: Any) -> Any:
+                await held.hold()
+                return await super()._agenerate(*args, **kwargs)
+
+            async def _astream(self, *args: Any, **kwargs: Any) -> Any:
+                # A streamed answer (the console's) holds before its first
+                # chunk.
+                await held.hold()
+                async for chunk in super()._astream(*args, **kwargs):
+                    yield chunk
+
+        class Factory(_FakeModelFactory):
+            def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+                if held.where != "model":
+                    return super().get_model(model_id, **kwargs)
+                return Model(
+                    messages=itertools.repeat(AIMessage(content="Vendor ships.")),
+                    callbacks=[GenAITracingCallbackHandler("vendor.model-v1")],
+                )
+
+        chain = _simple_chain(Factory())
+        for role in (RetrieverRole.DOCUMENT, RetrieverRole.GRAPH):
+            chain.providers._retriever_builders[role] = Retriever
+        return chain
+
+
+async def _stop_over_mcp(chain: GraphRAGChain, held: _Held, _: Path) -> None:
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+
+    task = asyncio.create_task(
+        KnowledgeGraphTools(chain).answer("Who ships?", strategy="simple")
+    )
+    await held.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def _stop_on_the_console(
+    chain: GraphRAGChain, held: _Held, tmp_path: Path, *, closed: bool
+) -> None:
+    from unified_kg_rag.application.cli.console.ask import AskRequest, AskService
+    from unified_kg_rag.application.cli.console.store import ConsoleStore
+
+    service = AskService(
+        Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+    )
+    events = service.ask(AskRequest(query="Who ships?", search_strategy="simple"))
+    try:
+        if closed:
+            # The page closed: its stream is closed.
+            assert (await events.__anext__())["kind"] == "start"
+            await held.wait()
+            await events.aclose()
+        else:
+            # Stop: the request is cancelled while it waits for an event.
+            assert (await events.__anext__())["kind"] == "start"
+            reading = asyncio.create_task(anext(events))
+            await held.wait()
+            reading.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await reading
+            await events.aclose()
+        (record,) = service.store.queries()
+        assert record["outcome"] == "stopped"
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("where", ["retrieve", "model"])
+@pytest.mark.parametrize(
+    "stop",
+    ["mcp-client-left", "console-stop", "console-page-closed"],
+)
+async def test_a_query_its_reader_stopped_ends_its_spans_unset_and_stopped(
+    tracing: Tracing, tmp_path: Path, stop: str, where: str
+) -> None:
+    # R4C-2 / R4D-3 (maintainer decision): a reader's stop (an MCP client
+    # that left, the console's Stop or a closed page) ended the query span
+    # (MCP), the console's root span (console) and the in-flight retrieval
+    # or model span with status ERROR, error.type CancelledError, while its
+    # audit record and metrics said "stopped". Each ends UNSET, marked
+    # kg_rag.stopped.
+    exporter = tracing()
+    held = _Held(where)
+    chain = held.chain()
+    try:
+        if stop == "mcp-client-left":
+            await _stop_over_mcp(chain, held, tmp_path)
+        else:
+            closed = stop == "console-page-closed"
+            await _stop_on_the_console(chain, held, tmp_path, closed=closed)
+    finally:
+        await chain.aclose()
+    await asyncio.sleep(0)  # a cancelled model call's span ends in a callback
+    spans = exporter.get_finished_spans()
+    assert [s.name for s in spans if s.status.status_code == StatusCode.ERROR] == []
+    stopped = {s.name for s in spans if _attrs(s).get("kg_rag.stopped") is True}
+    expected = {"kg_rag.query", _Held.span[where]}
+    if stop != "mcp-client-left":
+        expected.add("kg_rag.console.ask")
+    assert expected <= stopped, sorted(stopped)
+    assert all("error.type" not in _attrs(s) for s in spans if s.name in stopped)
+
+
+@pytest.mark.parametrize("where", ["retrieve", "model"])
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_a_cli_query_a_signal_stops_keeps_its_error_spans(
+    tracing: Tracing, signum: int, where: str
+) -> None:
+    # The maintainer decision: a process stopping (run-rag's Ctrl-C or
+    # SIGTERM, which cancel its main task) is not a reader's stop; its query
+    # span and the in-flight span stay ERROR, none marked stopped.
+    from unified_kg_rag.application.cli.conventions import (
+        exits_on_sigterm,
+        stoppable,
+    )
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    exporter = tracing()
+    held = _Held(where)
+    chain = held.chain()
+
+    async def run() -> int:
+        async def stop() -> None:
+            await held.wait()
+            os.kill(os.getpid(), signum)
+
+        stopper = asyncio.create_task(stop())
+        try:
+            await chain.ainvoke(_SIMPLE_QUERY)
+        finally:
+            stopper.cancel()
+            await chain.aclose()
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    try:
+        with pytest.raises(SystemExit) as exited:
+            main()
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert exited.value.code == 128 + signum
+    spans = exporter.get_finished_spans()
+    errors = {
+        s.name: _attrs(s).get("error.type")
+        for s in spans
+        if s.status.status_code == StatusCode.ERROR
+    }
+    assert errors["kg_rag.query"] == "CancelledError"
+    assert errors[_Held.span[where]] == "CancelledError"
+    assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)
+
+
+@pytest.mark.parametrize("where", ["retrieve", "model"])
+async def test_a_query_past_its_deadline_keeps_its_error_spans(
+    tracing: Tracing, where: str
+) -> None:
+    # A timeout stays an error, through a host that reads the query for its
+    # client (an MCP tool call) too: its query span and the in-flight span
+    # are ERROR, none marked stopped.
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+
+    exporter = tracing()
+    held = _Held(where)
+    chain = held.chain()
+    chain.config.search.query_timeout_seconds = 0.1
+    try:
+        tools = KnowledgeGraphTools(chain)
+        (outcome,) = await asyncio.gather(
+            tools.answer("Who ships?", strategy="simple"), return_exceptions=True
+        )
+    finally:
+        await chain.aclose()
+    await asyncio.sleep(0)
+    assert isinstance(outcome, Exception), outcome
+    spans = exporter.get_finished_spans()
+    errors = {
+        s.name: _attrs(s).get("error.type")
+        for s in spans
+        if s.status.status_code == StatusCode.ERROR
+    }
+    assert errors["kg_rag.query"] == "QueryTimeoutError", errors
+    assert _Held.span[where] in errors, errors
+    assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)

@@ -7,6 +7,9 @@ off.
 
 ## Trace shape
 
+A query its reader stopped is not a failure, in its spans as in its metrics
+and audit record: see [spans of a stopped query](#spans-of-a-stopped-query).
+
 Every span of a query or an ingestion run carries `kg_rag.namespace`, the
 namespace it reads or writes (the tenant boundary), so a trace backend
 filters by it.
@@ -17,7 +20,7 @@ filters by it.
 | `kg_rag.ingestion.stage` | run | One per stage: input/output counts, status, the stage's numeric metrics as `kg_rag.stage.<metric>`, `error.type` and the exception when it crashed |
 | `kg_rag.batch` | stage, or root for `run-eval` answer generation | Item and failure counts; in `run-eval` the run's `kg_rag.eval.strategy` and `kg_rag.eval.repeat` (1-based), as on every span of the run |
 | `kg_rag.mcp.tool` | root | One per MCP tool call (`run-mcp-server`): `mcp.tool.name`, `kg_rag.records`, `kg_rag.cancelled` (its client left or the server stopped: no error status); with `capture_content` the redacted arguments as `input.value`. A `kg_search` or `kg_answer` call's `kg_rag.query` span nests under it |
-| `kg_rag.console.ask` | root | One per console question: `kg_rag.search_strategy`, `kg_rag.query_id` (the id its `kg_rag.query` span's log lines and result carry); the query span nests under it |
+| `kg_rag.console.ask` | root | One per console question: `kg_rag.search_strategy`, `kg_rag.query_id` (the id its `kg_rag.query` span's log lines and result carry), `kg_rag.stopped` (Stop, or the page closed: no error status); the query span nests under it |
 | `kg_rag.query` | root, the `run-eval` batch, an MCP tool call, or a console question | `kg_rag.query_id`, `session.id` and `gen_ai.conversation.id` (the conversation id), `user.id`, `kg_rag.mode` (`rag`, or `search` for a retrieval-only search), `kg_rag.top_k`, `kg_rag.use_memory`, `kg_rag.requested_strategy` and `kg_rag.strategy` (the one that ran; of a query stopped early too, its reader gone or its caller cancelled it, as its audit record names it; a query its caller left during its admission, before any model call, has no `kg_rag.query` span, only the host's span, as an MCP call's `kg_rag.cancelled`), `kg_rag.blocked`, `kg_rag.degraded` (answered without a step), `kg_rag.query_limited` (its limits cut it short: the `query_limited` metric), `kg_rag.error_class` (of an error answer under `processing.ignore_errors`), `kg_rag.effort` (`RAGInput.effort`) and `kg_rag.limits.max_model_calls` / `kg_rag.limits.max_input_tokens` (the query's limits in force), when set; once it ends, `kg_rag.error` (an error answer), `kg_rag.abstained`, an answer's `kg_rag.sources` (how many the answer model was given) and `kg_rag.cited_source_ids` (the ids of the sections it cites, up to 50), and `kg_rag.cost_usd` when `models.prices` prices every language model and reranker it called (an embedding model without a price leaves its requests out); with `capture_content` the redacted query as `input.value` and the answer as `output.value` (a streamed one too). Its `kg_rag.query_id` and trace id are the result's `metadata.query_id` and `metadata.trace_id`, and its log lines carry `query_id` and `namespace` |
 | `kg_rag.strategy` | query | `kg_rag.rerank_status` for the whole query |
 | `kg_rag.retrieve` | strategy | `kg_rag.hits` and the hits per result type, and the first 50 results' ids and scores in rank order (`kg_rag.source_ids`, `kg_rag.scores`: parallel lists) |
@@ -63,13 +66,35 @@ Known limits:
 - A model call cancelled during `ainvoke` (its task cancelled, or the call cut
   off by `asyncio.wait_for` / `asyncio.timeout`, as RAGAS's `ragas_timeout`
   does) gets no LangChain callback; its model span is ended as `ERROR`
-  (`error.type: CancelledError`) when the task that started it ends. A stream
+  (`error.type: CancelledError`) when the task that started it ends, or, its
+  query's reader stopped, [marked stopped](#spans-of-a-stopped-query). A stream
   the caller stops reading early ends its span normally.
 - With `otlp`, `langfuse` or `phoenix` the first backend the process installs
   also becomes OpenTelemetry's global tracer provider, which can be set only
   once: after a later configuration with other settings, the package's spans
   use the new exporter, but spans other libraries emit through the global API
   are dropped.
+
+
+### Spans of a stopped query
+
+A query whose reader stopped ends its spans with no error status and
+`kg_rag.stopped: true`: the `kg_rag.query` span, the console's
+`kg_rag.console.ask` root and every span still open (a retrieval, a model
+call), as its query metrics (`query_failed` 0) and its audit record
+(`outcome: stopped`) count it. A reader stops when:
+
+- an MCP client leaves a `kg_search` or `kg_answer` call (a disconnect, a
+  cancel notification) before the call's deadline;
+- the console's Stop is pressed, or its page is closed;
+- the reader of `GraphRAGChain.aquery_events` stops reading.
+
+Other ends keep the `ERROR` status with `error.type`:
+
+- a process stopping: a CLI's `Ctrl-C` or `SIGTERM` (`CancelledError`; its
+  audit record still says `stopped`), or a host cancelling `ainvoke` itself;
+- a timeout (`QueryTimeoutError`, or `CancelledError` on a span its deadline
+  cut off), an MCP client that leaves past the call's deadline included.
 
 ## Audit record
 

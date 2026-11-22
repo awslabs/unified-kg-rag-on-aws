@@ -85,6 +85,7 @@ from unified_kg_rag.shared.exceptions import (
     shows_error_text,
 )
 from unified_kg_rag.shared.logging import log_error, log_failure
+from unified_kg_rag.shared.query_stop import QueryStop, StopCause, query_stop_scope
 from unified_kg_rag.shared.usage import usage_scope
 
 logger = get_logger(__name__)
@@ -471,6 +472,11 @@ class AskService:
         # The strategy the question was routed to, once it was.
         route: dict[str, SearchStrategy] = {}
 
+        # Set when the page stops reading (Stop, or the page closed) before
+        # the question is cancelled: its reader's stop, so its spans, the
+        # console's root span included, end with no error status.
+        stop = QueryStop()
+
         async def run() -> None:
             try:
                 async with self._using() as (chain, config):
@@ -570,12 +576,17 @@ class AskService:
                     self.store.record_query(record)
                 queue.put_nowait(None)
 
-        task = asyncio.create_task(run(), name=f"ask-{query_id}")
+        async def read() -> None:
+            with query_stop_scope(stop):
+                await run()
+
+        task = asyncio.create_task(read(), name=f"ask-{query_id}")
         try:
             while (event := await queue.get()) is not None:
                 yield event
         finally:
             if not task.done():
+                stop.set(StopCause.READER)
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
