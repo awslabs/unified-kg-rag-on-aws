@@ -16,7 +16,6 @@ import math
 import re
 import time
 import unicodedata
-from collections.abc import Mapping
 from typing import Any
 
 from langchain_core.exceptions import ContextOverflowError, OutputParserException
@@ -42,7 +41,6 @@ from unified_kg_rag.domain.ingestion.community_hierarchy import (
     coarser_cut_filter,
     cut_filter,
 )
-from unified_kg_rag.domain.ingestion.rebuild_due import root_depth_release
 from unified_kg_rag.domain.ingestion.report_references import REPORT_OUTDATED_FIELD
 from unified_kg_rag.domain.models import (
     Config,
@@ -555,17 +553,18 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         the first pass. Whatever the caller's filters, which narrow the
         cut, not the hierarchy.
 
-        None on a namespace whose last full build a release before
-        ``min_cut_depth`` wrote (its build record, ``root_depth_release``):
-        a later incremental run writes its delta's reports with the field
-        beside the full build's without it, which a negative cut's filter
-        on it would drop, and the coarser cut would cover the delta alone.
-        A backend without a build record is read off its reports alone."""
+        False while the namespace holds a report written without
+        ``min_cut_depth`` (``aholds_root_depth_reports``, by a release
+        before 0.4.0), or the store cannot tell: a later incremental run
+        writes its delta's reports with the field beside the old ones, which
+        a negative cut's filter on it would drop, so the coarser cut would
+        cover the delta alone. Read off the reports, not the build record,
+        which a search-only principal may not read and a rewritten one does
+        not date."""
         retriever = self.document_retriever
         if retriever is None:
             return False
-        record = await retriever.aread_build_record(query.suffix)
-        if isinstance(record, Mapping) and root_depth_release(record) is not None:
+        if await retriever.aholds_root_depth_reports(query.suffix) is not False:
             return False
         probe = SearchQuery(
             query="",

@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.adapters.storage.opensearch_analysis import with_analysis
 from unified_kg_rag.adapters.storage.search_engine import (
+    ROOT_DEPTH_REPORT_SEARCH,
     SearchEngineClient,
     engine_name,
     ingested_suffixes,
@@ -1650,15 +1651,27 @@ class OpenSearchIndexer(VectorIndexer):
         size-1 search of the live index."""
         return self._holds_a_document("text_units_index_prefix", suffix)
 
-    def _holds_a_document(self, prefix: str, suffix: str | None) -> bool:
+    def holds_root_depth_reports(self, suffix: str | None = None) -> bool:
+        """Whether the community-report index holds a report written
+        without ``min_cut_depth`` (see the port): one size-1 search of the
+        live index."""
+        return self._holds_a_document(
+            "community_reports_index_prefix", suffix, ROOT_DEPTH_REPORT_SEARCH
+        )
+
+    def _holds_a_document(
+        self, prefix: str, suffix: str | None, body: dict[str, Any] | None = None
+    ) -> bool:
         """Whether the live index of the ``prefix`` config field holds a
-        document (``False`` without one): one size-1 search."""
+        document (``False`` without one), or one ``body``'s size-1 search
+        matches: one search."""
         alias_name = self._get_name(getattr(self.opensearch_config, prefix), suffix)
         if not self._live_index(alias_name):
             return False
         response = self.opensearch_client.search(
             index=alias_name,
-            body={
+            body=body
+            or {
                 "size": 1,
                 "query": {"match_all": {}},
                 "_source": False,

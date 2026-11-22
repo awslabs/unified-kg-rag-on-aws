@@ -61,6 +61,10 @@ class FakeRetriever:
         """No index metadata (the ``BaseGraphRAGRetriever`` default)."""
         return None
 
+    async def aholds_root_depth_reports(self, suffix: str | None) -> bool | None:
+        """Cannot tell (the ``BaseGraphRAGRetriever`` default)."""
+        return None
+
     async def aneighbourhood_edges(
         self, vertex_ids: list[str], query: SearchQuery, *, per_vertex: int
     ) -> list[GraphEdge] | None:

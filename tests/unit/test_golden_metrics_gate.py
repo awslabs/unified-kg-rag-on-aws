@@ -188,12 +188,11 @@ def test_the_baseline_covers_every_case_strategy_and_search_type() -> None:
     for case, splits in baseline["cases"].items():
         types = gm.CASE_SEARCH_TYPES[case]
         runs = {f"{t.value}/{s.value}" for t in types for s in gm.STRATEGIES}
-        if case == "structural-deep":
-            runs |= {
-                f"{t.value}/{strategy.value}@{arm}"
-                for t in types
-                for arm, (strategy, _) in gm.ARMS.items()
-            }
+        runs |= {
+            f"{t.value}/{gm.ARMS[arm][0].value}@{arm}"
+            for t in types
+            for arm in gm.CASE_ARMS.get(case, ())
+        }
         # The structural benchmarks are split (tune for development, test
         # gated); the bridge datasets are not.
         split = case.startswith("structural")

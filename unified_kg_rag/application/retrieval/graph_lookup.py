@@ -464,5 +464,11 @@ async def describe_namespace(
         schema=resolved,
         schema_error=error,
         filter_keys=fields.describe() if fields is not None else [],
-        rebuild=rebuild_reasons(record, chain.config),
+        rebuild=rebuild_reasons(
+            record,
+            chain.config,
+            root_depth_reports=await _document_retriever(
+                chain
+            ).aholds_root_depth_reports(suffix),
+        ),
     )

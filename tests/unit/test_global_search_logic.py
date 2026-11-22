@@ -130,9 +130,17 @@ class _ReportStore:
         self.window = window  # the hits one search returns (max_result_window)
         self.record = record  # the namespace's build record
         self.calls: list[SearchQuery] = []
+        self.root_depth_reads = 0
+        self.root_depth_unknown = False  # the store cannot tell
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         return self.record
+
+    async def aholds_root_depth_reports(self, suffix: str | None) -> bool | None:
+        self.root_depth_reads += 1
+        if self.root_depth_unknown:
+            return None
+        return any(d.get("min_cut_depth") is None for d in self.documents)
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits(max_result_window=self.window)
@@ -525,13 +533,26 @@ def _mixed_documents() -> list[dict[str, Any]]:
 
 @pytest.mark.parametrize(
     "record",
-    [_incremental_record("0.3.0"), {"mode": "full", "package_version": "0.3.0"}],
+    [
+        _incremental_record("0.3.0"),
+        {"mode": "full", "package_version": "0.3.0"},
+        # R3A-1(a), s17 lostrec: the 0.3.0 record was lost and a no-op run
+        # rewrote it, dated by the release that rewrote it.
+        {"mode": "full", "package_version": "0.4.0.dev0"},
+        {"mode": "full", "package_version": None},
+        # R3A-1(b): the record cannot be read (a principal without the
+        # mapping grant): read as none.
+        None,
+    ],
+    ids=["incremental-0.3.0", "full-0.3.0", "rewritten", "unknown", "unreadable"],
 )
-async def test_a_store_whose_full_build_predates_the_cut_bounds_stops_at_depth_0(
-    record: dict[str, Any],
+async def test_a_store_holding_reports_without_the_cut_bounds_stops_at_depth_0(
+    record: dict[str, Any] | None,
 ) -> None:
     # R2A-1: the probe found the delta's coarser level, whose cut (J, I, Z)
-    # held none of the old reports, and that was mapped, uncapped.
+    # held none of the old reports, and that was mapped, uncapped. R3A-1:
+    # the gate read the build record, which a rewrite dates wrong and a
+    # search-only principal cannot read; it reads the reports now.
     store = _ReportStore(_mixed_documents(), record=record)
     strat = _strategy(store, max_reports_per_level=4)
     result = await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
@@ -540,18 +561,34 @@ async def test_a_store_whose_full_build_predates_the_cut_bounds_stops_at_depth_0
     assert result.metadata["global_level_capped"] is True
     # Stopped before any probe for a coarser level.
     assert _coarser_probes(store) == []
+    assert store.root_depth_reads == 1
 
 
-async def test_a_store_whose_full_build_holds_the_cut_bounds_steps_past_depth_0() -> (
-    None
-):
-    store = _ReportStore(_coarser_documents(), record=_incremental_record("0.4.0"))
+@pytest.mark.parametrize(
+    "record", [_incremental_record("0.4.0"), _incremental_record("0.3.0"), None]
+)
+async def test_a_store_whose_reports_hold_the_cut_bounds_steps_past_depth_0(
+    record: dict[str, Any] | None,
+) -> None:
+    # Whatever the record says: the reports tell.
+    store = _ReportStore(_coarser_documents(), record=record)
     strat = _strategy(store, max_reports_per_level=3)
     result = await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
 
     assert result.metadata["global_cut_depth"] == -1
     assert result.metadata["global_level_capped"] is False
     assert _coarser_mapped(strat) == {"J", "I", "Z"}
+
+
+async def test_a_store_that_cannot_tell_its_reports_stops_at_depth_0() -> None:
+    store = _ReportStore(_coarser_documents(), record=_incremental_record("0.4.0"))
+    store.root_depth_unknown = True
+    strat = _strategy(store, max_reports_per_level=3)
+    result = await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
+
+    assert result.metadata["global_cut_depth"] == 2
+    assert result.metadata["global_level_capped"] is True
+    assert _coarser_probes(store) == []
 
 
 async def test_reports_written_without_the_shallowest_cut_stop_at_depth_0() -> None:
@@ -563,10 +600,8 @@ async def test_reports_written_without_the_shallowest_cut_stop_at_depth_0() -> N
 
     assert result.metadata["global_level_capped"] is True
     assert result.metadata["global_cut_depth"] == 2
-    # One probe finds no coarser level it can cut.
-    assert _coarser_probes(store) == [
-        {"depth": {"lte": -1}, "min_cut_depth": {"lte": -1}}
-    ]
+    # The reports tell before any probe for a coarser level.
+    assert _coarser_probes(store) == []
 
 
 async def test_a_cut_no_depth_fits_maps_the_most_similar_reports() -> None:

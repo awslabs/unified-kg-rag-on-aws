@@ -48,8 +48,10 @@ from unified_kg_rag.domain.models import RetrievalResult
 from unified_kg_rag.shared.utils import entity_key
 from unified_kg_rag.shared.utils.scripts import (
     fold_letter_variants,
+    has_unspaced_script,
     without_latin_accents,
     word_terms,
+    words,
 )
 
 __all__ = [
@@ -127,20 +129,25 @@ def focus_names_anything(
     """Whether an entity focus names anything: some ``focus`` name is a
     stored entity among its own hits ``per_focus`` (:func:`exact_links`),
     is written in the query ``text`` (every term of it a term of ``text``,
-    as :func:`covers` compares terms), or covers its own top hit's name or
-    is covered by it (a name the model normalized or made explicit:
-    "Beatles" for the stored "The Beatles", "New York City" for "New
-    York", neither written in the query).
+    as :func:`covers` compares terms), or holds its own top hit's whole
+    name (:func:`_holds_name`: a name the model made explicit, "New York
+    City" for the stored "New York", 東京都 for 東京, neither written in the
+    query).
 
     A model asked for a query's entities answers a placeholder ("none",
     "N/A", "Empty", in any language) for a query that names none, whatever
     the prompt says: told to write nothing, a 3B model wrote "none" for
     each of 12 entity-free questions, and under three other wordings it
-    left 1 of 36 answers empty. The placeholder is no stored name, no word
-    of the query and shares no term with the entity a search returns for
-    it, so the focus is read as no focus and the query itself is searched,
-    without a word list of placeholders (it would hold one language's). A
-    focus with one grounded name is kept whole."""
+    left 1 of 36 answers empty. A placeholder is no stored name and no word
+    of the query, and it holds the whole name of no entity but one spelled
+    as it (an exact link), so the focus is read as no focus and the query
+    itself is searched, without a word list of placeholders (it would hold
+    one language's). A name a stored one only contains does not count: a
+    placeholder is a word of many names ("Second to None", "None of the
+    Above", 梨なし園), as a part of a name is of other entities' ("York" of
+    "New York", 京都 of 東京都), so "Beatles" for the stored "The Beatles"
+    is searched as the query, not seeded. A focus with one grounded name
+    is kept whole."""
     return any(
         _grounded(name, [h for h in hits if h.source], text)
         for name, hits in zip(focus, per_focus, strict=True)
@@ -153,7 +160,42 @@ def _grounded(name: str, hits: Sequence[RetrievalResult], text: str) -> bool:
     if exact_links(name, hits) or covers(text, name):
         return True
     top = hit_name(hits[0]) if hits else ""
-    return bool(top) and (covers(top, name) or covers(name, top))
+    return bool(top) and _holds_name(name, top)
+
+
+def _name_words(name: str) -> list[str]:
+    """The words of ``name`` in order, normalized as :func:`name_terms`
+    reads them (its legal forms and Latin accents left out)."""
+    written = (w for w in link_key(name).split() if latin_legal_form(w) is None)
+    return words(without_latin_accents(" ".join(written)))
+
+
+def _holds_name(name: str, part: str) -> bool:
+    """Whether ``name`` holds the whole name ``part``: each word of it is a
+    word of ``name`` (whole words: "York" is no word of "Yorkshire"), and
+    each run of its words in a script written without spaces (Han, Hangul,
+    Kana, Thai, ...), joined, starts at a word of ``name`` (东芝 in 东芝电子,
+    "아크메 로보틱스" in 아크메로보틱스), not inside one: 京都 is two
+    letters of 東京都, not its start, as the bigrams :func:`covers` compares
+    would read it."""
+    held, wanted = _name_words(name), _name_words(part)
+    if not wanted:
+        return False
+    tails = ["".join(held[i:]) for i in range(len(held))]
+    runs: list[str] = []
+    run: list[str] = []
+    for word in wanted:
+        if has_unspaced_script(word):
+            run.append(word)
+            continue
+        if run:
+            runs.append("".join(run))
+            run = []
+        if word not in held:
+            return False
+    if run:
+        runs.append("".join(run))
+    return all(any(tail.startswith(r) for tail in tails) for r in runs)
 
 
 LinkPolicy = Literal["cover", "rank"]

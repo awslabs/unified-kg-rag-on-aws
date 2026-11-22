@@ -11,8 +11,11 @@ test kills a process that holds the namespace lease with the indexing
 half done. With a fifth argument ``report``, the models are the outdated-
 report suite's (``test_outdated_reports._Model``) and it blocks at the
 indexing stage's first community report request instead: the refresh of
-the reports a removal left outdated, after the commit's writes. No AWS, no
-network.
+the reports a removal left outdated, after the commit's writes. With
+``commit``, the models are those too and it blocks where the commit's
+writes succeeded, before it deletes the stripped-summary notes
+(``IndexingManager.clear_stripped_summaries``): after the removal's strip
+and registry deletions. No AWS, no network.
 """
 
 from __future__ import annotations
@@ -79,14 +82,27 @@ class _BlockingServer:
 def main(argv: list[str]) -> int:
     stores, source, cache, marker = (Path(arg) for arg in argv[:4])
     config = crash_config(stores)
-    blocking = _BlockingServer(marker, at_report=argv[4:] == ["report"])
+    mode = argv[4:]
+    blocking = _BlockingServer(marker, at_report=mode in (["report"], ["commit"]))
+    if mode == ["commit"]:
+        # The server never blocks (its indexing flag stays unset).
+        from unified_kg_rag.application.storage.indexing_manager import (
+            IndexingManager,
+        )
+
+        def block(manager: Any) -> None:
+            marker.write_text("commit")
+            time.sleep(3600)
+
+        IndexingManager.clear_stripped_summaries = block  # type: ignore[method-assign]
     execute = ps.IndexingStage.execute
 
     def indexing(stage: Any, context: Any) -> Any:
         blocking.indexing = True
         return execute(stage, context)
 
-    ps.IndexingStage.execute = indexing  # type: ignore[method-assign]
+    if mode != ["commit"]:
+        ps.IndexingStage.execute = indexing  # type: ignore[method-assign]
     from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
     from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
     from unified_kg_rag.adapters.local.rerank import CrossEncoderRerankFactory

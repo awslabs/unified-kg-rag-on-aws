@@ -8,7 +8,7 @@ fingerprint of a gated partition (the structural benchmarks' held-out
 committed baseline (``tests/fixtures/golden_metrics.json``). The ``tune``
 half's differences are printed, not gated.
 
-About three minutes on one core (each case, search type and split is a
+About four minutes on one core (each case, search type and split is a
 test of its own, so ``-n`` spreads them), so skipped unless
 ``GOLDEN_METRICS=1`` (the ``golden-metrics`` CI job sets it)::
 
@@ -35,7 +35,7 @@ pytestmark = [
     pytest.mark.usefixtures("_no_aws"),
     pytest.mark.skipif(
         os.getenv("GOLDEN_METRICS") != "1",
-        reason="set GOLDEN_METRICS=1 (about three minutes)",
+        reason="set GOLDEN_METRICS=1 (about four minutes)",
     ),
 ]
 

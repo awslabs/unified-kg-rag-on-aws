@@ -244,10 +244,14 @@ def test_a_run_killed_in_the_report_refresh_resumes_to_the_unkilled_run(
         vectors.close()
 
 
-def _kill_in_refresh(stores: Path, source: Path, cache: Path) -> None:
+def _kill_in_refresh(
+    stores: Path, source: Path, cache: Path, at: str = "report"
+) -> None:
     """Run an ingestion of ``source`` on ``stores`` in a child process and
-    SIGKILL it in the refresh's first report call (after the removal)."""
-    marker = cache.parent / "report.marker"
+    SIGKILL it in the refresh's first report call (after the removal), or,
+    ``at="commit"``, before its commit deletes the stripped-summary notes
+    (``tests.fixtures.killable_ingest``)."""
+    marker = cache.parent / f"{at}.marker"
     env = {**os.environ, "PYTHONPATH": str(ROOT), "AWS_EC2_METADATA_DISABLED": "true"}
     child = subprocess.Popen(  # nosec B603 - the test's own module
         [
@@ -258,7 +262,7 @@ def _kill_in_refresh(stores: Path, source: Path, cache: Path) -> None:
             str(source),
             str(cache),
             str(marker),
-            "report",
+            at,
         ],
         cwd=ROOT,
         env=env,
@@ -269,7 +273,7 @@ def _kill_in_refresh(stores: Path, source: Path, cache: Path) -> None:
         deadline = time.monotonic() + 120
         while not marker.exists():
             assert child.poll() is None, child.communicate()[0].decode()[-3000:]
-            assert time.monotonic() < deadline, "the run never reached the refresh"
+            assert time.monotonic() < deadline, f"the run never reached the {at}"
             time.sleep(0.1)
     finally:
         child.send_signal(signal.SIGKILL)
@@ -419,6 +423,60 @@ def test_a_resume_reads_the_members_its_killed_removal_stripped(
     context = e2e._ingest(config, _providers_of(config), source, cache)
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert _reports_state(providers) == unkilled
+
+
+@pytest.mark.timeout(300)
+def test_a_run_killed_before_its_commit_clears_the_strip_note_leaves_none(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # R3A-4: killed after the removal stripped the deleted document's text
+    # from the shared entities (noting them: stripped-summaries) and deleted
+    # its registry record, before the commit cleared the note. The resume
+    # removes nothing and merges no delta, so nothing read the note and it
+    # outlived every later run.
+    from tests.integration.test_outdated_reports import _DELETED, _KEPT
+    from unified_kg_rag.application.storage.stored_items import STRIPPED_SUMMARIES
+
+    source = tmp_path / "corpus"
+
+    def first_run(name: str) -> tuple[Any, Any]:
+        config = crash_config(tmp_path / name / "stores")
+        providers = _providers_of(config)
+        _write(source, {"a.txt": _KEPT, "b.txt": _DELETED})
+        context = e2e._ingest(config, providers, source, tmp_path / name / "run-1")
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        _write(source, {"b.txt": None})
+        return config, providers
+
+    def strip_note(providers: Any) -> dict[str, Any] | None:
+        vectors = providers.build_vector_indexer()
+        try:
+            return vectors.read_extraction_records(
+                [STRIPPED_SUMMARIES], suffix="default"
+            ).get(STRIPPED_SUMMARIES)
+        finally:
+            vectors.close()
+
+    config, providers = first_run("unkilled")
+    context = e2e._ingest(config, providers, source, tmp_path / "unkilled" / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    unkilled = (_reports_state(providers), e2e._entity_names(providers))
+    unkilled_records = _extraction_records(providers)
+    assert strip_note(providers) is None
+
+    config, providers = first_run("killed")
+    cache = tmp_path / "killed" / "run-2"
+    _kill_in_refresh(tmp_path / "killed" / "stores", source, cache, at="commit")
+    note = strip_note(providers)
+    assert note is not None and note["ids"]
+    assert "b.txt" not in e2e._registry(providers)
+
+    for run in (cache, tmp_path / "killed" / "run-3"):
+        context = e2e._ingest(config, _providers_of(config), source, run)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        assert strip_note(providers) is None
+        assert (_reports_state(providers), e2e._entity_names(providers)) == unkilled
+        assert _extraction_records(providers) == unkilled_records
 
 
 def _providers_of(config: Any) -> Any:

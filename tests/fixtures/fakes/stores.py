@@ -818,6 +818,14 @@ class FakeVectorStore(_Recorder):
             for item in self.data.get("text_units", {}).values()
         )
 
+    def holds_root_depth_reports(self, suffix: str | None = None) -> bool:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return any(
+            BaseIndexer.get_suffix(item) == wanted
+            and getattr(item, "min_cut_depth", None) is None
+            for item in self.data.get("community_reports", {}).values()
+        )
+
     def read_schema_annotations(
         self, kind: AnnotatedKind, suffix: str | None = None
     ) -> dict[str, StoredAnnotation]:

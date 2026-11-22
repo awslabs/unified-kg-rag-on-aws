@@ -629,7 +629,15 @@ fingerprint, must equal the committed baseline,
   `medium` world (128 text units, 88 entities) with communities split over
   5 members, so the community hierarchy has depths -1 to 2 and the RAPTOR
   tree two levels with more leaves than a tree search reads. It runs the
-  first question of each template and split (24) under `hybrid`.
+  first question of each template and split (24) under `hybrid`. The
+  incremental case builds the same world with gleaning on (2 rounds; on
+  the first vendor's text units round 1 adds a product and round 2 fails,
+  so they keep their ungleaned extraction), takes `min_cut_depth` off the
+  stored reports (as 0.3.0 wrote them), then runs one incremental ingestion
+  that adds 12 vendor documents (four clusters, two coarser communities),
+  edits two documents and deletes one, and answers the same 24 questions
+  under `hybrid`: the delta merge, the removal's strip and report refresh,
+  and global search on reports of two releases.
 - **Models.** `FakeOllama` answering with the console demo's responder:
   extraction finds the corpus' names, the answer is the context sentences
   that share the most words with the question. The steps of a strategy's
@@ -649,7 +657,8 @@ fingerprint, must equal the committed baseline,
 - **Settings off by default.** The deep case runs `global` twice more: with
   `search.global_search.use_dynamic_selection` on, and with
   `max_reports_per_level` 4, which makes the cut step down to the coarser
-  level above depth 0.
+  level above depth 0. The incremental case runs that capped `global` too,
+  which must stop at depth 0 there.
 - **Splits.** The gate compares the structural benchmark's `test` half and
   the whole of the unsplit bridge set. The `tune` half's differences are
   printed and never fail the job: it is for development (see
@@ -661,9 +670,12 @@ fingerprint, must equal the committed baseline,
   temporary directory. Any difference is a change in the pipeline, so no
   tolerance applies.
 - **What it does not measure.** Answer quality: the fake answers are
-  extractive. A change of prompt shows up only in a real-model run.
+  extractive. A change of prompt shows up only in a real-model run. Nor
+  what no answer reads: the rebuild reasons, and the notes a killed run
+  leaves for its resume (the crash and kill tests,
+  `tests/integration/test_ingestion_crash.py`, pin those).
 
-Run it locally (about three minutes on one core; `-n` spreads its 20 tests,
+Run it locally (about four minutes on one core; `-n` spreads its 22 tests,
 one per case, search type and split):
 
 ```bash

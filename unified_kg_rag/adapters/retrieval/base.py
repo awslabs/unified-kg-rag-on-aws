@@ -557,6 +557,16 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         metadata) when there is none or it cannot be read."""
         return None
 
+    async def aholds_root_depth_reports(self, suffix: str | None) -> bool | None:
+        """Whether ``suffix``'s community-report index holds a report written
+        without ``min_cut_depth`` (by a release before 0.4.0, which counted
+        its depth from the coarsest root): global search then steps no cut
+        below depth 0 (``GlobalSearchStrategy._has_coarser_cut``), and the
+        ``community_depths`` rebuild reason reads it too. ``False`` without
+        such an index; ``None`` (the default) when the backend cannot
+        tell."""
+        return None
+
     async def aneighbourhood_edges(
         self, vertex_ids: list[str], query: SearchQuery, *, per_vertex: int
     ) -> list[GraphEdge] | None:

@@ -712,24 +712,26 @@ class IncrementalIndexer:
         check_write_fence()
         # The items an earlier commit's stores rejected are written again
         # with this delta (see IndexingManager.read_pending_writes).
-        noted = self.indexing_manager.read_pending_writes(
-            {
-                self.suffix,
-                *(
-                    BaseIndexer.get_suffix(item)
-                    for group in (
-                        text_units,
-                        entities,
-                        relationships,
-                        communities,
-                        community_reports,
-                        claims,
-                    )
-                    for item in group or []
-                ),
-            },
-            text_units or (),
-        )
+        suffixes = {
+            self.suffix,
+            *(
+                BaseIndexer.get_suffix(item)
+                for group in (
+                    text_units,
+                    entities,
+                    relationships,
+                    communities,
+                    community_reports,
+                    claims,
+                )
+                for item in group or []
+            ),
+        }
+        noted = self.indexing_manager.read_pending_writes(suffixes, text_units or ())
+        # The items an earlier run's strip noted for a commit that did not
+        # run: this one does not extend them and, once its writes succeed,
+        # deletes the note, delta or none (as the unkilled run's commit).
+        self._read_stripped_notes(suffixes)
         if noted:
             entities, relationships, claims, communities, community_reports = (
                 self.indexing_manager.join_pending_writes(
@@ -853,6 +855,27 @@ class IncrementalIndexer:
             # name the records its removed ones did.
             self.indexing_manager.collect_extraction_records()
         return results
+
+    def _read_stripped_notes(self, suffixes: Collection[str]) -> None:
+        """Read the stored stripped-summary note of each of ``suffixes``
+        (``IndexingManager.read_stripped_summaries``), which the commit's
+        :meth:`IndexingManager.clear_stripped_summaries` then deletes. A
+        note that cannot be read is kept for a later run (whose merge reads
+        it again before it extends anything)."""
+        for suffix in sorted(suffixes):
+            try:
+                self.indexing_manager.read_stripped_summaries(suffix)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - kept for a later run
+                log_error(
+                    logger,
+                    logging.WARNING,
+                    "Reading the stripped-summary note of '%s' failed (%s): "
+                    "it is kept for the next run",
+                    suffix,
+                    error=e,
+                )
 
     def _merge_outdated_notes(self) -> dict[str, set[str]]:
         """Merge, per suffix the run touches, the stored outdated-report

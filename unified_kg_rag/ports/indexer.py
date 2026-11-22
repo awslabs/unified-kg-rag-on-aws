@@ -871,6 +871,18 @@ class StoreInspection(Protocol):
         and raise when the read fails."""
         return None
 
+    def holds_root_depth_reports(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s live community-report index holds a report
+        written without ``min_cut_depth`` (``CommunityReport``): by a
+        release before 0.4.0, which counted its depth from the coarsest
+        root. The ``community_depths`` rebuild reason reads it
+        (``rebuild_due``), as global search reads the retriever's
+        ``aholds_root_depth_reports``: from the reports, not the build
+        record. ``False`` without a live index; default ``None``: the
+        backend cannot tell. Adapters that override it read one document
+        and raise when the read fails."""
+        return None
+
 
 class VectorIndexer(
     BaseIndexer,

@@ -48,10 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cap (on planted graphs at the defaults: 132 reports at 6,000 entities, 120 at 9,000), so the default query maps a
   coarser cut there, not the 99 depth-2 reports most similar to the query. With
   `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
-  coarser roots. Stored reports keep their depth until a reset (*Upgrading*): a namespace whose last full build an
-  earlier release wrote steps down to depth 0 only, the reports its later incremental runs write included, and gets
+  coarser roots. Stored reports keep their depth until a reset (*Upgrading*): a namespace that holds a report written
+  without `min_cut_depth` steps down to depth 0 only, the reports its later incremental runs write included, and gets
   a `community_depths` rebuild reason (remedy `reset`) in `run-describe`, the console, MCP and the run's
-  `rebuild_due`.
+  `rebuild_due`. Both read the reports (one search for a report without the field), not the build record, which a
+  principal without `indices:admin/mappings/get` cannot read and a record a later run rewrote does not date (a
+  rewritten record stores no `package_version`).
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
   holds only a run's output; on a stdout or stderr that is no terminal no line is wrapped or cropped at 80 columns (a
   panel or table is drawn as wide as its widest line: `run-ingestion`'s source and cache paths lost their ends), and
@@ -128,6 +130,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     `search.search_type`), and code that reads `EvaluationConfig.retrieval_k` gets a list of cutoffs (*Breaking
     changes*): read `config.search.search_type` for the type a query runs, and `retrieval_k[0]` for the cutoff that
     scores `hit_at_k`, `recall_at_k` and `ndcg_at_k`.
+14. A namespace a development build of `main` before #852 wrote holds community reports without `min_cut_depth` too,
+    though its build record names 0.4.0.dev0: `run-describe` names `community_depths` for it (it reads the reports,
+    not the record), and global search steps no cut below depth 0 there. Run with `indexing.reset: true` to write
+    every report at its depth.
 
 ### Added
 
@@ -324,7 +330,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   ([Golden metrics](docs/guides/evaluate.md#golden-metrics-the-ci-regression-gate)). A deep case (a community
   hierarchy of depths -1 to 2, a two-level RAPTOR tree) and fake models that answer each strategy's own steps from
   the question (LightRAG keywords, report ratings, iterative follow-ups, DRIFT follow-ups) cover every methodology's
-  own path, dynamic community selection and the global cut's step-down included.
+  own path, dynamic community selection and the global cut's step-down included. An incremental case builds the deep
+  world with gleaning on (a unit whose second round fails keeps its ungleaned extraction), then adds, edits and
+  deletes documents on reports an earlier release wrote, so the delta merge, the removal's strip, gleaning and global
+  search on a mixed store are pinned too; the rebuild reasons and the notes of a killed run are not (their own tests
+  are).
 - Path filters: ingestion stamps each document's path relative to the corpus root as the document filter `file`, and
   each folder holding it as `folder`, so `attr_file` and `attr_folder` scope a question to a file or a folder at any
   depth on every store, from a directory corpus too (only `InputDocument.filters` gave a document filters before).
@@ -798,8 +808,9 @@ Bugs present in 0.3.0.
   the fallback counted.
 - The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
   searched for as a focus entity. Local search now reads a focus that names no stored entity, no word of the query
-  and nothing its own top hit's name covers or is covered by (a placeholder such as "none" or "Empty", in any
-  language; "Beatles" for the stored "The Beatles" is kept) as no focus and searches by the query, and the prompt
+  and does not hold its own top hit's whole name (a placeholder such as "none" or "Empty", in any language; "New
+  York City" for the stored "New York" is kept, "Beatles" for "The Beatles" or 京都 for 東京都 is not, as "none" for
+  "None of the Above" is not) as no focus and searches by the query, and the prompt
   asks for an empty answer without naming a placeholder: a wording that named "none" made a 3B model answer "none"
   for 8 of 30 MuSiQue questions that do name entities.
 - The embedded engine's `cjk` analyzer (the `ja` and `zh` default) did not fold width or drop stop words as
@@ -831,6 +842,9 @@ Bugs present in 0.3.0.
   it cannot tell), a commit read "cannot tell" as "no text unit names these" and deleted every record the removed
   text units named, those a changed document's unchanged chunks still name too (extracted again on its next change).
   The records and their note are kept there now.
+- A run killed after a deletion's strip noted the items it stripped (`stripped-summaries`) and before its commit
+  deleted the note left the note for good when the resume had nothing to remove or index: its commit never read it.
+  Every commit reads it now, delta or none, and deletes it once its writes succeed, as the unkilled run's does.
 
 ## [0.3.0] - 2026-11-14
 
