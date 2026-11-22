@@ -23,7 +23,7 @@ Prerequisites:
   its Python is not the library's: the package supports Python 3.11.5–3.12,
   and the image runs 3.12.
 - Node.js 22 or 24 (CI uses 24) and the AWS CDK CLI v2.1146.1 or later
-  (`npm install -g aws-cdk@2.1148.0`, the version CI pins); an older CLI can
+  (`npm install -g aws-cdk@2.1149.0`, the version CI pins); an older CLI can
   reject the cloud assembly the locked `aws-cdk-lib` produces.
 - AWS credentials for the target account and region to bootstrap and deploy,
   and Docker to push the app image.
