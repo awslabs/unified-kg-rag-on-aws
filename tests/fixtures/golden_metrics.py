@@ -5,7 +5,8 @@
 
 It ingests the synthetic corpora the repository already has, the
 ``structural`` benchmark (``prepare-benchmark structural --size small
---seed 0``, generated at run time), a deep variant of it and the
+--seed 0``, generated at run time), a deep variant of it, that variant
+built with gleaning and then indexed incrementally (``_increment``) and the
 multilingual bridge corpus (``tests/fixtures/bridge_corpus.py``), on the
 embedded SQLite stores with deterministic models: ``FakeOllama`` answering
 with the console demo's prompt-reading responder (extraction by name,
@@ -74,6 +75,7 @@ from unified_kg_rag.domain.models.config import (
     LanguageCode,
     SeedGraphConfig,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.benchmarks import SPLITS, structural
 
 BASELINE = Path(__file__).with_name("golden_metrics.json")
@@ -141,6 +143,40 @@ ARMS: dict[str, tuple[SearchStrategy, Callable[[Config], None]]] = {
     "capped": (SearchStrategy.GLOBAL, _global_capped),
 }
 
+# The incremental case: the deep world built with gleaning on, then one
+# incremental run that adds vendor documents, edits the first vendor's and
+# the first buyer's and deletes the last vendor's (in name order): the
+# paths a full build never takes (the delta merge, the removal's strip and
+# the report refresh, an incremental build record, a gleaning failure kept
+# ungleaned). Before the increment the stored reports lose
+# ``min_cut_depth``, as a namespace a release before 0.4.0 built holds
+# them, so its global search reads reports of two releases
+# (``GlobalSearchStrategy._has_coarser_cut``).
+#
+# The vendors added: two pairs of clusters, each three new vendors
+# supplying a new buyer, the first vendor of a pair's first cluster also
+# supplying its second cluster's buyer, so the delta's first pass finds the
+# four clusters and a coarser level joins each pair (measured: 2 of the
+# delta's reports at depth -1), as the full build's hierarchy has one, and
+# the capped global cut could step onto it. One cluster's names hold the
+# word a model answers for a query that names no entity ("none", which the
+# fake model answers for the absent-entity questions): the focus guard must
+# not read it as a name (``linking.focus_names_anything``).
+INCREMENT_GROUPS = (
+    (("Quenmar", "Quenmar Foods"), ("Quenvik", "Quenvik Clinics")),
+    (("Zephyr", "Zephyr Foods"), ("None Such", "None Such Clinics")),
+)
+INCREMENT_KINDS = ("Works", "Trading", "Supplies")
+# Gleaning (max_rounds 2): each text unit that names the first vendor has
+# its round 1 add this product and round 2 fail (an unparsable answer), so
+# the unit keeps its ungleaned extraction and record.
+GLEANED_PRODUCT = "Brass Valve"
+# The ``ARMS`` each case runs beside its default runs.
+CASE_ARMS: dict[str, tuple[str, ...]] = {
+    "structural-deep": tuple(ARMS),
+    "structural-incremental": ("capped",),
+}
+
 
 def _config(name: str, stores: Path, chunk_size: int, language: LanguageCode) -> Config:
     config = Config(
@@ -197,6 +233,8 @@ class _Case:
         entities: dict[str, str],
         split: bool,
         arms: tuple[str, ...] = (),
+        gleaned: str | None = None,
+        increment: Callable[[_Case], None] | None = None,
     ) -> None:
         self.name = name
         self.root = root
@@ -205,12 +243,17 @@ class _Case:
         self.config = config
         self.split = split
         self.arms = arms
+        # Run after the full build (``measure_case``): an incremental run.
+        self.increment = increment
         responder = _responder(entities)
-        self.server = FakeOllama(
-            lambda system, human: str(responder.respond(system, human)[0]),
-            "",
-            DIMENSIONS,
-        )
+
+        def respond(system: str, human: str) -> str:
+            if gleaned is not None and "graph refinement specialist" in system:
+                if gleaned in human:
+                    return _gleaning_answer(gleaned, human)
+            return str(responder.respond(system, human)[0])
+
+        self.server = FakeOllama(respond, "", DIMENSIONS)
         # The demo's hashing vectors: words, and character bigrams of
         # Hangul, Kana and Han runs, so Korean, Japanese and Chinese texts
         # that share words are close too (HashingEmbeddings hashes such a
@@ -233,13 +276,121 @@ class _DemoEmbeddings(HashingEmbeddings):
         return list(self.responder.embed(text, self.dimensions))
 
 
-def _structural_case(root: Path, deep: bool = False) -> _Case:
-    name = "structural-deep" if deep else "structural"
+def _gleaning_answer(vendor: str, human: str) -> str:
+    """The gleaning answer for a text unit naming ``vendor``: round 1 adds
+    :data:`GLEANED_PRODUCT` (made by ``vendor``), round 2 (whose prompt
+    lists it) is unparsable."""
+    if GLEANED_PRODUCT in human:
+        return "no plan"
+    evidence = f"<text_evidence>{vendor}</text_evidence>"
+    return (
+        "<refinement_plan><quality_scores><completeness_score>0.5"
+        "</completeness_score><accuracy_score>0.9</accuracy_score>"
+        "</quality_scores><identified_issues>"
+        "<issue><issue_type>MISSING_ENTITY</issue_type><details>"
+        f"<name>{GLEANED_PRODUCT}</name><type>PRODUCT</type>"
+        f"<description>A part {vendor} makes.</description>"
+        f"<confidence>8</confidence></details>{evidence}</issue>"
+        "<issue><issue_type>MISSING_RELATIONSHIP</issue_type><details>"
+        f"<source>{vendor}</source><target>{GLEANED_PRODUCT}</target>"
+        f"<type>MAKES</type><description>{vendor} makes it.</description>"
+        f"<strength>7</strength></details>{evidence}</issue>"
+        "</identified_issues></refinement_plan>"
+    )
+
+
+def _documents(corpus: Path, prefix: str) -> list[Path]:
+    """The corpus' documents of one kind (``v``: vendors, ``b``: buyers), in
+    name order."""
+    return sorted(path for path in corpus.iterdir() if path.name.startswith(prefix))
+
+
+def _title(path: Path) -> str:
+    return path.read_text(encoding="utf-8").splitlines()[0].strip()
+
+
+def _increment_entities() -> dict[str, str]:
+    """The names the incremental run's documents add, by type."""
+    names = {}
+    for pair in INCREMENT_GROUPS:
+        for prefix, buyer in pair:
+            names.update({f"{prefix} {kind}": "VENDOR" for kind in INCREMENT_KINDS})
+            names[buyer] = "BUYER"
+    return names
+
+
+def _increment(case: _Case) -> None:
+    """The incremental case's second run (see :data:`INCREMENT_GROUPS`)."""
+    _drop_cut_bounds(case)
+    corpus = case.corpus
+    vendors = _documents(corpus, "v")
+    for first_cluster, second_cluster in INCREMENT_GROUPS:
+        for (prefix, buyer), bridged in (
+            (first_cluster, second_cluster[1]),
+            (second_cluster, None),
+        ):
+            for kind in INCREMENT_KINDS:
+                name = f"{prefix} {kind}"
+                supplied = buyer
+                if bridged is not None and kind == INCREMENT_KINDS[0]:
+                    supplied += f", {bridged}"
+                text = (
+                    f"{name} is a vendor based in Westria. {name} supplies {supplied}."
+                )
+                path = corpus / f"x-{name.lower().replace(' ', '-')}.txt"
+                path.write_text(f"{name}\n\n{text}\n", encoding="utf-8")
+    (first, first_buyer), _ = INCREMENT_GROUPS[0]
+    for path, sentence in (
+        (vendors[0], f" {_title(vendors[0])} supplies {first_buyer}."),
+        (_documents(corpus, "b")[0], f" It also buys from {first} Works."),
+    ):
+        path.write_text(
+            path.read_text(encoding="utf-8").rstrip() + sentence + "\n",
+            encoding="utf-8",
+        )
+    vendors[-1].unlink()
+    _ingest(case, pipeline_id="golden-increment")
+
+
+def _drop_cut_bounds(case: _Case) -> None:
+    """Remove ``min_cut_depth`` from every stored community report, as a
+    release before 0.4.0 wrote them."""
+    # The embedded store's indexer: its live index and engine.
+    vector: Any = case.providers.build_vector_indexer()
+    try:
+        suffix = resolve_namespace(case.config, None)
+        pages = vector.scan_items("community_reports", suffix)
+        assert pages is not None
+        ids = [str(item["id"]) for page in pages for item in page]
+        alias = vector._get_name(
+            case.config.indexing.opensearch.community_reports_index_prefix, suffix
+        )
+        index = vector._live_index(alias)
+        assert ids and index
+        vector.opensearch_client.bulk_update(
+            index, [{"id": i, "min_cut_depth": None} for i in ids]
+        )
+        assert vector.holds_root_depth_reports(suffix)
+    finally:
+        vector.close()
+
+
+def _structural_case(
+    root: Path, deep: bool = False, incremental: bool = False
+) -> _Case:
+    name = (
+        "structural-incremental"
+        if incremental
+        else "structural-deep" if deep else "structural"
+    )
+    deep = deep or incremental
     size: structural.Size = DEEP_SIZE if deep else "small"
     prepared = root / "prepared"
     structural.prepare(prepared, seed=0, size=size)
     world = structural.generate_world(0, size)
     entities = {node.name: node.type for node in world.nodes.values()}
+    if incremental:
+        entities.update(_increment_entities())
     # 200 characters: the longest vendor documents (up to 230) are two chunks.
     config = _config(name, root / "stores", 200, LanguageCode.EN)
     dataset = prepared / "eval_data.json"
@@ -250,6 +401,11 @@ def _structural_case(root: Path, deep: bool = False) -> _Case:
             json.dumps(_first_of_each_template(prepared / "eval_data.json")),
             encoding="utf-8",
         )
+    gleaned = None
+    if incremental:
+        config.processing.gleaning.enabled = True
+        config.processing.gleaning.max_rounds = 2
+        gleaned = _title(_documents(prepared / "corpus", "v")[0])
     snippet = (prepared / "structural-config.yaml").read_text(encoding="utf-8")
     extraction = yaml.safe_load(snippet)["processing"]
     graph = config.processing.graph_extraction
@@ -267,7 +423,9 @@ def _structural_case(root: Path, deep: bool = False) -> _Case:
         config,
         entities,
         split=True,
-        arms=tuple(ARMS) if deep else (),
+        arms=CASE_ARMS.get(name, ()),
+        gleaned=gleaned,
+        increment=_increment if incremental else None,
     )
 
 
@@ -320,7 +478,7 @@ def _bridge_case(root: Path, language: LanguageCode) -> _Case:
     )
 
 
-def _ingest(case: _Case) -> None:
+def _ingest(case: _Case, pipeline_id: str = "golden") -> None:
     pipeline = DataIngestionPipeline(
         case.config,
         PipelineConfig(
@@ -335,7 +493,7 @@ def _ingest(case: _Case) -> None:
             stage.resolver.entity_resolver.use_process_pool = False
             stage.resolver.relationship_resolver.use_process_pool = False
     try:
-        context = pipeline.run(case.corpus, pipeline_id="golden")
+        context = pipeline.run(case.corpus, pipeline_id=pipeline_id)
     finally:
         pipeline.close()
     if context.status is not PipelineStageStatus.COMPLETED:
@@ -402,12 +560,13 @@ def _scores(summary: dict[str, Any], results: list[dict[str, Any]]) -> dict[str,
 CASES = (
     "structural",
     "structural-deep",
+    "structural-incremental",
     *(f"bridge-{language.value}" for language in BRIDGE_CORPORA),
 )
 # The search types each case runs. The deep case is there for the
 # strategies' own paths, which run under any search type: the default one.
 CASE_SEARCH_TYPES: dict[str, tuple[SearchType, ...]] = {
-    name: (SearchType.HYBRID,) if name == "structural-deep" else SEARCH_TYPES
+    name: (SearchType.HYBRID,) if name.startswith("structural-") else SEARCH_TYPES
     for name in CASES
 }
 # The gate's tests: one per case, search type and split (``None``: the
@@ -422,8 +581,12 @@ RUNS: tuple[tuple[str, SearchType, str | None], ...] = tuple(
 
 def build_case(name: str, root: Path) -> _Case:
     """Case ``name`` (one of ``CASES``) in the empty directory ``root``."""
-    if name in ("structural", "structural-deep"):
-        return _structural_case(root, deep=name == "structural-deep")
+    if name.startswith("structural"):
+        return _structural_case(
+            root,
+            deep=name == "structural-deep",
+            incremental=name == "structural-incremental",
+        )
     return _bridge_case(root, LanguageCode(name.removeprefix("bridge-")))
 
 
@@ -476,6 +639,8 @@ def measure_case(
     is not."""
     case = build_case(name, root)
     _ingest(case)
+    if case.increment is not None:
+        case.increment(case)
     chains = {"": (case.config, GraphRAGChain(case.config, providers=case.providers))}
     for arm in case.arms:
         config = copy.deepcopy(case.config)

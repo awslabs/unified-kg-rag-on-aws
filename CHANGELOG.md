@@ -330,7 +330,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   ([Golden metrics](docs/guides/evaluate.md#golden-metrics-the-ci-regression-gate)). A deep case (a community
   hierarchy of depths -1 to 2, a two-level RAPTOR tree) and fake models that answer each strategy's own steps from
   the question (LightRAG keywords, report ratings, iterative follow-ups, DRIFT follow-ups) cover every methodology's
-  own path, dynamic community selection and the global cut's step-down included.
+  own path, dynamic community selection and the global cut's step-down included. An incremental case builds the deep
+  world with gleaning on (a unit whose second round fails keeps its ungleaned extraction), then adds, edits and
+  deletes documents on reports an earlier release wrote, so the delta merge, the removal's strip, gleaning and global
+  search on a mixed store are pinned too; the rebuild reasons and the notes of a killed run are not (their own tests
+  are).
 - Path filters: ingestion stamps each document's path relative to the corpus root as the document filter `file`, and
   each folder holding it as `folder`, so `attr_file` and `attr_folder` scope a question to a file or a folder at any
   depth on every store, from a directory corpus too (only `InputDocument.filters` gave a document filters before).
