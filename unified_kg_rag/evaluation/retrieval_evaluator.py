@@ -399,12 +399,20 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         first_rank = next(
             (rank for rank, keys in enumerate(files, 1) if _matched([keys])), None
         )
-        # A file gains at its rank when it names a reference not named above
-        # it, so a reference counts once, as in recall.
+        # A file gains at its rank when it names a reference not credited
+        # above it, and is credited to one reference: the one its full name
+        # is, else one its stem names. A reference counts once, as in
+        # recall, and so does a file: a.pdf crediting both "a" and "a.pdf"
+        # left a.txt, the file "a" also names, no gain, so [a.pdf, a.txt]
+        # scored 0.613 and [a.txt, a.pdf] 1.0.
         gain, credited = 0.0, set[str]()
         for rank, keys in enumerate(files[:k], 1):
-            if new := _matched([keys]) - credited:
-                credited |= new
+            open_keys = [
+                key for key in references if key in keys and key not in credited
+            ]
+            if open_keys:
+                full_name = max(keys, key=len)
+                credited.add(full_name if full_name in open_keys else open_keys[0])
                 gain += 1.0 / math.log2(rank + 1)
         ideal = sum(
             1.0 / math.log2(rank + 1) for rank in range(1, min(k, len(references)) + 1)

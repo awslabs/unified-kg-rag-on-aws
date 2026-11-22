@@ -895,6 +895,10 @@ Bugs present in 0.3.0.
   "Unclosed client session" warnings: the awaited close it scheduled on the caller's loop was cancelled by
   `asyncio.run` before it ran. The connectors are now closed synchronously on that loop's thread (`await
   chain.aclose()` was not affected).
+- `retrieval`'s nDCG credited a file to every reference it names, so with `reference_sources` `[a, a.pdf]` the
+  ranking `[a.pdf, a.txt]` scored 0.613 and `[a.txt, a.pdf]` 1.0 for the same two relevant files (a deeper cutoff that
+  added a.txt lowered the score). A file is now credited to one reference: the one its full name is, else one its stem
+  names. Recall, hit and MRR are unchanged.
 
 ## [0.3.0] - 2026-11-14
 

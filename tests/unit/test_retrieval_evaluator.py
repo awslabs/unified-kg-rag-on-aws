@@ -243,6 +243,34 @@ class TestMetrics:
                 m: v for m, v in short.items() if m != "mrr"
             }, k
 
+    @pytest.mark.parametrize(
+        ("ranked", "ndcg"),
+        [
+            # R4B-3: a.pdf named both references and was credited to both,
+            # so a.txt, the file "a" alone names, gained nothing: 0.613 in
+            # this order, 1.0 in the other. Credited to its full name, each
+            # file gains once: DCG 1 + 1/log2 3 over the same ideal.
+            ([["a.pdf"], ["a.txt"]], 1.0),
+            ([["a.txt"], ["a.pdf"]], 1.0),
+            # DCG 1 + 1/log2 4 = 1.5 (a.pdf as a.pdf, a.txt as a) over the
+            # ideal 1 + 1/log2 3: 0.920 (was 1 / 1.631 = 0.613).
+            ([["a.pdf"], ["x.txt"], ["a.txt"]], 1.5 / (1 + 1 / math.log2(3))),
+            # DCG 1/log2 3 + 1/log2 4 = 1.131 over 1.631: 0.693 (was 0.387).
+            (
+                [["x.txt"], ["a.pdf"], ["a.txt"]],
+                (1 / math.log2(3) + 0.5) / (1 + 1 / math.log2(3)),
+            ),
+        ],
+    )
+    def test_a_file_is_credited_to_one_reference_its_full_name_first(
+        self, config: Config, ranked: list, ndcg: float
+    ) -> None:
+        config.evaluation.retrieval_k = 3
+        out = _score(RetrievalEvaluator(config), ranked, ["a", "a.pdf"])
+        assert out["metadata"]["num_references"] == 2
+        assert out["metrics"]["recall_at_k"] == 1.0
+        assert out["metrics"]["ndcg_at_k"] == pytest.approx(ndcg)
+
     def test_two_files_of_one_stem_stay_two_references(self, config: Config) -> None:
         # a.pdf and a.docx are two documents; "a" is a spelling of either.
         config.evaluation.retrieval_k = 3
