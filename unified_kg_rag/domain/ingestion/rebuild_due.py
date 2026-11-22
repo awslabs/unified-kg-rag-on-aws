@@ -19,12 +19,15 @@ stale, each with what applies it:
   text they were written from and could not write them again from what
   remains (``IndexBuildRecord.outdated_reports``): they may state it, and
   the next incremental run tries again (``report_refresh``).
-- ``community_depths`` (reset): the community reports were written by a
-  release before 0.4.0 (the full build the record is or keeps,
-  ``package_version``), whose depths count from the coarsest root, not from
-  the first Leiden pass as global search's ``community_depth`` cut now
-  reads them; incremental runs write their delta's reports at the new
-  depths beside them.
+- ``community_depths`` (reset): the stores hold community reports written
+  before 0.4.0 stored ``min_cut_depth`` (0.3.0 counted their depths from the
+  coarsest root, not from the first Leiden pass as global search's
+  ``community_depth`` cut now reads them); incremental runs write their
+  delta's reports at the new depths beside them, and global search steps no
+  cut below depth 0 there. Read off the reports (one without ``min_cut_depth``:
+  ``root_depth_reports``, which the caller reads from the stores, as global
+  search's step-down does), not the build record, so it holds without a
+  record or under one a later release rewrote.
 - ``answer_settings`` (reset): the community reports or description
   summaries the last full build wrote were made under other settings
   (prompt, model, language; ``cache_keys.corpus_answer_fingerprints``)
@@ -36,14 +39,14 @@ stale, each with what applies it:
   artifact the namespace does not hold (``methodologies.
   missing_artifacts``): the next run rebuilds the namespace to add it.
 
-A record from before a field was recorded tells nothing of it (no reason).
+A record from before a field was recorded tells nothing of it (no reason);
+without a record only ``community_depths`` can be due.
 ``run-describe``, the console and the MCP ``kg_describe_schema`` tool report
 the reasons of a stored record; the indexing stage those of the record it
 writes (its WARNING and the run's ``rebuild_due``, which the console's job
 card reads). Nothing here reads a store or calls a model.
 """
 
-import re
 from collections.abc import Mapping
 from enum import Enum
 from typing import Annotated, Any
@@ -117,34 +120,10 @@ RebuildReasons = Annotated[
         "incremental run cannot apply (stale communities, reports or "
         "summaries: remedy reset) or applies at a cost (changed extraction "
         "settings, a methodology it lacks: remedy next_run); empty when "
-        "nothing is, or without a build record",
+        "nothing is (without a build record, only community reports an "
+        "earlier release wrote can be)",
     ),
 ]
-
-
-# The first release whose community depths count from the first Leiden pass
-# (community_clustering._set_depths): a full build of an earlier one stored
-# them counted from the coarsest root.
-FIRST_PASS_DEPTH_RELEASE = (0, 4, 0)
-
-
-def root_depth_release(record: Mapping[str, Any]) -> str | None:
-    """The release that wrote the full build ``record`` is or keeps when it
-    predates :data:`FIRST_PASS_DEPTH_RELEASE`, else None (a later one, or a
-    record without a version). Its community reports count their depth
-    from the coarsest root and hold no ``min_cut_depth``, and an
-    incremental run keeps them beside its delta's: global search steps no
-    cut below depth 0 there (``GlobalSearchStrategy._has_coarser_cut``)."""
-    full = record if record.get("mode") == "full" else record.get("full_build")
-    if not isinstance(full, Mapping):
-        return None
-    version = full.get("package_version")
-    match = re.match(
-        r"(\d+)\.(\d+)\.(\d+)", version if isinstance(version, str) else ""
-    )
-    if match is None or tuple(map(int, match.groups())) >= FIRST_PASS_DEPTH_RELEASE:
-        return None
-    return str(version)
 
 
 _ANSWERS = {
@@ -158,20 +137,25 @@ def rebuild_reasons(
     config: Config,
     *,
     drift_recommended: bool = False,
+    root_depth_reports: bool | None = None,
 ) -> list[RebuildReason]:
     """Why the namespace whose build record is ``record`` (an
     ``IndexBuildRecord`` dump; None without one) is due for a rebuild
     under ``config``, in the order of the module docstring; empty when
-    nothing is (or without a record). ``drift_recommended``: the run that
-    writes ``record`` measured a community drift that recommends a rebuild
-    (a reason only under ``on_drift_recommendation``; the record keeps
-    the reports it kept outdated, which are one whatever the setting)."""
+    nothing is. ``drift_recommended``: the run that writes ``record``
+    measured a community drift that recommends a rebuild (a reason only
+    under ``on_drift_recommendation``; the record keeps the reports it
+    kept outdated, which are one whatever the setting).
+    ``root_depth_reports``: the stores hold a community report written
+    without ``min_cut_depth`` (``StoreInspection.holds_root_depth_reports``,
+    the retriever's ``aholds_root_depth_reports``; None: cannot tell)."""
+    depths = _community_depth_reasons(root_depth_reports)
     if not isinstance(record, Mapping):
-        return []
+        return depths
     return [
         *_community_reasons(record, config, drift_recommended),
         *_outdated_report_reasons(record, config),
-        *_community_depth_reasons(record, config),
+        *depths,
         *_answer_reasons(record, config),
         *_extraction_reasons(record, config),
         *_methodology_reasons(record, config),
@@ -236,23 +220,19 @@ def _outdated_report_reasons(
     ]
 
 
-def _community_depth_reasons(
-    record: Mapping[str, Any], config: Config
-) -> list[RebuildReason]:
-    if IndexArtifact.COMMUNITY_REPORTS not in held_artifacts(record, config):
-        return []
-    version = root_depth_release(record)
-    if version is None:
+def _community_depth_reasons(root_depth_reports: bool | None) -> list[RebuildReason]:
+    if not root_depth_reports:
         return []
     return [
         RebuildReason(
             kind=RebuildReasonKind.COMMUNITY_DEPTHS,
             remedy=RebuildRemedy.RESET,
-            detail=f"its community reports were written by {version}, which "
-            "counted their depth from the coarsest root: global search's "
-            "search.global_search.community_depth cut, which counts it from "
-            "the first Leiden pass as MS GraphRAG does, reads them one or more "
-            "levels too coarse beside the reports incremental runs write, and "
+            detail="it holds community reports written before 0.4.0 stored "
+            "min_cut_depth (0.3.0 counted their depth from the coarsest root): "
+            "global search's search.global_search.community_depth cut, which "
+            "counts it from the first Leiden pass as MS GraphRAG does, reads "
+            "0.3.0's one or more levels too coarse beside the reports "
+            "incremental runs write, and "
             "a cut over search.global_search.max_reports_per_level steps no "
             "lower than depth 0 (the most similar reports are mapped); a "
             "run with indexing.reset: true writes every report at its depth, "

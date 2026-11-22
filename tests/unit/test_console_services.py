@@ -720,12 +720,27 @@ async def test_evaluation_progress_counts_answers_from_the_log(
 class _RecordChain(_Chain):
     """Reads a fixed build record (per suffix)."""
 
-    def __init__(self, records: dict[str | None, Any]) -> None:
+    def __init__(
+        self,
+        records: dict[str | None, Any],
+        root_depth: dict[str, bool] | None = None,
+    ) -> None:
         super().__init__(_output())
         self.records = records
+        # The namespaces whose reports an earlier release wrote.
+        self.root_depth = root_depth or {}
 
     async def aread_build_record(self, suffix: str | None) -> Any:
         return self.records.get(suffix)
+
+    def document_retriever(self) -> Any:
+        chain = self
+
+        class _Reports:
+            async def aholds_root_depth_reports(self, suffix: str | None) -> bool:
+                return chain.root_depth.get(suffix or "default", False)
+
+        return _Reports()
 
     async def acheck_methodology(self, strategy: Any, suffix: str | None) -> Any:
         if suffix == "empty":
@@ -762,6 +777,26 @@ async def test_held_methodologies_come_from_the_namespace_s_build_record(
     assert (await service.held_methodologies("old"))["indexed"] is True
     empty = await service.held_methodologies("empty")
     assert (empty["indexed"], empty["recorded"]) == (False, False)
+    await service.close()
+
+
+async def test_the_rebuild_notice_reads_old_reports_off_the_stores(
+    tmp_path: Path,
+) -> None:
+    # R3A-1: the community_depths reason read the build record, which a
+    # principal without the mapping grant cannot read and a rewrite dates
+    # as this release; it reads the reports, as global search does.
+    chain = _RecordChain(
+        {"rewritten": {"mode": "full", "package_version": "0.4.0"}},
+        root_depth={"rewritten": True, "unreadable": True},
+    )
+    service = AskService(
+        Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+    )
+    for namespace in ("rewritten", "unreadable"):
+        held = await service.held_methodologies(namespace)
+        assert [r["kind"] for r in held["rebuild"]] == ["community_depths"]
+    assert (await service.held_methodologies("default"))["rebuild"] == []
     await service.close()
 
 

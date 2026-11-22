@@ -412,6 +412,26 @@ async def test_kg_describe_schema_says_when_a_rebuild_is_due(index: Index) -> No
     assert reason.settings == ["description_summary"]
 
 
+async def test_kg_describe_schema_reads_old_reports_off_the_stores(
+    index: Index, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R3A-1: the community_depths reason reads the reports, as global search
+    # does, not the build record (which a search-only principal cannot read).
+    chain = index.chain()
+    try:
+        retriever = chain.document_retriever()
+        assert await retriever.aholds_root_depth_reports("default") is False
+
+        async def held(self: Any, suffix: str | None) -> bool:
+            return True
+
+        monkeypatch.setattr(type(retriever), "aholds_root_depth_reports", held)
+        result = await KnowledgeGraphTools(chain).describe_schema()
+    finally:
+        await chain.aclose()
+    assert [r.kind.value for r in result.rebuild] == ["community_depths"]
+
+
 # --- the strategy allowlist ------------------------------------------------
 
 

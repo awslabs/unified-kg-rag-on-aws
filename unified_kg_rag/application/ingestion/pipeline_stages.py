@@ -3203,6 +3203,23 @@ class IndexingStage(_RegistryStage):
 
         return input_count, total_indexed, metrics
 
+    def _holds_root_depth_reports(self, suffix: str) -> bool | None:
+        """Whether ``suffix``'s stored community reports include one an
+        earlier release wrote (``holds_root_depth_reports``); ``None`` when
+        the read fails (best-effort, as the record it reports on)."""
+        try:
+            return self.indexing_manager.vector_indexer.holds_root_depth_reports(suffix)
+        except Exception as e:  # noqa: BLE001 - a missing reason, not a failed run
+            log_error(
+                logger,
+                logging.WARNING,
+                "Could not tell whether '%s' holds community reports an "
+                "earlier release wrote: %s",
+                suffix,
+                error=e,
+            )
+            return None
+
     def _check_rebuild_due(
         self, records: dict[str, IndexBuildRecord], drift: CommunityDrift | None
     ) -> dict[str, Any]:
@@ -3220,6 +3237,7 @@ class IndexingStage(_RegistryStage):
                 written.model_dump(mode="json"),
                 self.config,
                 drift_recommended=drift is not None and drift.rebuild_recommended,
+                root_depth_reports=self._holds_root_depth_reports(suffix),
             )
             for reason in reasons:
                 logger.warning(
@@ -3355,7 +3373,8 @@ class IndexingStage(_RegistryStage):
         the stores show they hold (``_artifacts_held``; none is written when
         a read of them fails), the documents the registry records, and
         community counters started from the reports stored, not what the
-        config would build.
+        config would build; no ``package_version`` (the release that built
+        them is unknown).
 
         A full build writes every report (no outdated one); an incremental
         record adds the stored reports its removals kept although they cite
@@ -3415,7 +3434,8 @@ class IndexingStage(_RegistryStage):
                 context.incremental_extraction_fingerprint or settings.fingerprint
             ),
             extraction_settings=settings,
-            package_version=__version__,
+            # A rewritten record stands for a build an unknown release made.
+            package_version=None if rewritten else __version__,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
             # The path filters this run stamped (a document outside the
             # corpus root carries none: _unstamped_documents); a rewritten

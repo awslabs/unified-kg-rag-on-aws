@@ -2196,3 +2196,66 @@ def test_determine_section_type_reads_the_prefix_exactly(retriever, config) -> N
         == SectionType.SUMMARY
     )
     assert retriever._determine_section_type("kg-abc-default") == SectionType.GENERAL
+
+
+class _ReportsClient:
+    """A client whose mapping read is denied (a search-only principal) and
+    whose search answers ``hits``, or raises ``error``."""
+
+    def __init__(
+        self, hits: list[dict[str, Any]], error: Exception | None = None
+    ) -> None:
+        self.hits, self.error = hits, error
+        self.bodies: list[dict[str, Any]] = []
+
+    async def aget_mappings(self, index: str) -> dict[str, dict[str, Any]]:
+        from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
+
+        raise StoreAccessDeniedError("status=403 indices:admin/mappings/get")
+
+    async def asearch(self, **kwargs: Any) -> dict[str, Any]:
+        self.bodies.append(kwargs["body"])
+        if self.error is not None:
+            raise self.error
+        return {"hits": {"hits": self.hits}}
+
+
+async def test_reports_without_the_cut_bounds_are_read_without_the_mapping(
+    retriever, caplog
+) -> None:
+    # R3A-1(b): a principal without indices:admin/mappings/get reads no
+    # build record, but searches: the reports tell what it would have.
+    from opensearchpy.exceptions import NotFoundError
+
+    from unified_kg_rag.shared.exceptions import (
+        StoreAccessDeniedError,
+        StoreTimeoutError,
+    )
+
+    client = _ReportsClient([{"_id": "old"}])
+    object.__setattr__(retriever, "_opensearch_client", client)
+    object.__setattr__(retriever, "_embedding_checked_aliases", set())
+    object.__setattr__(retriever, "_embedding_check_denied_logged", False)
+    assert await retriever.aread_build_record(None) is None
+    assert await retriever.aholds_root_depth_reports(None) is True
+    (body,) = client.bodies
+    assert body["query"] == {
+        "bool": {"must_not": [{"exists": {"field": "min_cut_depth"}}]}
+    }
+    client.hits = []
+    assert await retriever.aholds_root_depth_reports(None) is False
+    # No reports index: none held.
+    client.error = NotFoundError(404, "index_not_found_exception", {})
+    assert await retriever.aholds_root_depth_reports(None) is False
+    # A denied search fails the query, as every search of it would.
+    client.error = StoreAccessDeniedError("status=403")
+    with pytest.raises(StoreAccessDeniedError):
+        await retriever.aholds_root_depth_reports(None)
+    # Any other failure cannot tell, and says so.
+    client.error = RuntimeError("store hiccup")
+    caplog.set_level("WARNING")
+    assert await retriever.aholds_root_depth_reports(None) is None
+    assert "steps no cut below depth 0" in caplog.text
+    client.error = StoreTimeoutError("read timed out")
+    with pytest.raises(StoreTimeoutError, match="did not answer"):
+        await retriever.aholds_root_depth_reports(None)

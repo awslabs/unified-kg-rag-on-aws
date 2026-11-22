@@ -47,6 +47,19 @@ def ingested_suffixes(
     )
 
 
+# One search for a community report written without ``min_cut_depth``: by a
+# release before 0.4.0, whose depths count from the coarsest root
+# (``StoreInspection.holds_root_depth_reports``, the retriever's
+# ``aholds_root_depth_reports``). A field query, which a principal allowed
+# to search may run without the mapping read the build record needs.
+ROOT_DEPTH_REPORT_SEARCH: dict[str, Any] = {
+    "size": 1,
+    "query": {"bool": {"must_not": [{"exists": {"field": "min_cut_depth"}}]}},
+    "_source": False,
+    "track_total_hits": False,
+}
+
+
 def engine_name(client: object) -> str:
     """How messages name ``client``'s engine: its ``engine_name``, else
     ``OpenSearch``."""

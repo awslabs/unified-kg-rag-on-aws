@@ -313,6 +313,16 @@ def _record_0_3_0(config: Config) -> dict[str, Any]:
     return {k: v for k, v in record.items() if k in fields}
 
 
+def _depth_kinds(
+    record: dict[str, Any] | None, config: Config, held: bool | None
+) -> list[RebuildReasonKind]:
+    return [
+        r.kind
+        for r in rebuild_reasons(record, config, root_depth_reports=held)
+        if r.kind is RebuildReasonKind.COMMUNITY_DEPTHS
+    ]
+
+
 def test_reports_written_before_the_first_pass_depths_need_a_reset() -> None:
     # RV3-I3: 0.3.0 stored each report's depth from the coarsest root; an
     # upgraded namespace's global cut reads them too coarse and nothing said.
@@ -320,14 +330,15 @@ def test_reports_written_before_the_first_pass_depths_need_a_reset() -> None:
     old = _record_0_3_0(config)
     (reason,) = [
         r
-        for r in rebuild_reasons(old, config)
+        for r in rebuild_reasons(old, config, root_depth_reports=True)
         if r.kind is RebuildReasonKind.COMMUNITY_DEPTHS
     ]
     assert reason.remedy is RebuildRemedy.RESET
-    assert "0.3.0" in reason.detail and "indexing.reset: true" in reason.detail
+    assert "min_cut_depth" in reason.detail and "0.3.0" in reason.detail
+    assert "indexing.reset: true" in reason.detail
     assert reason.settings == [IndexArtifact.COMMUNITY_REPORTS.value]
 
-    # An incremental run of this release over it keeps the 0.3.0 full build.
+    # An incremental run of this release over it keeps the old reports.
     incremental = IndexBuildRecord(
         pipeline_id="delta",
         mode="incremental",
@@ -338,20 +349,23 @@ def test_reports_written_before_the_first_pass_depths_need_a_reset() -> None:
         document_filter_keys=["file", "folder"],
         outdated_reports=[],
     ).over(old)
-    assert RebuildReasonKind.COMMUNITY_DEPTHS in _kinds(
-        incremental.model_dump(mode="json"), config
-    )
+    assert _depth_kinds(incremental.model_dump(mode="json"), config, True)
 
-    # A full build of this release (a reset) writes every report at its depth.
-    for version in ("0.4.0.dev0", "0.4.0", "1.0.0"):
-        fresh = _record(config, package_version=version)
-        assert RebuildReasonKind.COMMUNITY_DEPTHS not in _kinds(fresh, config)
-    # Without reports there are no depths to read.
-    lexical = config.model_copy(deep=True)
-    without = _record_0_3_0(lexical)
-    without["artifacts"] = [IndexArtifact.TEXT_UNITS.value]
-    assert RebuildReasonKind.COMMUNITY_DEPTHS not in _kinds(without, lexical)
-    # A version it cannot read tells nothing.
-    assert RebuildReasonKind.COMMUNITY_DEPTHS not in _kinds(
-        {**old, "package_version": None}, config
-    )
+    # R3A-1: read off the reports, not the record. A record a no-op run
+    # rewrote (s17 lostrec: this release's version, or none) or no record
+    # at all (unreadable) still names them; a full build of this release
+    # (a reset) wrote every report at its depth, whatever a record says.
+    for record in (
+        _record(config, package_version="0.4.0.dev0"),
+        _record(config, package_version=None),
+        None,
+    ):
+        assert _depth_kinds(record, config, True)
+    for record in (old, _record(config, package_version="0.4.0"), None):
+        assert _depth_kinds(record, config, False) == []
+        # The stores cannot tell: no reason (and no step below depth 0).
+        assert _depth_kinds(record, config, None) == []
+    # Without a record, nothing else is read.
+    assert [r.kind for r in rebuild_reasons(None, config, root_depth_reports=True)] == [
+        RebuildReasonKind.COMMUNITY_DEPTHS
+    ]

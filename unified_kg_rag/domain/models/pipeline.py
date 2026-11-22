@@ -127,7 +127,11 @@ class IndexBuildRecord(BaseModel):
         description="The extraction settings themselves, field by field.",
     )
     package_version: str | None = Field(
-        default=None, description="Version of the package that ran ingestion."
+        default=None,
+        description=(
+            "Version of the package that ran ingestion; None when unknown "
+            "(a record a run rewrote for stores it did not build)."
+        ),
     )
     full_build: "IndexBuildRecord | None" = Field(
         default=None,

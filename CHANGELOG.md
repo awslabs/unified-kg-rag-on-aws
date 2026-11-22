@@ -48,10 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cap (on planted graphs at the defaults: 132 reports at 6,000 entities, 120 at 9,000), so the default query maps a
   coarser cut there, not the 99 depth-2 reports most similar to the query. With
   `use_dynamic_selection` the ratings start at the first pass's communities, as upstream's, instead of the 3 or 4
-  coarser roots. Stored reports keep their depth until a reset (*Upgrading*): a namespace whose last full build an
-  earlier release wrote steps down to depth 0 only, the reports its later incremental runs write included, and gets
+  coarser roots. Stored reports keep their depth until a reset (*Upgrading*): a namespace that holds a report written
+  without `min_cut_depth` steps down to depth 0 only, the reports its later incremental runs write included, and gets
   a `community_depths` rebuild reason (remedy `reset`) in `run-describe`, the console, MCP and the run's
-  `rebuild_due`.
+  `rebuild_due`. Both read the reports (one search for a report without the field), not the build record, which a
+  principal without `indices:admin/mappings/get` cannot read and a record a later run rewrote does not date (a
+  rewritten record stores no `package_version`).
 - The CLIs log to stderr in text mode too, and write the EMF records of `--metrics-sink cloudwatch` there, so stdout
   holds only a run's output; on a stdout or stderr that is no terminal no line is wrapped or cropped at 80 columns (a
   panel or table is drawn as wide as its widest line: `run-ingestion`'s source and cache paths lost their ends), and
@@ -128,6 +130,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     `search.search_type`), and code that reads `EvaluationConfig.retrieval_k` gets a list of cutoffs (*Breaking
     changes*): read `config.search.search_type` for the type a query runs, and `retrieval_k[0]` for the cutoff that
     scores `hit_at_k`, `recall_at_k` and `ndcg_at_k`.
+14. A namespace a development build of `main` before #852 wrote holds community reports without `min_cut_depth` too,
+    though its build record names 0.4.0.dev0: `run-describe` names `community_depths` for it (it reads the reports,
+    not the record), and global search steps no cut below depth 0 there. Run with `indexing.reset: true` to write
+    every report at its depth.
 
 ### Added
 

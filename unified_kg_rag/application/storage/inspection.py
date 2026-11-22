@@ -247,6 +247,7 @@ def describe_namespace(
     try:
         described = vector.describe_indices(name)
         record = vector.read_build_record(name)
+        root_depth_reports = vector.holds_root_depth_reports(name)
     finally:
         vector.close()
     if described is None:
@@ -303,7 +304,7 @@ def describe_namespace(
         registry=registry,
         registry_unavailable=unavailable,
         documents=listed,
-        rebuild=rebuild_reasons(record, config),
+        rebuild=rebuild_reasons(record, config, root_depth_reports=root_depth_reports),
     )
 
 

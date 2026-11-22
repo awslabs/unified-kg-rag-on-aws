@@ -29,6 +29,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     IndexLimits,
 )
 from unified_kg_rag.adapters.storage.search_engine import (
+    ROOT_DEPTH_REPORT_SEARCH,
     SearchEngineClient,
     engine_name,
     ingested_suffixes,
@@ -995,6 +996,36 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if (record := stored_build_record(index_mappings)) is not None:
                 return record
         return None
+
+    async def aholds_root_depth_reports(self, suffix: str | None) -> bool | None:
+        """Whether ``suffix``'s community-report index holds a report written
+        without ``min_cut_depth`` (see the base): one size-1 search, which
+        needs no mapping read. ``False`` without the index; ``None`` when the
+        search fails (a fatal error raises)."""
+        alias = self._get_name(
+            self._opensearch_config.community_reports_index_prefix, suffix
+        )
+        try:
+            response = await self._opensearch_client.asearch(
+                index=alias, body=ROOT_DEPTH_REPORT_SEARCH
+            )
+        except Exception as e:  # noqa: BLE001 - "cannot tell", as ahas_index
+            if is_index_not_found(e):
+                return False
+            if isinstance(e, StoreTimeoutError):
+                raise self._unanswered_error(alias) from e
+            if is_fatal_retrieval_error(e):
+                raise
+            log_error(
+                logger,
+                logging.WARNING,
+                "Could not tell whether %s holds community reports written "
+                "before 0.4.0 (%s): global search steps no cut below depth 0",
+                alias,
+                error=e,
+            )
+            return None
+        return bool(response.get("hits", {}).get("hits"))
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         """The limits in force on ``prefix``'s index (``_limits``)."""

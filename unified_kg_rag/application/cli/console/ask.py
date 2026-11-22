@@ -420,6 +420,9 @@ class AskService:
         async with self._using() as (chain, config):
             record = await chain.aread_build_record(suffix)
             namespace = resolve_namespace(config, suffix)
+            root_depth_reports = (
+                await chain.document_retriever().aholds_root_depth_reports(namespace)
+            )
             indexed = True
             try:
                 # The check every question makes first.
@@ -436,7 +439,11 @@ class AskService:
             "indexed": indexed,
             "rebuild": [
                 reason.model_dump(mode="json")
-                for reason in rebuild_reasons(record, building or config)
+                for reason in rebuild_reasons(
+                    record,
+                    building or config,
+                    root_depth_reports=root_depth_reports,
+                )
             ],
         }
 

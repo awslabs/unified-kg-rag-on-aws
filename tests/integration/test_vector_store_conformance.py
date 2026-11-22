@@ -2015,6 +2015,38 @@ def test_holds_any_text_unit_tells_a_suffix_with_text_units(
     assert indexer.holds_any_text_unit(suffix=other) is False
 
 
+def test_holds_root_depth_reports_tells_reports_written_without_the_cut_bounds(
+    harness: StoreHarness,
+) -> None:
+    # R3A-1: global search's step-down and the community_depths reason read
+    # the reports (one without min_cut_depth: an earlier release wrote it),
+    # not the build record. A field query: no mapping read.
+    harness.needs("holds_root_depth_reports")
+    indexer = harness.vector_indexer
+    tenant, other = harness.suffix("depths"), harness.suffix("none")
+    assert indexer.holds_root_depth_reports(suffix=tenant) is False
+    bounded = [r.model_copy(update={"min_cut_depth": 0}) for r in _reports(tenant)]
+    _write(harness, "community_reports", "upsert", bounded)
+    assert indexer.holds_root_depth_reports(suffix=tenant) is False
+    old = _reports(tenant)[0].model_copy(update={"id": "cr-old", "community_id": "c9"})
+    _write(harness, "community_reports", "upsert", [old])
+    assert indexer.holds_root_depth_reports(suffix=tenant) is True
+    assert indexer.holds_root_depth_reports(suffix=other) is False
+    if harness.vector_retriever is None:
+        return
+
+    async def read(suffix: str) -> bool | None:
+        retriever = harness.vector_retriever()
+        try:
+            return await retriever.aholds_root_depth_reports(suffix)
+        finally:
+            await retriever.aclose()
+
+    assert asyncio.run(read(tenant)) is True
+    # No index for the suffix: none held.
+    assert asyncio.run(read(other)) is False
+
+
 @pytest.mark.parametrize("kind", ["text_units", "entities"])
 def test_an_emptied_index_holds_nothing(harness: StoreHarness, kind: str) -> None:
     # The probe of the emptied kind; the other where the store answers it.

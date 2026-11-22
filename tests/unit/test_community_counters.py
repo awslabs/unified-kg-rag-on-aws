@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -216,6 +217,9 @@ def _stage(config: Config) -> Any:
 
     stage = ps.IndexingStage.__new__(ps.IndexingStage)
     stage.config = config
+    # Stores whose reports all hold their cut bounds (no community_depths).
+    vectors = SimpleNamespace(holds_root_depth_reports=lambda suffix: False)
+    stage.indexing_manager = SimpleNamespace(vector_indexer=vectors)
     return stage
 
 
