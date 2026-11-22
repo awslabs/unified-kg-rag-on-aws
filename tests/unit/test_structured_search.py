@@ -50,7 +50,10 @@ from unified_kg_rag.domain.models.methodology import (
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
 from unified_kg_rag.shared import ConfigurationError, StoreConnectionError
-from unified_kg_rag.shared.exceptions import GraphQueryExecutionError
+from unified_kg_rag.shared.exceptions import (
+    GraphQueryCompileError,
+    GraphQueryExecutionError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -1102,3 +1105,211 @@ def test_provenance_reads_each_entitys_seed_provenance() -> None:
         StructuredSearchStrategy._provenance([entity(source_kinds=["document"])])
         is None
     )
+
+
+# --- filters on path evidence ------------------------------------------------------
+
+
+def _with_relationships(
+    documents: _Documents, filters: dict[str, dict[str, Any]] | None = None
+) -> _Documents:
+    """``documents`` with one relationship document per graph edge, of the
+    category ``ops`` unless ``filters`` names it."""
+    documents.docs[RELATIONSHIPS] = [
+        RetrievalResult(
+            content=f"Relationship {edge.id}.",
+            score=1.0,
+            source=edge.id,
+            retriever_type="relationship",
+            metadata={
+                "id": edge.id,
+                "attributes": {
+                    "filters": (filters or {}).get(edge.id, {"category": "ops"})
+                },
+            },
+        )
+        for edge in procurement_graph().edges
+    ]
+    return documents
+
+
+# Globex Parts reaches 株式会社サクラ in three hops two ways: through
+# Umbrella Buyer and Acme Supplies (r3, r1, r2), or through Umbrella Buyer and
+# 가나다 상사 (r3, r6, r4).
+_VIA_ACME = "<-[SUPPLIES]- Acme Supplies (VENDOR)"
+_VIA_GANADA = "<-[SUPPLIES]- 가나다 상사 (VENDOR)"
+
+
+async def _paths(documents: _Documents, **update: Any) -> tuple[str, _Documents]:
+    strategy, _, documents, fallback = _strategy(
+        _Planner(_with(CONFORMANCE_PLANS["paths_between"])), documents=documents
+    )
+    result = await strategy.asearch(_query("How is Globex linked to Sakura?", **update))
+    assert result.metadata["structured"]["status"] == "answered"
+    # A filter the graph cannot apply scans the paths in code.
+    scan = " (scan)" if update.get("filters") else ""
+    assert result.metadata["structured"]["operation"] == "paths" + scan
+    assert not fallback.queries
+    return _table(result).content, documents
+
+
+async def test_a_path_whose_edge_fails_the_filters_is_not_evidence() -> None:
+    # r6 (Umbrella Buyer - 가나다 상사) is stated only by a legal document.
+    documents = _with_relationships(_Documents(), {"r6": {"category": "legal"}})
+    table, documents = await _paths(documents, filters={"attr_category": "ops"})
+    assert _VIA_ACME in table and _VIA_GANADA not in table
+    checked = [c for c in documents.calls if c.index_prefixes == [RELATIONSHIPS]]
+    assert checked and all(c.filters["attr_category"] == "ops" for c in checked)
+    # Unfiltered, both paths answer.
+    table, _ = await _paths(_with_relationships(_Documents()))
+    assert _VIA_ACME in table and _VIA_GANADA in table
+
+
+async def test_a_path_whose_vertex_fails_the_filters_is_not_evidence() -> None:
+    documents = _with_relationships(
+        _Documents(unit_filters={"v1": {"category": "legal"}})
+    )
+    table, _ = await _paths(documents, filters={"attr_category": "ops"})
+    assert _VIA_GANADA in table and _VIA_ACME not in table
+
+
+async def test_without_relationship_vectors_a_path_edge_passes_by_its_ends() -> None:
+    # A namespace without the relationships index (a GraphRAG-only build):
+    # an edge is not looked up there, its endpoints were checked.
+    documents = _with_relationships(_Documents(), {"r6": {"category": "legal"}})
+    graphrag = required_artifacts_of([Methodology.GRAPHRAG])
+    assert IndexArtifact.RELATIONSHIP_VECTORS not in graphrag
+    table, documents = await _paths(
+        documents,
+        filters={"attr_category": "ops"},
+        metadata={
+            "search_strategy": "structured",
+            "query_language": "English",
+            HELD_ARTIFACTS_KEY: sorted(a.value for a in graphrag),
+        },
+    )
+    assert _VIA_ACME in table and _VIA_GANADA in table
+    assert not [c for c in documents.calls if c.index_prefixes == [RELATIONSHIPS]]
+
+
+async def test_under_two_document_keys_a_path_vertex_needs_one_unit_passing_both() -> (
+    None
+):
+    """An entity document unions its documents' values per key, so it can
+    pass two keys no one of its documents passes together: a path vertex is
+    evidence only with a text unit that passes both."""
+    north = {"category": "ops", "region": "north"}
+    documents = _with_relationships(
+        _Documents(
+            unit_filters={
+                "v1": {"category": "ops", "region": "south"},
+                **dict.fromkeys(("v2", "v3", "b1", "b2"), north),
+            }
+        ),
+        {edge.id: north for edge in procurement_graph().edges},
+    )
+    acme = next(d for d in documents.docs[ENTITIES] if d.source == "v1")
+    # Acme's other (legal) document is from the north.
+    acme.metadata["attributes"]["filters"] = {
+        "category": ["ops", "legal"],
+        "region": ["south", "north"],
+    }
+    table, documents = await _paths(
+        documents, filters={"attr_category": "ops", "attr_region": "north"}
+    )
+    assert _VIA_GANADA in table and _VIA_ACME not in table
+    assert any(c.index_prefixes == [TEXT_UNITS] for c in documents.calls)
+
+
+# --- fallbacks of the store and the profile ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (GraphQueryCompileError("unbalanced traversal"), "compile_error"),
+        (GraphQueryExecutionError("refused", timed_out=False), "execution_error"),
+        # Any other non-fatal store error is an execution error too.
+        (RuntimeError("driver bug"), "execution_error"),
+    ],
+)
+async def test_a_query_the_store_cannot_run_falls_back_degraded(
+    error: Exception, reason: str
+) -> None:
+    graph = FakeGraphQueryRetriever(procurement_graph(), fail=error)
+    strategy, *_, fallback = _strategy(
+        _Planner(_with(CONFORMANCE_PLANS["count_supply_pairs"])), graph=graph
+    )
+    result = await strategy.asearch(_query())
+    structured = result.metadata["structured"]
+    assert (structured["status"], structured["reason"]) == ("fallback", reason)
+    assert len(fallback.queries) == 1
+    assert result.metadata["degraded"] == [
+        {
+            "step": "structured_query",
+            "reason": reason,
+            "error_type": type(error).__name__,
+        }
+    ]
+
+
+class _NoProfile(FakeGraphQueryRetriever):
+    async def adescribe(self, suffix: str | None, **kwargs: Any) -> Any:
+        self.describes.append(suffix)
+        raise RuntimeError("profile read failed")
+
+
+async def test_a_failed_profile_read_plans_from_the_declared_schema() -> None:
+    config = Config(
+        processing={
+            "graph_extraction": {
+                "entity_types": ["VENDOR", "BUYER"],
+                "relationship_types": ["SUPPLIES"],
+            }
+        }
+    )
+    graph = _NoProfile(procurement_graph())
+    planner = _Planner(_with(CONFORMANCE_PLANS["count_supply_pairs"]))
+    strategy, *_ = _strategy(planner, config=config, graph=graph)
+    result = await strategy.asearch(_query())
+    assert result.metadata["structured"]["status"] == "answered"
+    assert "VENDOR" in planner.calls[0][1] or "VENDOR" in planner.calls[0][0]
+    # A failure is not cached: the next query reads the profile again.
+    await strategy.asearch(_query())
+    assert graph.describes == [None, None]
+
+
+async def test_a_failed_profile_read_without_a_declared_schema_falls_back() -> None:
+    config = Config(search={"structured": {"schema_source": "observed"}})
+    planner = _Planner(_with(CONFORMANCE_PLANS["count_supply_pairs"]))
+    strategy, *_, fallback = _strategy(
+        planner, config=config, graph=_NoProfile(procurement_graph())
+    )
+    result = await strategy.asearch(_query())
+    structured = result.metadata["structured"]
+    assert (structured["status"], structured["reason"]) == ("fallback", "no_schema")
+    assert planner.calls == [] and len(fallback.queries) == 1
+    # A designed fallback, not a degradation.
+    assert "degraded" not in result.metadata
+
+
+async def test_a_mention_without_an_entity_search_falls_back_unlinked() -> None:
+    plan = _with(
+        {
+            "nodes": [
+                {"var": "x", "mention": "Acme Supplies"},
+                {"var": "b", "types": ["BUYER"]},
+            ],
+            "edges": [{"types": ["SUPPLIES"]}],
+            "returns": {"kind": "rows", "vars": ["b"]},
+        }
+    )
+    strategy, graph, _, fallback = _strategy(_Planner(plan))
+    del strategy.retrievers["document"]
+    result = await strategy.asearch(_query("Whom does Acme supply?"))
+    structured = result.metadata["structured"]
+    assert (structured["status"], structured["reason"]) == (
+        "fallback",
+        "unlinked_mention",
+    )
+    assert not graph.requests and len(fallback.queries) == 1
