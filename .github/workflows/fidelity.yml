@@ -56,7 +56,7 @@ env:
   # newest upload in uv.lock: a weekly run differs from the last one only when
   # this date or a pin changes. Move it forward with the lock.
   WITH_ORIGINALS: >-
-    --exclude-newer 2026-11-04T00:00:00Z
+    --exclude-newer 2026-11-20T00:00:00Z
     --with python-igraph==0.11.8
     --with scikit-learn==1.9.1
     --with benchmark-qed==0.4.0
