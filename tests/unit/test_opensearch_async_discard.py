@@ -14,9 +14,15 @@ gone, the connector's awaitable settled.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import gc
+import ssl
+import tempfile
 import threading
+import time
 import warnings
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import aiohttp
@@ -154,3 +160,155 @@ async def test_async_client_binds_the_loop_object(monkeypatch) -> None:
     client.async_client  # noqa: B018 - property access binds the loop
 
     assert client._bound_loop is asyncio.get_running_loop()
+
+
+class _KeepAliveServer:
+    """A keep-alive HTTP server on a loop thread of its own (plain or TLS):
+    the connections it accepted and those whose client closed them."""
+
+    def __init__(self, ssl_context: Any = None) -> None:
+        self.accepted = 0
+        self.closed = 0
+        self._runner = _LoopRunner()
+        self._server = self._runner.run(
+            asyncio.start_server(self._handle, "127.0.0.1", 0, ssl=ssl_context)
+        )
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        self.accepted += 1
+        try:
+            while True:
+                await reader.readuntil(b"\r\n\r\n")
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
+                    b"Connection: keep-alive\r\n\r\nok"
+                )
+                await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError, OSError):
+            pass
+        finally:
+            self.closed += 1
+            writer.close()
+
+    def wait_closed(self, count: int, timeout: float = 5.0) -> int:
+        deadline = time.monotonic() + timeout
+        while self.closed < count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return self.closed
+
+    def stop(self) -> None:
+        self._server.close()
+        self._runner.stop()
+
+
+def _tls_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
+    """A server context with a throwaway self-signed certificate, and a
+    client context that does not verify it."""
+    pytest.importorskip("cryptography")
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(hours=1))
+        .sign(key, hashes.SHA256())
+    )
+    with tempfile.TemporaryDirectory() as folder:
+        cert_path, key_path = Path(folder, "c.pem"), Path(folder, "k.pem")
+        cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        key_path.write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        server = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        server.load_cert_chain(cert_path, key_path)
+    client = ssl.create_default_context()
+    client.check_hostname = False
+    client.verify_mode = ssl.CERT_NONE
+    return server, client
+
+
+def _session_of_a_closed_loop(
+    url: str, client_ssl: Any, connections: int
+) -> tuple[aiohttp.ClientSession, asyncio.AbstractEventLoop]:
+    """A session whose pool holds ``connections`` keep-alive connections,
+    made in an ``asyncio.run`` that has returned (its loop is closed)."""
+    made: list[Any] = []
+
+    async def main() -> None:
+        session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=client_ssl))
+
+        async def get() -> None:
+            async with session.get(url) as response:
+                await response.read()
+
+        await asyncio.gather(*(get() for _ in range(connections)))
+        made.extend([session, asyncio.get_running_loop()])
+
+    asyncio.run(main())
+    return made[0], made[1]
+
+
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("how", ["close", "aclose"])
+def test_closing_a_client_whose_loop_is_closed_closes_its_sockets(
+    tls: bool, how: str
+) -> None:
+    # R5B-2: aiohttp's connector close returns early on a closed loop, so a
+    # client bound to the loop of an earlier asyncio.run (the chain's
+    # dead-loop eviction, close() or aclose() after it) closed none of its
+    # sockets: each stayed open until the cyclic GC collected its transport.
+    server_ssl, client_ssl = _tls_contexts() if tls else (None, False)
+    server = _KeepAliveServer(server_ssl)
+    scheme = "https" if tls else "http"
+    gc.disable()
+    try:
+        session, loop = _session_of_a_closed_loop(
+            f"{scheme}://127.0.0.1:{server.port}/", client_ssl, connections=3
+        )
+        assert loop.is_closed()
+        assert server.accepted == 3 and server.closed == 0
+        client = _bound(_client_over(session), loop)
+        transports = [
+            opensearch._socket_transport(proto.transport)
+            for held in session.connector._conns.values()  # type: ignore[union-attr]
+            for proto, _ in held
+        ]
+        assert len(transports) == 3
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            if how == "close":
+                client.close()
+            else:
+                asyncio.run(client.aclose())
+            # Without the GC: every connection is closed at once.
+            assert server.wait_closed(3) == 3
+            assert session.closed
+            # Closed as the loop would have closed them: a later close of
+            # one does nothing.
+            assert all(t.is_closing() for t in transports)
+            for transport in transports:
+                transport.close()
+            del session, client
+            gc.collect()
+        assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    finally:
+        gc.enable()
+        server.stop()

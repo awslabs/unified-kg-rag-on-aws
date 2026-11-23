@@ -373,8 +373,11 @@ def _finish_without_loop(awaitable: Any) -> None:
     aiohttp's ``TCPConnector.close()`` is a coroutine: un-awaited it closes
     nothing (and warns "never awaited"). Once the connector's loop is closed
     its close steps complete without suspending, so stepping the coroutine
-    directly finishes it. If it does suspend, nothing could resume it, so it
-    is closed instead. A Future/Task belongs to a loop and is left alone.
+    directly finishes it: the connector reads closed, but it closed none of
+    its connections (aiohttp returns early on a closed loop), which
+    :func:`_close_sockets_of_closed_loop` does. If it does suspend, nothing
+    could resume it, so it is closed instead. A Future/Task belongs to a
+    loop and is left alone.
     """
     if isinstance(awaitable, asyncio.Future) or not hasattr(awaitable, "__await__"):
         return
@@ -388,20 +391,65 @@ def _finish_without_loop(awaitable: Any) -> None:
         close()
 
 
+def _socket_transport(transport: Any) -> Any:
+    """The transport that owns the socket under ``transport`` (an SSL
+    transport's is the one its SSL protocol writes to); ``None`` when there
+    is none to close (another event loop implementation's)."""
+    for _ in range(4):
+        if transport is None or hasattr(transport, "_call_connection_lost"):
+            return transport
+        transport = getattr(
+            getattr(transport, "_ssl_protocol", None), "_transport", None
+        )
+    return None
+
+
+def _close_sockets_of_closed_loop(connector: Any) -> None:
+    """Close the sockets of ``connector``'s connections, its event loop
+    closed: aiohttp's close returns early on a closed loop and a
+    transport's ``close()`` cannot schedule its teardown there, so each
+    socket stayed open until garbage collection collected its transport.
+    Called before the connector's close, which forgets its connections.
+    Runs here the teardown the loop would have run
+    (``_call_connection_lost``), which closes the socket and detaches the
+    protocol. Best-effort: a transport of another shape is left to GC."""
+    protocols = [
+        proto for held in getattr(connector, "_conns", {}).values() for proto, _ in held
+    ]
+    protocols += list(getattr(connector, "_acquired", ()))
+    for proto in protocols:
+        transport = _socket_transport(getattr(proto, "transport", None))
+        if transport is None or getattr(transport, "_sock", None) is None:
+            continue
+        # A later close() of the transport then does nothing.
+        transport._closing = True
+        try:
+            transport._call_connection_lost(None)
+        except Exception as e:  # noqa: BLE001 - its socket is closed regardless
+            logger.debug("Closing a connection of a closed loop: %s", e)
+
+
 def _close_connections(async_client: AsyncOpenSearch) -> None:
     """Close the aiohttp connectors of ``async_client``'s pooled
     connections, synchronously (best-effort, never raises): each connector
     closes its transports at once, and its session then reads closed.
     Called on the thread of the loop that owns them, or after that loop is
-    gone (``_finish_without_loop``)."""
+    closed: then each connection's socket is closed here
+    (:func:`_close_sockets_of_closed_loop`), as the loop can no longer run
+    the connector's close."""
     try:
         transport = getattr(async_client, "transport", None)
         pool = getattr(transport, "connection_pool", None)
         for connection in getattr(pool, "connections", []) or []:
             session = getattr(connection, "session", None)
             connector = getattr(session, "connector", None)
-            if connector is not None:
-                _finish_without_loop(connector.close())
+            if connector is None:
+                continue
+            loop = getattr(connector, "_loop", None)
+            if loop is not None and loop.is_closed():
+                # First: the connector's close forgets its connections.
+                _close_sockets_of_closed_loop(connector)
+            _finish_without_loop(connector.close())
     except Exception as e:  # noqa: BLE001 - teardown must never raise
         logger.debug("Could not close the async client's connections: %s", e)
 
@@ -502,8 +550,9 @@ class OpenSearchClient:
         client's aiohttp connectors are closed synchronously
         (``_close_connections``), which closes every pooled connection at
         once, on the thread of the loop that owns them: here when this is
-        that thread or the loop is gone, else posted to it as a callback,
-        which runs when the loop next runs. An awaited ``close()`` scheduled
+        that thread or the loop is gone (closed: its sockets are closed
+        here, ``_close_sockets_of_closed_loop``), else posted to it as a
+        callback, which runs when the loop next runs. An awaited ``close()`` scheduled
         as a task instead never ran when the loop ended first: a sync close
         called from a coroutine (``GraphRAGChain.close()`` inside
         ``asyncio.run``) blocks that loop's thread while it runs, and
@@ -563,10 +612,16 @@ class OpenSearchClient:
         """
         self._closed = True
         if self._async_client is not None:
-            try:
-                await self._async_client.close()
-            except Exception as e:  # noqa: BLE001 - teardown must never raise
-                logger.debug("Error closing async OpenSearch client: %s", e)
+            bound = getattr(self, "_bound_loop", None)
+            if bound is not None and bound.is_closed():
+                # Its loop is closed (an earlier asyncio.run): awaiting its
+                # close here closes no connection of it.
+                _close_connections(self._async_client)
+            else:
+                try:
+                    await self._async_client.close()
+                except Exception as e:  # noqa: BLE001 - teardown must never raise
+                    logger.debug("Error closing async OpenSearch client: %s", e)
             self._async_client = None
             self._bound_loop_id = None
             self._bound_loop = None
