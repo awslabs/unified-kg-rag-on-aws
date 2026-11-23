@@ -136,6 +136,12 @@ _EXAMPLE_MAX_CHARS = 60
 # the text is model-visible (the answer prompt, metadata.structured), so it
 # stays short; a log line lists shared.utils.NAMES_SHOWN.
 _PLAN_NAMES_SHOWN = 5
+# The characters of a string a plan's text quotes (a condition's value, a
+# mention), and of a value an answer shows (a count group's key, a value),
+# before the "…": the plan's text and the answer are model-visible, so a
+# long stored value is not repeated in full.
+_PLAN_VALUE_CHARS = 80
+_ANSWER_VALUE_CHARS = 200
 _NUMERIC_OPS = RANGE_BOUNDS
 
 VertexMap = Mapping[str, Sequence[Any]]
@@ -799,7 +805,11 @@ def _resolve_return(
 
 def _quoted(value: Any) -> str:
     if isinstance(value, str):
-        text = value if len(value) <= 80 else value[:80] + "…"
+        text = (
+            value
+            if len(value) <= _PLAN_VALUE_CHARS
+            else value[:_PLAN_VALUE_CHARS] + "…"
+        )
         return json.dumps(text, ensure_ascii=False)
     return json.dumps(value)
 
@@ -1478,7 +1488,9 @@ def _shown_value(value: Any) -> str:
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     text = str(value)
-    return text if len(text) <= 200 else text[:200] + "…"
+    return (
+        text if len(text) <= _ANSWER_VALUE_CHARS else text[:_ANSWER_VALUE_CHARS] + "…"
+    )
 
 
 def render_answer(

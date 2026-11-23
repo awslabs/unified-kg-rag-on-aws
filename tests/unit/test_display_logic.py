@@ -217,14 +217,14 @@ def test_sample_entities_empty_prints_nothing(cap) -> None:
 def test_sample_entities_renders_and_truncates(cap) -> None:
     out = cap(display.display_sample_entities, [_entity()], 5)
     assert "Alice" in out
-    assert "..." in out  # long description truncated
+    assert "…" in out  # long description truncated
 
 
 def test_truncate_text_behaviour() -> None:
     assert display._truncate_text(None, 10) == ""
     assert display._truncate_text("short", 100) == "short"
     truncated = display._truncate_text("x" * 50, 10)
-    assert truncated.endswith("...")
+    assert truncated == "x" * 9 + "…"
     assert len(truncated) == 10
 
 

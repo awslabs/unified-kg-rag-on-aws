@@ -43,6 +43,7 @@ from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import DataProcessingError, ErrorClass, classify
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.utils import clip
 from unified_kg_rag.shared.utils.validation import refused_data_reason
 
 if TYPE_CHECKING:
@@ -295,8 +296,7 @@ def _label(path: Path) -> str:
 def _text(value: Any, limit: int = MAX_DESCRIPTION) -> str | None:
     if value is None:
         return None
-    text = str(value)
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+    return clip(str(value), limit)
 
 
 @dataclass(frozen=True)

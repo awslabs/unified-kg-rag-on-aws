@@ -97,7 +97,7 @@ from unified_kg_rag.shared.exceptions import (
 )
 from unified_kg_rag.shared.logging import log_error
 from unified_kg_rag.shared.metrics import QUERY_METRICS_NAMESPACE
-from unified_kg_rag.shared.utils import event_loop, first_names
+from unified_kg_rag.shared.utils import clip, event_loop, first_names
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.bootstrap import build_providers
@@ -331,10 +331,7 @@ def _hit_label(view: SourceView) -> str:
 
 def _snippet(text: str) -> str:
     """``text`` on one line, cut to ``_SNIPPET_CHARS`` characters."""
-    line = " ".join(str(text).split())
-    if len(line) > _SNIPPET_CHARS:
-        return line[: _SNIPPET_CHARS - 3] + "..."
-    return line
+    return clip(" ".join(str(text).split()), _SNIPPET_CHARS)
 
 
 def _hit_lines(views: list[SourceView], *, limit: int | None) -> list[tuple[str, bool]]:

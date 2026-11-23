@@ -22,6 +22,7 @@ from unified_kg_rag.evaluation.saved_results import (
     load_saved_runs,
 )
 from unified_kg_rag.shared.exceptions import DataProcessingError, EvaluationException
+from unified_kg_rag.shared.utils import clip
 from unified_kg_rag.shared.utils.files import read_user_text
 
 MAX_DATASET_BYTES = 50 * 1024 * 1024
@@ -318,5 +319,4 @@ def _declines(saved: list[SavedRun]) -> dict[str, tuple[int, int]]:
 
 
 def _text(value: str | None) -> str:
-    text = value or ""
-    return text if len(text) <= MAX_ANSWER_CHARS else text[: MAX_ANSWER_CHARS - 1] + "…"
+    return clip(value or "", MAX_ANSWER_CHARS)

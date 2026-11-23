@@ -269,6 +269,8 @@ ALLOWED: dict[str, str] = {
     ),
     **_reason(
         PRESENTATION,
+        "domain/retrieval/graph_query.py:_PLAN_VALUE_CHARS",
+        "domain/retrieval/graph_query.py:_ANSWER_VALUE_CHARS",
         "adapters/llm/langchain.py:_EXCERPT_CHARS",
         "adapters/ingestion/loader.py:_DROPPED_NAMED",
         "adapters/aws/opensearch.py:_DELETE_REPORT_NAMES",
