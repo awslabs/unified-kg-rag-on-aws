@@ -316,8 +316,11 @@ terminal, stops the run (exit 1).
   question counts them apart from the files gone from the corpus: their files
   are present, or, from `insert_documents`, their text is in the batch (a higher `processing.deduplicate_similarity_threshold` keeps
   near-copies; identical copies are dropped at any threshold).
-- A reset and a run with the registry off are not checked. Without the
-  registry every run is a full build of what it reads, so keep the registry
+- A reset you ask for (`indexing.reset: true`) and a run with the registry
+  off are not checked. The one-time rebuild the pipeline starts itself for a
+  methodology or artifact the namespace lacks
+  ([Ingest: Methodology profiles](./ingest.md#methodology-profiles)) is: it deletes what the corpus lacks, and you asked
+  for no reset. Without the registry every run is a full build of what it reads, so keep the registry
   on for a corpus that may arrive partial (an empty corpus with seeds asks as
   in [Seed graphs: Lifecycle](./seed-graphs.md#lifecycle)).
 - `1.0` or `null` turns the check off.

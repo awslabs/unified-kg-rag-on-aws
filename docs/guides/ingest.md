@@ -282,6 +282,9 @@ indexing:
   description summaries and vectors: its new model calls are the community
   reports. A namespace that also holds another source scope's documents is
   refused instead (exit 2): the rebuild from one corpus would delete them.
+  The rebuild deletes the stored documents the corpus lacks, so it asks
+  before deleting more than `indexing.max_deletion_share` of them
+  ([Incremental indexing: Mass deletions](./incremental.md#mass-deletions)).
   Without the registry every run is a full build and reuses the
   same; a re-run of the same `--pipeline-id` runs only `community_detection`
   and `indexing` from its stage cache.

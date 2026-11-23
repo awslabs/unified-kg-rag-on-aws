@@ -53,6 +53,10 @@ How each one scores (the `ragas` context caps, `graph_aware` answer and
 retrieved coverage, `retrieval` attribution and file matching,
 `answer_match` phrase matching, the scored answer span and the
 normalization): [Evaluation output: Evaluator details](../reference/evaluation-output.md#evaluator-details).
+`retrieval`'s citation metrics (`citation_precision`, `citation_recall`)
+judge a citation by its file: one that names a reference file counts whether
+or not the passage cited supports the claim it is attached to, so they
+measure relevance, not support.
 
 ## Eval data format
 

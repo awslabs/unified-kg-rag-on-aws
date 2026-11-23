@@ -29,5 +29,6 @@ providers:
     enabled: true
 
 logging:
-  # The container logs to stdout, which the awslogs driver ships to CloudWatch.
+  # The CLIs log to stderr (stdout holds the run's output); the awslogs driver
+  # ships both to CloudWatch.
   log_to_file: false
