@@ -114,10 +114,14 @@ and ontology tooling exchange:
 A response past `mcp.max_response_chars` drops its lowest-ranked records
 and says so (`truncated`, `omitted`); each record counts as returned, its
 `documents` and `entities` included (a chunk names only the entity records
-the response keeps). `kg_search` drops them as its `top_k` cut does, each
-kind keeping its share of the strategy's results, so a trimmed response is
-the response of a search at a smaller `top_k` and keeps the graph records
-beside the reranked chunks that outscore them.
+the response keeps), and so does `kg_neighbors`' start `entity`. `kg_search`
+drops them as its `top_k` cut does, each kind keeping its share of the
+strategy's results, so a trimmed response holds the records the search's
+own `top_k` cut would keep at that size and keeps the graph records beside
+the reranked chunks that outscore them. It is not always the response of a
+search at a smaller `top_k`: a strategy sizes its candidate pools by `top_k`
+(`local`, `ppr`, `simple`, `drift`), so a smaller search can rank other
+candidates.
 
 ### Reading the chunks a record cites
 

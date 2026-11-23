@@ -661,6 +661,89 @@ async def test_documents_count_in_the_response_cap_at_raised_caps(
         assert sum(len(r.model_dump_json()) for r in result.records) <= budget
 
 
+def _long_file_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every text unit's file name 200-odd characters long (a deep corpus
+    path), so a graph record's 20 documents outweigh its own text."""
+
+    async def names(
+        chain: Any,
+        suffix: str | None,
+        unit_ids: list[str],
+        *,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        return {u: f"{u}-{'n' * 200}.txt" for u in unit_ids}
+
+    monkeypatch.setattr(graph_lookup, "text_unit_file_names", names)
+
+
+@pytest.mark.parametrize(
+    "caps",
+    [{}, {"max_neighbors": 200, "max_response_chars": 100000}],
+    ids=["defaults", "raised"],
+)
+async def test_documents_and_the_start_entity_count_in_kg_neighbors_cap(
+    monkeypatch: pytest.MonkeyPatch, caps: dict[str, int]
+) -> None:
+    # R5B-1: kg_neighbors capped its records before their documents were
+    # filled in, and left the start entity out of the budget: a hub's
+    # response ran 3.94 times max_response_chars at the defaults
+    # (probes/hub_probe.py).
+    _long_file_names(monkeypatch)
+    units = [f"u{i}" for i in range(20)]
+    limit = caps.get("max_neighbors", 50)
+
+    async def find(chain: Any, suffix: str | None, **kwargs: Any) -> Any:
+        return "name", [_entity("Hub", units=units)]
+
+    async def walk(
+        chain: Any, suffix: str | None, entity_id: str, **kwargs: Any
+    ) -> Any:
+        partners = [_entity(f"Partner{i}", units=units) for i in range(limit)]
+        return graph_lookup.Neighbourhood(
+            neighbours=partners,
+            hops={f"e-Partner{i}": 1 for i in range(limit)},
+            relationships=[_relationship()],
+        )
+
+    monkeypatch.setattr(graph_lookup, "find_entities", find)
+    monkeypatch.setattr(graph_lookup, "neighbourhood", walk)
+    tools = _tools(**caps)
+    result = await tools.neighbors(name="Hub", limit=limit)
+    assert result.truncated and result.records
+    assert result.entity is not None and len(result.entity.documents) == 20
+    assert all(len(r.documents) == 20 for r in result.records if r.kind == "entity")
+    returned = len(result.entity.model_dump_json()) + sum(
+        len(r.model_dump_json()) for r in result.records
+    )
+    assert returned <= tools.settings.max_response_chars
+
+
+@pytest.mark.parametrize(
+    "caps",
+    [{}, {"max_top_k": 100, "max_response_chars": 100000}],
+    ids=["defaults", "raised"],
+)
+async def test_documents_count_in_kg_get_entity_cap(
+    monkeypatch: pytest.MonkeyPatch, caps: dict[str, int]
+) -> None:
+    # R5B-1: kg_get_entity capped before filling in documents, too.
+    _long_file_names(monkeypatch)
+    units = [f"u{i}" for i in range(20)]
+    limit = caps.get("max_top_k", 20)
+
+    async def find(chain: Any, suffix: str | None, **kwargs: Any) -> Any:
+        return "search", [_entity(f"Hub{i}", units=units) for i in range(limit)]
+
+    monkeypatch.setattr(graph_lookup, "find_entities", find)
+    tools = _tools(**caps)
+    result = await tools.get_entity(name="Hub", limit=limit)
+    assert result.truncated and result.records
+    assert all(len(r.documents) == 20 for r in result.records)
+    returned = sum(len(r.model_dump_json()) for r in result.records)
+    assert returned <= tools.settings.max_response_chars
+
+
 async def test_a_kept_chunk_names_only_kept_entity_records() -> None:
     # R4B-2: the chunks' entities were filled in before the cap, so a kept
     # chunk named entity records the cap dropped, of "the same response".

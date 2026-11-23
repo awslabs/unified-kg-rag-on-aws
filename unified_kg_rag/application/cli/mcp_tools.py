@@ -868,9 +868,11 @@ class KnowledgeGraphTools:
         counts: Mapping[str, int] | None = None,
         *,
         cite: bool = False,
+        reserved: int = 0,
     ) -> tuple[list[SupportingContent], int]:
         """``records`` (best first) without those past ``max_response_chars``
-        of serialized records, and how many were left out; at least one is
+        of serialized records (less ``reserved``: a record the response
+        returns beside them), and how many were left out; at least one is
         kept. Each record is measured as it is returned (its ``documents``
         resolved before), and with ``cite`` each kept chunk names the kept
         entity records that cite it (:func:`_cite_entities`, applied to the
@@ -887,7 +889,7 @@ class KnowledgeGraphTools:
         ``groups``, the kept records are a prefix. A larger cut keeps every
         record a smaller one kept, and a kept chunk names more entities in
         it, never fewer, so the largest that fits is found by bisection."""
-        budget = self.settings.max_response_chars
+        budget = self.settings.max_response_chars - reserved
         sizes = [len(record.model_dump_json()) for record in records]
         positions = range(len(records))
 
@@ -1048,12 +1050,19 @@ class KnowledgeGraphTools:
         filters: dict[str, Any] | None = None,
         groups: Sequence[str] | None = None,
         counts: Mapping[str, int] | None = None,
+        *,
+        entity: SupportingContent | None = None,
     ) -> tuple[list[SupportingContent], int]:
         """``records`` as a response returns them: their documents resolved,
         then capped (``_capped``) as so measured, each kept chunk naming the
-        kept entity records that cite it."""
-        await self._resolve_documents(suffix, records, filters)
-        return self._capped(records, groups, counts, cite=True)
+        kept entity records that cite it. ``entity`` (``kg_neighbors``'
+        start entity, returned beside the records) is resolved with them and
+        counts in the same budget."""
+        await self._resolve_documents(
+            suffix, records if entity is None else [entity, *records], filters
+        )
+        reserved = 0 if entity is None else len(entity.model_dump_json())
+        return self._capped(records, groups, counts, cite=True, reserved=reserved)
 
     @staticmethod
     def _checked(output: RAGOutput | SearchOutput) -> QueryOutcome:
@@ -1408,8 +1417,7 @@ class KnowledgeGraphTools:
                     # A fetch by value has no relevance to report.
                     for record in records:
                         record.score = None
-                kept, omitted = self._capped(records)
-                await self._resolve_documents(suffix, kept)
+                kept, omitted = await self._shaped(suffix, records)
             return EntityToolResult(
                 namespace=suffix,
                 match=match,
@@ -1499,8 +1507,7 @@ class KnowledgeGraphTools:
                         self._edge_record(offset + i, edge, names)
                         for i, edge in enumerate(found.edges, 1)
                     ]
-                kept, omitted = self._capped(records)
-                await self._resolve_documents(suffix, [start, *kept])
+                kept, omitted = await self._shaped(suffix, records, entity=start)
                 return NeighborsToolResult(
                     namespace=suffix,
                     match=match,
