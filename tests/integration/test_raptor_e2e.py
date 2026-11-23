@@ -947,10 +947,8 @@ def test_tree_reads_what_the_namespace_holds_under_any_config(
 
 
 def _on_containers(config: Config) -> None:
-    """``config`` on the Gremlin and OpenSearch containers, in a namespace of
-    its own."""
-    import uuid
-
+    """``config`` on the Gremlin and OpenSearch containers, in its namespace
+    (``indexing.additional_suffix``, set by the caller)."""
     from tests.fixtures.store_backends import local_store_config
 
     local = local_store_config()
@@ -959,7 +957,15 @@ def _on_containers(config: Config) -> None:
     config.aws.opensearch = local.aws.opensearch
     config.aws.neptune = local.aws.neptune
     config.indexing.neptune.vertex_ids = local.indexing.neptune.vertex_ids
-    config.indexing.additional_suffix = f"tc{uuid.uuid4().hex[:8]}"
+
+
+# The namespace of the cut test, on either store. Text unit ids hash their
+# index namespace (``compute_doc_id``), and the tree clusters the leaves in
+# id order (``summary_tree``), so the namespace picks the tree: over 160
+# namespaces it held 3 to 5 summaries and a pool of 7 to 14 records, and at
+# 8 or fewer there is nothing for top_k 8 to cut. This one builds the same
+# tree and pool on both stores: 5 summaries, 12 records.
+TREE_CUT_SUFFIX = "tctreecut"
 
 
 def _clear(providers: Providers) -> None:
@@ -1004,11 +1010,15 @@ def test_a_tree_search_is_cut_in_the_rerankers_order(
     # Fewer text units than the corpus holds: each summary's expanded
     # passages, scored on its scale, join the ranked list.
     config.search.tree_search.text_top_k = 2
+    config.indexing.additional_suffix = TREE_CUT_SUFFIX
     if stores == "container":
         _on_containers(config)
-        providers = e2e._providers(
-            config, server, e2e.FakeCrossEncoder("synthetic-reranker")
-        )
+    providers = e2e._providers(
+        config, server, e2e.FakeCrossEncoder("synthetic-reranker")
+    )
+    if stores == "container":
+        # A fixed namespace on a shared server: what an aborted run left.
+        _clear(providers)
     context = ingest(config, providers, corpus(tmp_path), tmp_path / "run-1")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     cuts: list[tuple[list[Any], list[Any]]] = []
@@ -1046,6 +1056,8 @@ def test_a_tree_search_is_cut_in_the_rerankers_order(
                         )
                     )
                     kept = out.search_results.results
+                    # The search is cut only past top_k (TREE_CUT_SUFFIX).
+                    assert len(cuts) == 1, (name, top_k, len(kept))
                     assert len(kept) == top_k
                     ((ranked, cut),) = cuts
                     assert cut == kept
