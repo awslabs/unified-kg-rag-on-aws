@@ -16,7 +16,9 @@ writes it.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.config import SeedGraphConfig
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
@@ -291,3 +294,225 @@ def test_a_report_that_cannot_be_written_again_stays_recorded_and_flagged(
         assert REPORT_OUTDATED_FIELD not in after[report_id]
         assert "Carrier" not in after[report_id]["summary"]
     assert _record(providers)["outdated_reports"] == []
+
+
+# --- A hierarchy whose children a removal deletes or stores without a report
+#
+# Four triangles of entities, each a level-0 community, grouped in pairs at
+# level 1 by the edges between them (arch/final-B b7_stuck, B-1): the full
+# build's hierarchy over P(A, B) and P(C, D).
+_GROUPS = {
+    "A": ("Alder", "Aspen", "Acacia"),
+    "B": ("Birch", "Beech", "Baobab"),
+    "C": ("Cedar", "Cypress", "Chestnut"),
+    "D": ("Dogwood", "Damson", "Deodar"),
+}
+# The seed graph's triangle (test_a_parent_over_a_seed_only_child_...).
+_SEEDED = ("Sequoia", "Spruce", "Sumac")
+_TREES = (*(name for names in _GROUPS.values() for name in names), *_SEEDED)
+_PAIR = re.compile(r"(\w+) works with (\w+)")
+
+
+def _triangle(group: str) -> str:
+    a, b, c = _GROUPS[group]
+    return f"{a} works with {b}. {b} works with {c}. {c} works with {a}. "
+
+
+class _PairModel(_Model):
+    """The fake model, extracting each "X works with Y" of a text unit."""
+
+    def __call__(self, system: str, human: str) -> str:
+        if "knowledge graph extraction expert" in system:
+            text = stages._source_text(human)
+            pairs = _PAIR.findall(text)
+            names = list(dict.fromkeys(n for pair in pairs for n in pair))
+            return (
+                "<entities>"
+                + "".join(
+                    f"<entity><name>{n}</name><type>ORGANIZATION</type>"
+                    f"<description>{n} in the supply chain</description>"
+                    f"<confidence>9</confidence><source_text>{n}</source_text>"
+                    "</entity>"
+                    for n in names
+                )
+                + "</entities><relationships>"
+                + "".join(
+                    f"<relationship><source>{a}</source><target>{b}</target>"
+                    f"<type>WORKS_WITH</type><description>{a} works with {b}"
+                    f"</description><strength>8</strength><source_text>{a} works "
+                    f"with {b}</source_text></relationship>"
+                    for a, b in pairs
+                )
+                + "</relationships>"
+            )
+        if "community analysis" in system:
+            self.report_inputs.append(human)
+            members = ", ".join(n for n in _TREES if re.search(rf"\b{n}\b", human))
+            return (
+                "<community_name>Trees</community_name>"
+                f"<summary>Members: {members}.</summary>"
+                "<rating>5.0</rating><rating_explanation>x</rating_explanation>"
+                f"<findings><finding><summary>{members}</summary>"
+                "<explanation>They work together.</explanation></finding>"
+                "</findings>"
+            )
+        return super().__call__(system, human)
+
+
+def _forest(
+    tmp_path: Path,
+    harness: StoreHarness,
+    files: dict[str, str],
+    seed: list[dict[str, str]] | None = None,
+) -> tuple[Config, Any, Path]:
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    e2e._on_harness_stores(config, harness)
+    if seed:
+        path = tmp_path / "seed" / "trees.jsonl"
+        path.parent.mkdir()
+        path.write_text("".join(json.dumps(r) + "\n" for r in seed), encoding="utf-8")
+        config.processing.seed_graphs = [
+            SeedGraphConfig(name="trees", kind="jsonl", path=str(path))
+        ]
+    # One text unit per document: what a document states is its unit's.
+    config.processing.chunking.fallback_chunk_size = 2000
+    config.processing.chunking.max_chunk_size = 4000
+    server = FakeOllama(_PairModel(), e2e.ANSWER, e2e.DIM)
+    providers = e2e._providers(config, server, FakeCrossEncoder("reranker"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    for name, text in files.items():
+        (source / name).write_text(text, encoding="utf-8")
+    first = e2e._ingest(config, providers, source, tmp_path / "run1")
+    assert first.status is PipelineStageStatus.COMPLETED, e2e._errors(first)
+    return config, providers, source
+
+
+def _level1(reports: dict[str, dict]) -> dict[str, dict]:
+    """The level-1 reports, by the trees they state."""
+    return {r["summary"]: r for r in reports.values() if str(r.get("level")) == "1"}
+
+
+def _assert_current(
+    config: Config, providers: Any, caplog: pytest.LogCaptureFixture, dead: set[str]
+) -> dict[str, dict]:
+    """No report outdated, warned of or listed, none citing a text unit not
+    stored, and no community vertex citing a ``dead`` one; the reports."""
+    assert dead
+    assert not _logged(caplog, logging.WARNING, "outdated")
+    reports = _reports(config, providers)
+    units = _unit_ids(config, providers)
+    assert not dead & units
+    for report in reports.values():
+        assert REPORT_OUTDATED_FIELD not in report
+        assert set(report["text_unit_ids"]) <= units
+    assert _record(providers)["outdated_reports"] == []
+    graph = providers.build_graph_indexer()
+    try:
+        assert not graph.find_ids_citing(
+            sorted(dead), suffix="default", communities=True
+        )
+    finally:
+        graph.close()
+    return reports
+
+
+@pytest.mark.timeout(600)
+def test_a_parent_whose_child_the_removal_deleted_is_written_again(
+    tmp_path: Path, store_harness: StoreHarness, caplog: pytest.LogCaptureFixture
+) -> None:
+    # B-1: deleting a.txt deletes community A (its every text unit), its
+    # report and vertex. P(A, B) cites a.txt's unit too: outdated, it
+    # listed A, and every run kept it ("a community below them without a
+    # stored report"), stating the deleted Alder, until a reset.
+    a, b = _GROUPS["A"], _GROUPS["B"]
+    files = {
+        "a.txt": _triangle("A")
+        + f"{a[0]} works with {b[0]}. {a[1]} works with {b[1]}.",
+        "b.txt": _triangle("B") + f"{b[2]} works with {_GROUPS['C'][2]}.",
+        "c.txt": _triangle("C")
+        + f"{_GROUPS['C'][0]} works with {_GROUPS['D'][0]}. "
+        + f"{_GROUPS['C'][1]} works with {_GROUPS['D'][1]}.",
+        "d.txt": _triangle("D"),
+    }
+    config, providers, source = _forest(tmp_path, store_harness, files)
+    before = _level1(_reports(config, providers))
+    (parent,) = [r for s, r in before.items() if "Alder" in s]
+    assert len(parent["child_community_ids"]) == 2
+    units = _unit_ids(config, providers)
+
+    (source / "a.txt").unlink()
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        second = e2e._ingest(config, providers, source, tmp_path / "run2")
+    assert second.status is PipelineStageStatus.COMPLETED, e2e._errors(second)
+    reports = _assert_current(
+        config, providers, caplog, units - _unit_ids(config, providers)
+    )
+    written = reports[parent["id"]]
+    assert written["summary"] == "Members: Birch, Beech, Baobab."
+    # The deleted child is no longer listed; the one left is.
+    (child,) = written["child_community_ids"]
+    assert child in {r["community_id"] for r in reports.values()}
+    assert not any("Alder" in r["summary"] for r in reports.values())
+
+
+@pytest.mark.timeout(600)
+def test_a_parent_over_a_seed_only_child_is_written_again(
+    tmp_path: Path, store_harness: StoreHarness, caplog: pytest.LogCaptureFixture
+) -> None:
+    # B-1, from a fresh full build: the seed graph's triangle S is a
+    # community of its own, stored without a report (no document states
+    # it), under P(A, S), which lists it. Deleting a2.txt outdates P; it
+    # was kept for good. A full build writes P from A's members and S's:
+    # so does the refresh.
+    a = _GROUPS["A"]
+    seeded = _SEEDED
+    nodes = [
+        {"kind": "node", "id": f"n-{n.lower()}", "name": n, "type": "ORGANIZATION"}
+        for n in (*seeded, a[0], a[1])
+    ]
+    edges = [
+        {
+            "kind": "edge",
+            "source": f"n-{x.lower()}",
+            "target": f"n-{y.lower()}",
+            "type": "WORKS_WITH",
+        }
+        for x, y in [
+            (seeded[0], seeded[1]),
+            (seeded[1], seeded[2]),
+            (seeded[2], seeded[0]),
+            (seeded[0], a[0]),
+            (seeded[1], a[1]),
+        ]
+    ]
+    b, d = _GROUPS["B"], _GROUPS["D"]
+    files = {
+        "a1.txt": _triangle("A") + f"{a[2]} works with {b[2]}.",
+        "a2.txt": f"{a[0]} works with {a[1]}.",
+        "b.txt": _triangle("B")
+        + f"{b[0]} works with {d[0]}. {b[1]} works with {d[1]}.",
+        "d.txt": _triangle("D"),
+    }
+    config, providers, source = _forest(tmp_path, store_harness, files, nodes + edges)
+    before = _reports(config, providers)
+    (parent,) = [
+        r for s, r in _level1(before).items() if "Alder" in s and "Sequoia" in s
+    ]
+    (reportless,) = set(parent["child_community_ids"]) - {
+        r["community_id"] for r in before.values()
+    }
+    units = _unit_ids(config, providers)
+
+    (source / "a2.txt").unlink()
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        second = e2e._ingest(config, providers, source, tmp_path / "run2")
+    assert second.status is PipelineStageStatus.COMPLETED, e2e._errors(second)
+    reports = _assert_current(
+        config, providers, caplog, units - _unit_ids(config, providers)
+    )
+    written = reports[parent["id"]]
+    assert all(n in written["summary"] for n in (*a, *seeded)), written["summary"]
+    assert reportless in written["child_community_ids"]

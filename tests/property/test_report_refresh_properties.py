@@ -178,3 +178,199 @@ def test_a_written_report_reads_what_a_full_build_reads(corpus: dict) -> None:
     assert not done.kept
     stored = vector.ids("community_reports")
     assert not done.deleted & stored
+
+
+_SEEDS = ["sg-0", "sg-1"]
+
+
+@st.composite
+def _hierarchy_corpus(draw: st.DrawFn) -> dict[str, Any]:
+    """A two- or three-level hierarchy (``p`` over the level-0 communities,
+    or over level-1 ones over them) whose members cite document and seed
+    units; the communities whose reports failed in the full build; the
+    removed document units."""
+    leaves = [f"c{i}" for i in range(draw(st.integers(1, 4)))]
+    middle = draw(st.booleans())
+    parents = (
+        {c: f"m{draw(st.integers(0, 1))}" for c in leaves}
+        if middle
+        else dict.fromkeys(leaves, "p")
+    )
+    members = {
+        name: (
+            draw(st.sampled_from(leaves)),
+            sorted(
+                draw(st.sets(st.sampled_from(_UNITS + _SEEDS), min_size=1, max_size=3))
+            ),
+        )
+        for name in _NAMES
+    }
+    pairs = [(a, b) for i, a in enumerate(_NAMES) for b in _NAMES[i + 1 :]]
+    edges = {
+        pair: sorted(
+            draw(st.sets(st.sampled_from(_UNITS + _SEEDS), min_size=1, max_size=2))
+        )
+        for pair in draw(st.sets(st.sampled_from(pairs), max_size=6))
+    }
+    communities = [*leaves, *sorted(set(parents.values()) - {"p"}), "p"]
+    return {
+        "parents": parents,
+        "members": members,
+        "edges": edges,
+        "failed": draw(st.sets(st.sampled_from(communities))),
+        "removed": draw(st.sets(st.sampled_from(_UNITS), min_size=1, max_size=3)),
+        "budget": draw(st.sampled_from([40, 4000])),
+    }
+
+
+@settings(max_examples=80, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(corpus=_hierarchy_corpus())
+def test_reports_written_again_converge_with_a_full_build_over_any_hierarchy(
+    corpus: dict,
+) -> None:
+    """B-1 / G-2: with a seed graph, report-less communities (seed-only ones,
+    those whose report failed in the full build) and communities a removal
+    deletes anywhere in a two- or three-level hierarchy, every outdated
+    report is written again as a full build's detector packs it, or deleted
+    where a full build has none, and none is kept; flagged again later,
+    none is kept either."""
+    from tests.unit.test_report_refresh import _vertex
+    from unified_kg_rag.domain.ingestion.seed_graph import seed_only
+
+    config = Config()
+    config.processing.claim_extraction.enabled = False
+    config.graph.community_detection.report_generation.max_report_context_tokens = (
+        corpus["budget"]
+    )
+    removed, parents = corpus["removed"], corpus["parents"]
+    leaves = sorted(parents)
+    middles = sorted(set(parents.values()) - {"p"})
+    children = {
+        "p": middles or leaves,
+        **{m: sorted(c for c in leaves if parents[c] == m) for m in middles},
+    }
+    level = {**dict.fromkeys(leaves, 0), **dict.fromkeys(middles, 1)}
+    level["p"] = 2 if middles else 1
+
+    def under(community: str) -> set[str]:
+        below = children.get(community)
+        return {community} if not below else set().union(*map(under, below))
+
+    every = [*leaves, *middles, "p"]
+    before = {n.lower(): (c, units) for n, (c, units) in corpus["members"].items()}
+
+    def units_of(community: str, members: dict[str, tuple[str, list[str]]]) -> list:
+        return sorted(
+            {u for c, units in members.values() if c in under(community) for u in units}
+        )
+
+    # The full build before the removal: every community stored (a vertex),
+    # a report for those a document evidences and whose report did not fail.
+    full_units = {c: units_of(c, before) for c in every}
+    reported = [
+        c for c in every if not seed_only(full_units[c]) and c not in corpus["failed"]
+    ]
+    # What the removal and its commit leave: a community none of whose
+    # units is left is deleted (report and vertex), and its id leaves its
+    # members'; a report citing a removed unit is narrowed and outdated.
+    entities = [
+        _entity(name, kept, [community])
+        for name, (community, units) in corpus["members"].items()
+        if (kept := [u for u in units if u not in removed])
+    ]
+    alive = {e.id for e in entities}
+    edges = [
+        _edge(a.lower(), b.lower(), kept)
+        for (a, b), units in corpus["edges"].items()
+        if (kept := [u for u in units if u not in removed])
+        and {a.lower(), b.lower()} <= alive
+    ]
+    gone = {c for c in every if set(full_units[c]) <= removed}
+    graph = FakeGraphStore()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    graph.upsert_entities([e.model_copy(deep=True) for e in entities])
+    graph.upsert_relationships([r.model_copy(deep=True) for r in edges])
+    graph.upsert_communities(
+        [
+            _vertex(c, full_units[c], level[c], children.get(c, []))
+            for c in every
+            if c not in gone
+        ]
+    )
+    vector.upsert_text_units(
+        [TextUnit(id=u, text=u) for u in _UNITS + _SEEDS if u not in removed]
+    )
+    reports = [
+        _report(
+            c,
+            [u for u in full_units[c] if u not in removed],
+            level[c],
+            parent=None if c == "p" else parents.get(c, "p"),
+            children=children.get(c, []),
+        )
+        for c in reported
+        if c not in gone
+    ]
+    vector.upsert_community_reports(reports)
+    outdated = {
+        community_report_id(c)
+        for c in reported
+        if c not in gone and removed & set(full_units[c])
+    }
+    stripped = {e.id for e in entities if set(before[e.id][1]) & removed}
+    stored_reports = {
+        r.community_id: r
+        for r in vector.read_community_reports([community_report_id(c) for c in every])
+        if r.id not in outdated
+    }
+
+    refreshed = _Reports()
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    providers = Providers(
+        config, boto_session=MagicMock(), llm_factory=ScriptedLLMFactory(refreshed)
+    )
+    done = ReportRefresh(manager, providers)("default", outdated, stripped)
+
+    # A full build's detector over the surviving graph, for the outdated
+    # communities with their surviving members and children.
+    whole = GraphBuilder(entities, edges).build()
+    full = _Reports()
+    detector = CommunityDetector(
+        config,
+        show_progress=False,
+        providers=Providers(
+            config, boto_session=MagicMock(), llm_factory=ScriptedLLMFactory(full)
+        ),
+    ).report_on(whole)
+    expected = []
+    for c in every:
+        if community_report_id(c) not in outdated:
+            continue
+        members = sorted(e.id for e in entities if e.community_ids[0] in under(c))
+        units = sorted(
+            {u for e in entities if e.id in members for u in e.text_unit_ids}
+        )
+        if members and not seed_only(units):
+            kept_children = [k for k in children.get(c, []) if k not in gone]
+            expected.append(
+                _community(c, level[c], members, whole, kept_children).model_copy(
+                    update={"text_unit_ids": units}
+                )
+            )
+    detector.generate_reports(expected, sub_reports=stored_reports)
+
+    assert sorted(refreshed.inputs) == sorted(full.inputs)
+    assert done.written == {community_report_id(c.id) for c in expected}
+    assert done.deleted == outdated - done.written
+    assert not done.kept
+    for report in vector.read_community_reports(sorted(done.written)):
+        # No deleted child is listed.
+        assert not set(report.child_community_ids) & gone
+
+    # A later removal flags them again: none is kept (no child the refresh
+    # deleted or emptied leaves its parent stuck).
+    again = {r.id for r in vector.read_community_reports(sorted(done.written))}
+    if again:
+        later = ReportRefresh(manager, providers)("default", again, alive)
+        assert later.written | later.deleted == again
+        assert not later.kept
