@@ -49,27 +49,51 @@ _ROW_WIDTH = 2.2
 _COMPONENT_GAP = 0.4
 
 
+# What a renderer reads of each relationship an edge merges (the console's
+# Graph page lists them in the Entity panel, run-visualization's tooltip
+# names them): the rest of a relationship (names, rank, timestamps) is the
+# edge's or no renderer's.
+_MERGED_RELATIONSHIP_FIELDS = (
+    "id",
+    "source_id",
+    "target_id",
+    "type",
+    "description",
+    "weight",
+    "text_unit_ids",
+    "source_kinds",
+    "in_schema",
+    "predicate_iri",
+)
+
+
 def strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop the attributes no renderer reads from exported nodes and edges.
 
-    Vectors are large and dominate file size. ``relationships`` is the copy of
-    every relationship an edge merges (see ``GraphBuilder``), which only
-    community detection on the live graph reads; exported, it repeats each
-    edge's own attributes.
+    Vectors are large and dominate file size. An edge stands for every
+    relationship of its entity pair (``GraphBuilder``: the sum of their
+    weights, the smallest-id one's other attributes) and lists them in
+    ``relationships``. An edge of two or more keeps the list, each item
+    only the fields a renderer reads (``_MERGED_RELATIONSHIP_FIELDS``), so
+    every relationship of the pair is shown; an edge of one drops it (its
+    one item is the edge's own attributes).
     """
     return [
-        {
-            **item,
-            "attributes": {
-                key: value
-                for key, value in strip_embedding_fields(
-                    item.get("attributes") or {}
-                ).items()
-                if key != "relationships"
-            },
-        }
+        {**item, "attributes": _light_attributes(item.get("attributes") or {})}
         for item in items
     ]
+
+
+def _light_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
+    light = strip_embedding_fields(attributes)
+    merged = light.pop("relationships", None)
+    if isinstance(merged, list) and len(merged) > 1:
+        light["relationships"] = [
+            {k: r[k] for k in _MERGED_RELATIONSHIP_FIELDS if r.get(k) is not None}
+            for r in merged
+            if isinstance(r, dict)
+        ]
+    return light
 
 
 def graph_data(

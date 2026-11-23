@@ -37,6 +37,25 @@ def _graph() -> nx.Graph:
     return g
 
 
+def test_an_edge_title_names_every_relationship_it_merges(mocker) -> None:
+    """E-3: an exported edge of two or more relationships of one pair lists
+    them; the edge's tooltip names each, by type and description (its
+    scalar lines are the first one's only)."""
+    g = _graph()
+    g.edges["e1", "e2"]["relationships"] = [
+        {"id": "r1", "type": "works_at", "description": "Alice works at Acme."},
+        {"id": "r2", "type": "owns", "description": "Alice owns Acme."},
+    ]
+    net = mocker.MagicMock()
+    InteractiveRenderer({})._add_edges(net, g)
+    titles = [call.kwargs["title"] for call in net.add_edge.call_args_list]
+    merged = next(t for t in titles if "Alice" in t)
+    assert "Relationships: 2" in merged
+    assert "- works_at: Alice works at Acme." in merged
+    assert "- owns: Alice owns Acme." in merged
+    assert not any("Relationships:" in t for t in titles if t != merged)
+
+
 class TestScaledPositions:
     def test_centred_and_scaled_to_extent(self) -> None:
         # Reducer output has an arbitrary offset and scale.

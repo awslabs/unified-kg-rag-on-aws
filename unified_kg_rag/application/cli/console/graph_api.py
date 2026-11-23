@@ -423,20 +423,30 @@ def _read_graph(
             graph.edges[source, target]["weight"] < weight
         ):
             graph.add_edge(source, target, weight=weight)
-        edges.append(
-            {
-                "id": str(attrs.get("id") or f"{source}->{target}"),
-                "source": source,
-                "target": target,
-                "type": attrs.get("type"),
-                "description": _text(attrs.get("description"), 600),
-                "weight": attrs.get("weight"),
-                "text_unit_ids": [str(t) for t in attrs.get("text_unit_ids") or []],
-                "source_kinds": source_fields.id_list(attrs.get("source_kinds")),
-                "in_schema": attrs.get("in_schema"),
-                "predicate_iri": attrs.get("predicate_iri"),
-            }
-        )
+        # An edge that merges several relationships of its pair lists them
+        # (the export's ``relationships``): one entry each, so the panel
+        # and the counts see every one; the pair is drawn once.
+        merged = attrs.get("relationships")
+        for rel in merged if isinstance(merged, list) and merged else [attrs]:
+            if not isinstance(rel, dict):
+                continue
+            ends = (str(rel.get("source_id") or ""), str(rel.get("target_id") or ""))
+            if set(ends) != {source, target}:
+                ends = (source, target)
+            edges.append(
+                {
+                    "id": str(rel.get("id") or f"{source}->{target}"),
+                    "source": ends[0],
+                    "target": ends[1],
+                    "type": rel.get("type"),
+                    "description": _text(rel.get("description"), 600),
+                    "weight": rel.get("weight"),
+                    "text_unit_ids": [str(t) for t in rel.get("text_unit_ids") or []],
+                    "source_kinds": source_fields.id_list(rel.get("source_kinds")),
+                    "in_schema": rel.get("in_schema"),
+                    "predicate_iri": rel.get("predicate_iri"),
+                }
+            )
     degrees = dict(graph.degree())
     for node in nodes:
         node["degree"] = degrees.get(node["id"], 0)
@@ -449,7 +459,9 @@ def _read_graph(
     layout = {k: v for k, v in exported.items() if k in drawn}
     if not layout:
         layout = spring_layout(drawn, None)
-    linked = graph.subgraph(layout).number_of_edges()
+    # Relationships, as the page's edges are: a pair that merges several
+    # counts each.
+    linked = sum(1 for e in edges if e["source"] in layout and e["target"] in layout)
     by_id = {n["id"]: n for n in nodes}
     communities = _communities(data.get("communities"), by_id)
     page = {

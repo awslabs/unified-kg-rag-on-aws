@@ -989,6 +989,13 @@ Bugs present in 0.3.0.
   baseline, 7 of them on an answer whose first line held the gold). The report marks it (`answer_span_empty`), the
   run summary counts it (`answer_span_statistics.empty`), and a comparison names each strategy with empty spans and
   warns when their rates differ, as it does for fallbacks.
+- `visualization_data.json` kept one relationship per entity pair: an edge stands for every relationship of its pair,
+  but the export dropped their list, so `run-visualization` and the console's Graph page showed only the smallest-id
+  one (101 of 433 relationships on a 3B local index). An edge of two or more lists them again (`relationships`, each
+  with only its id, ends, type, description, weight, text units, source kinds and schema fields); an edge of one
+  carries none, as before. The interactive page's edge tooltip names each by type and description, and the Graph
+  page lists each in the Entity panel and counts each in its statistics, while still drawing the pair as one line.
+  An export written before is read as it was.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0

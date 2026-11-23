@@ -97,6 +97,43 @@ def test_the_stored_graph_and_its_communities_are_one_deterministic_file() -> No
     assert json.dumps(again, default=str) == json.dumps(data, default=str)
 
 
+def test_every_relationship_of_a_pair_is_exported() -> None:
+    """E-3: an edge stands for every relationship of its pair; the export
+    dropped all but the smallest-id one (101 of 433 on the baseline index),
+    so a renderer could show only it. Kept, without their vectors, when the
+    pair has two or more; an edge of one keeps no list (it repeats the
+    edge)."""
+    reverse = Relationship(
+        id="r2",
+        source_id="e2",
+        target_id="e1",
+        source_name="Buyer",
+        target_name="Vendor",
+        type="PAYS",
+        weight=1.0,
+        description="Buyer pays Vendor.",
+        description_embedding=[0.1, 0.2],
+    )
+    store = Relationship(
+        id="r3", source_id="e1", target_id="e3", type="STORES_IN", weight=1.0
+    )
+    data = stored_visualization_data(
+        _ENTITIES, [reverse, *_RELATIONSHIPS, store], [], [], namespace="n"
+    )
+    edges = {
+        frozenset((e["source"], e["target"])): e["attributes"] for e in data["edges"]
+    }
+    pair = edges[frozenset(("e1", "e2"))]
+    assert pair["id"] == "r1" and pair["weight"] == 3.0
+    assert [(r["id"], r["type"]) for r in pair["relationships"]] == [
+        ("r1", "SUPPLIES"),
+        ("r2", "PAYS"),
+    ]
+    assert pair["relationships"][1]["source_id"] == "e2"
+    assert "description_embedding" not in pair["relationships"][1]
+    assert "relationships" not in edges[frozenset(("e1", "e3"))]
+
+
 def _providers(vector: Any, graph: Any) -> Any:
     return SimpleNamespace(
         build_vector_indexer=lambda: vector, build_graph_indexer=lambda: graph
