@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import bisect
 import concurrent.futures
 import functools
 import inspect
@@ -788,6 +789,77 @@ _BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+
 # `<` not followed by what can start a tag, end tag, comment or declaration.
 _TEXT_LESS_THAN = re.compile(r"<(?![A-Za-z_/!?])")
 _TAG = re.compile(r"<(/?)([A-Za-z_][\w.\-:]*)([^<>]*)>")
+# A tag as the last-resort fallbacks read one: possessive, and no `<` or `>`
+# inside, so each scan is linear (a lazy `.*?>` backtracked cubically on
+# many unclosed opening tags).
+_FALLBACK_TAG = re.compile(r"<(/?)([a-zA-Z0-9_]++)([^<>]*+)>")
+
+
+class _Element(NamedTuple):
+    """A closed element the fallbacks found: its name, and where its opening
+    tag starts, its content starts and ends, and its end tag ends."""
+
+    tag: str
+    start: int
+    content_start: int
+    content_end: int
+    end: int
+
+
+class _ElementScan:
+    """The tags of one text, read once, for the regex-free fallbacks.
+
+    :meth:`elements` is what ``re.findall(r"<(name)>(.*?)</\\1>")`` finds in
+    a span of the text, in O(log n) per tag it reads. A span is read again
+    for each element the fallbacks descend into, and every tag is read in
+    only one span (the one it is directly inside), so a whole parse stays
+    O(n log n) however deep the elements nest."""
+
+    def __init__(self, text: str, *, attributes: bool = False) -> None:
+        self.text = text
+        self._openings: list[re.Match[str]] = []
+        self._closings: defaultdict[str, list[int]] = defaultdict(list)
+        for match in _FALLBACK_TAG.finditer(text):
+            if match.group(1):
+                if not match.group(3):
+                    self._closings[match.group(2)].append(match.start())
+            elif attributes or not match.group(3):
+                self._openings.append(match)
+        self._opening_starts = [match.start() for match in self._openings]
+
+    def elements(self, start: int = 0, end: int | None = None) -> list[_Element]:
+        """The elements ``<name>...</name>`` in ``text[start:end]``, left to
+        right and not overlapping, each ending at the first ``</name>`` after
+        its opening tag. An opening tag with no end tag after it in the span
+        is skipped (``attributes`` also takes an opening tag with text after
+        its name, ``<entity id="1">``)."""
+        end = len(self.text) if end is None else end
+        found: list[_Element] = []
+        at = bisect.bisect_left(self._opening_starts, start)
+        while at < len(self._openings) and self._opening_starts[at] < end:
+            match = self._openings[at]
+            name = match.group(2)
+            ends = self._closings.get(name, [])
+            close = bisect.bisect_left(ends, match.end())
+            if close == len(ends) or ends[close] + len(name) + 3 > end:
+                at += 1
+                continue
+            element_end = ends[close] + len(name) + 3
+            found.append(
+                _Element(name, match.start(), match.end(), ends[close], element_end)
+            )
+            at = bisect.bisect_left(self._opening_starts, element_end, lo=at + 1)
+        return found
+
+    def strip(self, start: int, end: int) -> tuple[int, int]:
+        """The span ``text[start:end]`` without its surrounding whitespace."""
+        # Index by index, not a slice: the fallbacks strip every element.
+        text = self.text
+        while start < end and text[start].isspace():
+            start += 1
+        while end > start and text[end - 1].isspace():
+            end -= 1
+        return start, end
 
 
 def _holds_text_only(value: Any) -> bool:
@@ -1247,7 +1319,7 @@ class RobustXMLOutputParser(XMLOutputParser):
             return {
                 tag for tag in self.tags if re.search(rf"<{re.escape(tag)}[\s/>]", text)
             }
-        return set(re.findall(r"<([a-zA-Z0-9_]+)>.*?</\1>", text, re.DOTALL))
+        return {element.tag for element in _ElementScan(text).elements()}
 
     @staticmethod
     def _sections_preserved(
@@ -1270,17 +1342,15 @@ class RobustXMLOutputParser(XMLOutputParser):
         result = {}
 
         try:
-            section_pattern = r"<([a-zA-Z0-9_]+)>(.*?)</\1>"
-            section_matches = re.findall(section_pattern, text, re.DOTALL)
-
-            for section_name, section_content in section_matches:
-                section_result = RobustXMLOutputParser._parse_xml_section(
-                    section_content
+            scan = _ElementScan(text)
+            for section in scan.elements():
+                section_result = RobustXMLOutputParser._section_of(
+                    scan, section.content_start, section.content_end
                 )
                 # An empty section is an empty answer (e.g. a chunk with no
                 # relationships), kept as {} like the lxml path does, so a
                 # response of only empty sections still parses.
-                result[section_name] = {} if section_result is None else section_result
+                result[section.tag] = {} if section_result is None else section_result
 
             return result if result else None
 
@@ -1291,20 +1361,27 @@ class RobustXMLOutputParser(XMLOutputParser):
     def _parse_xml_section(
         content: str,
     ) -> dict[str, Any] | list[dict[str, Any]] | None:
-        content = content.strip()
-        if not content:
+        return RobustXMLOutputParser._section_of(_ElementScan(content), 0, len(content))
+
+    @staticmethod
+    def _section_of(
+        scan: _ElementScan, start: int, end: int
+    ) -> dict[str, Any] | list[dict[str, Any]] | None:
+        start, end = scan.strip(start, end)
+        if start == end:
             return None
 
-        child_pattern = r"<([a-zA-Z0-9_]+)>(.*?)</\1>"
-        child_matches = re.findall(child_pattern, content, re.DOTALL)
+        child_matches = scan.elements(start, end)
 
         if not child_matches:
-            return {"#text": content}
+            return {"#text": scan.text[start:end]}
 
         children_by_tag = defaultdict(list)
-        for child_tag, child_content in child_matches:
-            parsed_child = RobustXMLOutputParser._parse_xml_element(child_content)
-            children_by_tag[child_tag].append(parsed_child)
+        for child in child_matches:
+            parsed_child = RobustXMLOutputParser._element_of(
+                scan, child.content_start, child.content_end
+            )
+            children_by_tag[child.tag].append(parsed_child)
 
         result = {}
         for tag, children in children_by_tag.items():
@@ -1320,19 +1397,25 @@ class RobustXMLOutputParser(XMLOutputParser):
 
     @staticmethod
     def _parse_xml_element(content: str) -> dict[str, Any] | str:
-        content = content.strip()
-        if not content:
+        return RobustXMLOutputParser._element_of(_ElementScan(content), 0, len(content))
+
+    @staticmethod
+    def _element_of(scan: _ElementScan, start: int, end: int) -> dict[str, Any] | str:
+        start, end = scan.strip(start, end)
+        if start == end:
             return ""
 
-        nested_pattern = r"<([a-zA-Z0-9_]+)>(.*?)</\1>"
-        nested_matches = re.findall(nested_pattern, content, re.DOTALL)
+        nested_matches = scan.elements(start, end)
 
         if not nested_matches:
-            return content
+            return scan.text[start:end]
 
         result: dict[str, Any] = {}
-        for nested_tag, nested_content in nested_matches:
-            parsed_nested = RobustXMLOutputParser._parse_xml_element(nested_content)
+        for nested in nested_matches:
+            nested_tag = nested.tag
+            parsed_nested = RobustXMLOutputParser._element_of(
+                scan, nested.content_start, nested.content_end
+            )
 
             if nested_tag in result:
                 if not isinstance(result[nested_tag], list):
@@ -1341,10 +1424,11 @@ class RobustXMLOutputParser(XMLOutputParser):
             else:
                 result[nested_tag] = parsed_nested
 
-        text_content = content
-        for nested_tag, nested_content in nested_matches:
-            full_nested = f"<{nested_tag}>{nested_content}</{nested_tag}>"
-            text_content = text_content.replace(full_nested, "").strip()
+        # The text around the elements (one pass, not a replace per element).
+        bounds = [start, *(at for n in nested_matches for at in (n.start, n.end)), end]
+        text_content = "".join(
+            scan.text[bounds[i] : bounds[i + 1]] for i in range(0, len(bounds), 2)
+        ).strip()
 
         if text_content and result:
             result["#text"] = text_content
@@ -1571,17 +1655,16 @@ class RobustXMLOutputParser(XMLOutputParser):
 
     @staticmethod
     def _extract_tags_fallback(text: str) -> dict[str, Any] | None:
-        pattern = re.compile(r"<([a-zA-Z0-9_]+)\s*.*?>(.*?)</\1>", re.DOTALL)
-        matches = pattern.findall(text)
+        matches = _ElementScan(text, attributes=True).elements()
 
         if not matches:
             return None
 
         content_map = defaultdict(list)
-        for tag, content in matches:
-            stripped_content = content.strip()
+        for element in matches:
+            stripped_content = text[element.content_start : element.content_end].strip()
             if stripped_content:
-                content_map[tag].append(stripped_content)
+                content_map[element.tag].append(stripped_content)
 
         if not content_map:
             return None

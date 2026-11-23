@@ -15,6 +15,7 @@ decorator, the async ``aexecute_with_fallback`` path, and the multi-stage
 from __future__ import annotations
 
 import threading
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -752,6 +753,61 @@ class TestRobustXMLOutputParser:
 
     def test_extract_tags_fallback_none_when_empty(self) -> None:
         assert RobustXMLOutputParser._extract_tags_fallback("no tags") is None
+
+    def test_extract_tags_fallback_reads_whole_tag_names_and_attributes(self) -> None:
+        # The regex let a name end early (<ab> read as <a> with text "b")
+        # and an opening tag run across other tags to a later ">".
+        assert RobustXMLOutputParser._extract_tags_fallback("<ab>x</a>") is None
+        out = RobustXMLOutputParser._extract_tags_fallback(
+            '<title lang="en">Hi</title><ab>\n<a>y</a>'
+        )
+        assert out == {"title": "Hi", "a": "y"}
+
+    @pytest.mark.timeout(60)
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Many unclosed opening tags and a missing later section: lxml
+            # loses a section, so every fallback runs on the whole output.
+            # The regex fallbacks took ~30 s (n=1,600) and ~110 s for the
+            # second shape (n=800); n=3,200 is ~8x that again.
+            "<entities>" + "<e>" * 3200 + "\n<relationships>",
+            "<entities>\n" + "<entity>Vendor\n" * 3200 + "<relationships>",
+        ],
+        ids=["bare-openings", "unclosed-entities"],
+    )
+    def test_the_fallbacks_take_linear_time_on_many_unclosed_tags(self, text) -> None:
+        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+        began = time.perf_counter()
+        with pytest.raises(OutputParserException):
+            parser.parse(text)
+        # A linear scan takes well under 0.1 s here; the bound only has to
+        # sit far below the regex's minutes, not near the scan's time.
+        assert time.perf_counter() - began < 10
+
+    def test_the_fallbacks_read_the_tags_once_however_deep_they_nest(
+        self, monkeypatch
+    ) -> None:
+        scans: list[int] = []
+        real = langchain_module._ElementScan.__init__
+
+        def counted(self, text: str, **kwargs: Any) -> None:
+            scans.append(len(text))
+            real(self, text, **kwargs)
+
+        monkeypatch.setattr(langchain_module._ElementScan, "__init__", counted)
+        depth = 300
+        inner = "".join(f"<t{i}>" for i in range(depth)) + "x"
+        inner += "".join(f"</t{i}>" for i in reversed(range(depth)))
+        out = RobustXMLOutputParser._extract_xml_fallback(
+            f"<entities>{inner}</entities>"
+        )
+        node = out["entities"]
+        for i in range(depth):
+            node = node[f"t{i}"]
+        assert node == "x"
+        # One scan of the response, not one per nesting level.
+        assert scans == [len(inner) + len("<entities></entities>")]
 
     def test_a_bulleted_answer_does_not_parse(self) -> None:
         # It parsed as {"items": [...]}, which no caller reads, so the fixer
