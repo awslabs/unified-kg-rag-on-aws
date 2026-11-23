@@ -426,6 +426,17 @@ def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> No
         # A spacing mark (category Mc) belongs to its letter too: Myanmar
         # ကျ is a letter and its medial sign, one letter (R6A-2).
         (["ကျောင်း"], [[_hit("ကျ", 1.0)]], "q", False),
+        # R6A-1: a syllable with SARA AM (Thai U+0E33, Lao U+0EB3) is one
+        # letter (one grapheme), as written and as NFKC splits it into
+        # NIKHAHIT and SARA AA: a one-syllable name starts no focus.
+        (["ดำเนินการ"], [[_hit("ดำ", 1.0)]], "q", False),
+        (["คำตอบ"], [[_hit("คำ", 1.0)]], "q", False),
+        (["ทำงาน"], [[_hit("ทำ", 1.0)]], "q", False),
+        (["น้ำมัน"], [[_hit("น้ำ", 1.0)]], "q", False),
+        (["ກຳລັງ"], [[_hit("ກຳ", 1.0)]], "q", False),
+        (["ดำ ทอง"], [[_hit("ดำ", 1.0)]], "q", True),
+        # Two syllables with it keep the start rule.
+        (["น้ำตาลทราย"], [[_hit("น้ำตาล", 1.0)]], "q", True),
         # A one-letter name that is a whole word of the focus still holds
         # (a run is read whole, so 金 正恩 is the one word 金正恩).
         (["王 / Electronics"], [[_hit("王", 1.0)]], "q", True),

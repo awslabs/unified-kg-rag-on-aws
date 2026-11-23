@@ -142,8 +142,9 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   hit's whole name (`focus_names_anything`: whole words, and a run in a
   script written without spaces from the start of one of its words, a run
   of one letter only as a whole word: 金 does not hold 金正恩, nor な the
-  placeholder なし; a letter counts with its combining marks, so Thai ก็
-  is one letter and ไม่ two) is read
+  placeholder なし; a letter counts with its combining marks, and Thai or
+  Lao SARA AM with the letter before it, as a grapheme cluster groups
+  them, so Thai ก็ and ดำ are one letter each and ไม่ two) is read
   as no focus: every section then searches by the query, as without one.
   That drops the one-word placeholder a model writes for a query that
   names no entity ("none" or "Empty", in any language) and keeps "New York

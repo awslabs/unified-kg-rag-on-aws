@@ -38,7 +38,6 @@ covers "Café", "Dang" "Đặng": ``shared.utils.scripts.without_latin_accents``
 
 from __future__ import annotations
 
-import unicodedata
 from collections.abc import Sequence
 from difflib import SequenceMatcher
 from typing import Literal
@@ -48,6 +47,7 @@ from unified_kg_rag.domain.languages.legal_forms import latin_legal_form
 from unified_kg_rag.domain.models import RetrievalResult
 from unified_kg_rag.shared.utils import entity_key
 from unified_kg_rag.shared.utils.scripts import (
+    count_graphemes,
     fold_letter_variants,
     has_unspaced_script,
     without_latin_accents,
@@ -185,7 +185,8 @@ def _holds_name(name: str, part: str) -> bool:
     a start it would hold any name that begins with it (金 of 金正恩, 이 of
     이순신, な of the placeholder なし), and it is a whole term of its own
     to :func:`covers` as well. A letter is a character with the marks that
-    combine with it (:func:`_letters`: Thai ก็ is one letter, ไม่ two)."""
+    combine with it (``count_graphemes``: Thai ก็ and ดำ are one letter each,
+    ไม่ two)."""
     held, wanted = _name_words(name), _name_words(part)
     if not wanted:
         return False
@@ -204,17 +205,13 @@ def _holds_name(name: str, part: str) -> bool:
     if run:
         runs.append("".join(run))
     return all(
-        r in held if _letters(r) == 1 else any(tail.startswith(r) for tail in tails)
+        (
+            r in held
+            if count_graphemes(r) == 1
+            else any(tail.startswith(r) for tail in tails)
+        )
         for r in runs
     )
-
-
-def _letters(text: str) -> int:
-    """How many letters ``text`` writes: its characters other than the
-    combining marks (Unicode category M), which belong to the letter before
-    them (a Thai tone mark, a Devanagari vowel sign), as an extended
-    grapheme cluster groups them."""
-    return sum(not unicodedata.category(c).startswith("M") for c in text)
 
 
 LinkPolicy = Literal["cover", "rank"]

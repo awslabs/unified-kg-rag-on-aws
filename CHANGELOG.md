@@ -893,7 +893,8 @@ Bugs present in 0.3.0.
   entity: 金 grounded 金正恩, 이 grounded 이순신, な the placeholder なし (10 of 16 shapes in a probe, none kept before
   #870), as a run of one letter starts every name that begins with it. Such a run now holds a focus only as a whole
   word of it; a run of two or more letters keeps the start rule (東京 for 東京都). A letter counts with its combining
-  marks (Thai ก็, two code points, is one letter). A placeholder of several words one of which is a stored name ("N/A"
+  marks (Thai ก็, two code points, is one letter), and a Thai or Lao syllable with SARA AM (ดำ, น้ำ) is one letter, as
+  a grapheme cluster groups it. A placeholder of several words one of which is a stored name ("N/A"
   with a stored "A", 정보 없음 with 정보, Thai ไม่มี with ไม่) is still kept, as the design page says.
 - On a custom vector store that leaves `VectorIndexer.read_text_unit_attributes` at its port's default (`{}`), a
   removal and the report refresh wrote every kept or refreshed community report with no `document_ids` and no
@@ -913,7 +914,9 @@ Bugs present in 0.3.0.
   closed in name only: aiohttp's connector close returns early on a closed loop, so the chain's eviction of that
   loop's retrievers, and `close()` or `aclose()` after it, left every keep-alive socket open until the cyclic GC
   (14 of 14 after two runs of three searches, 6-7 more per run). The client now closes each pooled connection's
-  socket itself (plain and TLS): 0 open after the close, none left for the GC.
+  socket itself (plain and TLS): 0 open after the close, none left for the GC. A pool or transport of a shape the
+  release cannot read (another aiohttp or CPython) is left to the GC, and its connector, and every later one, is still
+  closed: its session reads closed.
 - `retrieval`'s nDCG credited a file to every reference it names, so with `reference_sources` `[a, a.pdf]` the
   ranking `[a.pdf, a.txt]` scored 0.613 and `[a.txt, a.pdf]` 1.0 for the same two relevant files (a deeper cutoff that
   added a.txt lowered the score). A file is now credited to one reference: the one its full name is, else one its stem
@@ -944,6 +947,17 @@ Bugs present in 0.3.0.
   that question's reader stop, as the console's Stop (no error status, marked stopped); a `SIGTERM` stays `ERROR`. The
   [telemetry reference](docs/reference/telemetry.md#spans-of-a-stopped-query) has a table of every stop, and gives
   `kg_rag.mcp.tool`'s parent as the MCP SDK's `tools/call` span under a global tracer provider (it said root).
+- A second `Ctrl-C` to `run-console` or `run-mcp-server --transport streamable-http` while it drains its requests did
+  not cut them short on Python 3.12 and later (the image's): uvicorn's force exit then waits for every connection to
+  close, so the queries answered and the server exited when they ended, though uvicorn logs "CTRL+C to force quit" and
+  the telemetry reference says they end `ERROR`. The second `Ctrl-C` now cancels them, as `run-console`'s 60 s
+  graceful-shutdown limit does: their queries end `ERROR` (`CancelledError`), recorded `stopped`, and the server exits
+  at once.
+- `run-mcp-server` over stdio, stopped by `SIGTERM` or `Ctrl-C` while its host kept stdin open (a `kill`, a
+  supervisor), exited only at the stop's 100 s grace limit: the MCP SDK's stdin reader waits for its read in flight
+  before a cancel ends it. Its calls had ended (`ERROR`, recorded `stopped`), but a batching span exporter flushes at
+  the exit, so a platform's kill inside those 100 s lost their spans. The server now reads stdin itself, abandoning
+  the read in flight on a stop, and exits at once (143 or 130), its spans flushed; stdin's end still exits 0.
 - The console composer's "Search strategy" and "Options" toggles were 20 px high, under WCAG 2.2's 24 px target size
   (axe passed them only on their spacing): each is a 24 px target now.
 - MCP `kg_neighbors` and `kg_get_entity` still measured their records against `mcp.max_response_chars` before their

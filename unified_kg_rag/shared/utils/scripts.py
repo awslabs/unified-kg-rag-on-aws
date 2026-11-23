@@ -49,6 +49,7 @@ __all__ = [
     "Spacing",
     "WORD_DASHES",
     "count_letters",
+    "count_graphemes",
     "drop_optional_marks",
     "drop_dense_script_spaces",
     "fold_letter_variants",
@@ -660,6 +661,25 @@ def drop_dense_script_spaces(text: str, *, spaceless: bool = False) -> str:
 
 def _is_mark(ch: str) -> bool:
     return unicodedata.category(ch)[0] == "M"
+
+
+# SARA AM (Thai U+0E33, Lao U+0EB3): a letter by its category, but a
+# spacing mark of the letter before it in an extended grapheme cluster
+# (UAX #29 names these two as SpacingMark), so ดำ and น้ำ are one letter.
+# NFKC writes each as NIKHAHIT (Mn) and SARA AA (Lo).
+_SARA_AM = ("\u0e33", "\u0eb3")
+_SARA_AM_SPLIT = {unicodedata.normalize("NFKC", am): am for am in _SARA_AM}
+
+
+def count_graphemes(text: str) -> int:
+    """How many letters ``text`` writes, as an extended grapheme cluster
+    groups them: its characters other than the combining marks (Unicode
+    category M), which belong to the letter before them (a Thai tone mark,
+    a Devanagari vowel sign), and other than SARA AM, written whole or as
+    NFKC splits it (Thai ก็ and ดำ are one letter each, ไม่ two)."""
+    for split, am in _SARA_AM_SPLIT.items():
+        text = text.replace(split, am)
+    return sum(not _is_mark(c) and c not in _SARA_AM for c in text)
 
 
 # A run of letters and numbers (Unicode L and N: "[^\W_]" is exactly them).

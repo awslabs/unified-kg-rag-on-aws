@@ -20,6 +20,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -2867,6 +2868,301 @@ def test_a_served_signal_marks_the_process_stopping() -> None:
         assert server.should_exit
     finally:
         mark_process_stopping(False)
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+async def _ask_served(surface: str, url: str) -> None:
+    """Ask the served ``surface`` one question, reading its answer to the
+    end (or until the server cuts it off)."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        if surface == "mcp":
+            await client.post(
+                f"{url}/mcp",
+                headers={
+                    "Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "kg_answer",
+                        "arguments": {"query": "Who ships?", "strategy": "simple"},
+                    },
+                },
+            )
+            return
+        async with client.stream(
+            "POST",
+            f"{url}/api/ask",
+            headers={"X-Console-Request": "1"},
+            json={"query": "Who ships?", "search_strategy": "simple"},
+        ) as response:
+            async for _ in response.aiter_bytes():
+                pass
+
+
+@pytest.mark.parametrize("surface", ["mcp", "console"])
+def test_a_second_ctrl_c_cancels_a_draining_server_s_request(
+    tracing: Tracing,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+) -> None:
+    # R6C-1: a second Ctrl-C while run-mcp-server (streamable HTTP) or
+    # run-console drained did not cut the request in flight short: uvicorn's
+    # force exit then waits for every connection to close (CPython 3.12+),
+    # so the query answered and the server exited when it ended. It cancels
+    # the request: its query ends ERROR, recorded stopped, and the server
+    # exits at once.
+    pytest.importorskip("uvicorn")
+    pytest.importorskip("httpx")
+    import uvicorn
+
+    from unified_kg_rag.application.cli.conventions import signal_stopped_server
+    from unified_kg_rag.application.retrieval import query_audit
+    from unified_kg_rag.shared.query_stop import mark_process_stopping
+
+    if surface == "mcp":
+        pytest.importorskip("mcp")
+        from unified_kg_rag.application.cli.mcp_server import build_mcp_app
+        from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    else:
+        pytest.importorskip("fastapi")
+        from unified_kg_rag.application.cli.console.server import (
+            ConsoleOptions,
+            create_app,
+        )
+
+    records: list[Any] = []
+    monkeypatch.setattr(query_audit, "audit_enabled", lambda: True)
+    monkeypatch.setattr(query_audit, "emit", records.append)
+    exporter = tracing()
+    held = _Held("model")  # held 10 s: past this test's wait for the exit
+    chain = held.chain()
+    if surface == "mcp":
+        app = build_mcp_app(KnowledgeGraphTools(chain))
+    else:
+        options = ConsoleOptions(workspace=tmp_path, cache_directory=tmp_path / "cache")
+        app = create_app(options, chain_factory=lambda _config: chain)
+    port = _free_port()
+    server = signal_stopped_server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, lifespan="on")
+    )
+    exited_after: list[float] = []
+
+    async def run() -> None:
+        serving = asyncio.create_task(server.serve())
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        asking = asyncio.create_task(_ask_served(surface, f"http://127.0.0.1:{port}"))
+        try:
+            await asyncio.wait_for(held.wait(), 30)
+            os.kill(os.getpid(), signal.SIGINT)
+            await asyncio.sleep(0.5)  # the server drains, the call held
+            assert server.should_exit and not serving.done()
+            os.kill(os.getpid(), signal.SIGINT)
+            start = asyncio.get_running_loop().time()
+            await asyncio.wait_for(asyncio.shield(serving), 5)
+            exited_after.append(asyncio.get_running_loop().time() - start)
+        finally:
+            server.should_exit = server.force_exit = True
+            await serving
+            await asyncio.gather(asking, return_exceptions=True)
+            await chain.aclose()
+
+    # The SIGINTs uvicorn took are raised again once it served: not into
+    # the suite's KeyboardInterrupt.
+    previous = signal.signal(signal.SIGINT, lambda *_: None)
+    try:
+        asyncio.run(run())
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        mark_process_stopping(False)
+    assert exited_after[0] < 5
+    spans = exporter.get_finished_spans()
+    errors = {
+        s.name: _attrs(s).get("error.type")
+        for s in spans
+        if s.status.status_code == StatusCode.ERROR
+    }
+    assert errors.get("kg_rag.query") == "CancelledError", errors
+    assert errors.get(_Held.span["model"]) == "CancelledError", errors
+    if surface == "console":
+        assert errors.get("kg_rag.console.ask") == "CancelledError", errors
+    assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)
+    assert [r.outcome.value for r in records] == ["stopped"]
+
+
+_STDIO_SERVER = textwrap.dedent("""
+    import asyncio, json, os, sys
+    from pathlib import Path
+
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+    from tests.unit.test_observability import _Held
+    from unified_kg_rag.application.cli.conventions import (
+        exits_on_sigterm, stoppable,
+    )
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    from unified_kg_rag.application.cli.run_mcp_server import serve_stdio
+    from unified_kg_rag.adapters.observability.otel import build_backend
+    from unified_kg_rag.application.retrieval import query_audit
+    from unified_kg_rag.domain.models import ObservabilityConfig
+    from unified_kg_rag.shared import observability
+
+    out = Path(sys.argv[1])
+
+    def write(record):
+        with (out / "records.jsonl").open("a") as f:
+            f.write(json.dumps(record) + "\\n")
+
+    class Exporter(SpanExporter):
+        def export(self, spans):
+            for s in spans:
+                write({"span": s.name, "status": s.status.status_code.name,
+                       "error_type": (s.attributes or {}).get("error.type")})
+            return SpanExportResult.SUCCESS
+
+    # The OTLP backend's batching, its exporter replaced: the spans are
+    # exported when its batch is flushed (every 10 minutes, or as the
+    # process ends).
+    observability.install(build_backend(
+        ObservabilityConfig(enabled=True, backend="otlp"),
+        span_exporter=Exporter(),
+    ))
+    query_audit.audit_enabled = lambda: True
+    query_audit.emit = lambda r: write({"audit": r.outcome.value})
+    held = _Held(sys.argv[2])
+    chain = held.chain()
+
+    async def run():
+        async def mark():
+            await held.wait()
+            # The wire is the transport's: fd 0 reads the null device.
+            null = os.stat(os.devnull).st_rdev
+            write({"fd0_null": os.fstat(0).st_rdev == null})
+            (out / "held").touch()
+
+        marking = asyncio.create_task(mark())
+        try:
+            await serve_stdio(KnowledgeGraphTools(chain))
+        finally:
+            marking.cancel()
+            await chain.aclose()
+        return 0
+
+    @exits_on_sigterm
+    def main():
+        return asyncio.run(stoppable(run()))
+
+    main()
+    """)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
+@pytest.mark.parametrize("where", ["idle", "model"])
+def test_a_signal_ends_a_stdio_server_whose_stdin_stays_open(
+    tmp_path: Path, signum: int, where: str
+) -> None:
+    # R6C-2: the SDK's stdin reader waits for its read before a cancel ends
+    # it, so a stdio server stopped by a signal with its host's stdin open
+    # (a kill or a supervisor, not a host closing stdin first) exited only
+    # at the stop's 100 s watchdog, its spans exported at that exit or
+    # (killed first) lost. It exits at once, the call in flight ERROR and
+    # recorded stopped, its spans flushed.
+    pytest.importorskip("mcp")
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "kg_answer",
+                "arguments": {"query": "Who ships?", "strategy": "simple"},
+            },
+        },
+    ]
+    repository = Path(__file__).resolve().parents[2]
+    process = subprocess.Popen(
+        [sys.executable, "-c", _STDIO_SERVER, str(tmp_path), "model"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=repository,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(repository),
+            "OTEL_BSP_SCHEDULE_DELAY": "600000",
+        },
+    )
+    assert process.stdin is not None and process.stdout is not None
+    try:
+        process.stdin.write(json.dumps(messages[0]) + "\n")
+        process.stdin.flush()
+        assert json.loads(process.stdout.readline())["id"] == 1
+        if where == "model":
+            for message in messages[1:]:
+                process.stdin.write(json.dumps(message) + "\n")
+            process.stdin.flush()
+            for _ in range(600):
+                if (tmp_path / "held").exists():
+                    break
+                time.sleep(0.05)
+            assert (tmp_path / "held").exists()
+        start = time.monotonic()
+        process.send_signal(signum)
+        # stdin stays open.
+        code = process.wait(timeout=60)
+        took = time.monotonic() - start
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.stdin.close()
+        stderr = process.stderr.read() if process.stderr else ""
+    assert code == 128 + signum, stderr[-2000:]
+    assert took < 10, took
+    records = (
+        [
+            json.loads(line)
+            for line in (tmp_path / "records.jsonl").read_text().splitlines()
+        ]
+        if (tmp_path / "records.jsonl").exists()
+        else []
+    )
+    if where == "idle":
+        assert records == []
+        return
+    errors = {r["span"]: r["error_type"] for r in records if r.get("status") == "ERROR"}
+    assert errors.get("kg_rag.query") == "CancelledError", records
+    assert errors.get(_Held.span["model"]) == "CancelledError", records
+    assert [r["audit"] for r in records if "audit" in r] == ["stopped"]
+    assert [r["fd0_null"] for r in records if "fd0_null" in r] == [True]
 
 
 async def test_a_reader_stop_sets_no_stop_while_the_process_stops() -> None:
