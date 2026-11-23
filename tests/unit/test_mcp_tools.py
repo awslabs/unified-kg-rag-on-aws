@@ -55,6 +55,7 @@ from unified_kg_rag.shared.exceptions import (
     QueryTimeoutError,
     StoreConnectionError,
     ToolArgumentError,
+    classify,
 )
 
 pytestmark = pytest.mark.unit
@@ -1629,6 +1630,25 @@ async def test_exact_lookups_read_the_value_in_nfc(
     )
     assert match == "iri"
     assert asked == [{"iri": "urn:example:한빛물류"}]
+
+
+@pytest.mark.parametrize(
+    "given", [{}, {"entity_id": "e1", "name": "Vendor"}, {"iri": "", "name": ""}]
+)
+async def test_a_lookup_not_naming_one_entity_is_an_invalid_argument(
+    monkeypatch: pytest.MonkeyPatch, given: dict[str, str]
+) -> None:
+    class Chain:
+        config = Config()
+
+        async def _arequire_namespace(self, suffix: str | None) -> None:
+            return None
+
+    with pytest.raises(InvalidArgumentError, match="exactly one") as raised:
+        await graph_lookup.find_entities(
+            Chain(), None, limit=1, **given  # type: ignore[arg-type]
+        )
+    assert classify(raised.value) is ErrorClass.INVALID_ARGUMENT
 
 
 @pytest.mark.parametrize("query", ["", "   ", "\u200b", "\ufeff\u200d"])

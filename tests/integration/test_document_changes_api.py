@@ -43,7 +43,12 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
 )
-from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.exceptions import (
+    ConfigurationError,
+    ErrorClass,
+    InvalidArgumentError,
+    classify,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
@@ -300,6 +305,34 @@ def test_invalid_documents_are_refused_before_a_run(
     _, providers, pipeline = setup
     with pytest.raises(ValueError, match=match):
         pipeline.insert_documents(given)
+    assert _records(providers) == {}
+
+
+@pytest.mark.parametrize(
+    ("call", "match"),
+    [
+        (lambda p: p.insert_documents([]), "at least one document"),
+        (
+            lambda p: p.insert_documents(
+                [{"id": "a", "text": "x"}, {"id": "a", "text": "y"}]
+            ),
+            "more than once",
+        ),
+        (lambda p: p.delete_documents([]), "at least one id"),
+        (
+            lambda p: p.insert_documents([{"id": "a", "text": "x"}], source_scope=" "),
+            "source_scope",
+        ),
+        (lambda p: p.delete_documents(["a"], source_scope=""), "source_scope"),
+    ],
+)
+def test_a_wrong_argument_is_an_invalid_argument(setup, call: Any, match: str) -> None:
+    # A bare ValueError classified as a failure (exit code, error kind), not
+    # as the argument to fix that it is.
+    _, providers, pipeline = setup
+    with pytest.raises(InvalidArgumentError, match=match) as raised:
+        call(pipeline)
+    assert classify(raised.value) is ErrorClass.INVALID_ARGUMENT
     assert _records(providers) == {}
 
 

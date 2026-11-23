@@ -28,6 +28,7 @@ from unified_kg_rag.adapters.retrieval.memory_manager import (
 )
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import Config, ModelRole, SearchStrategy
+from unified_kg_rag.shared.exceptions import InvalidArgumentError
 
 pytestmark = pytest.mark.unit
 
@@ -262,11 +263,25 @@ def test_an_injected_memory_manager_is_shared_by_its_chains(no_bedrock) -> None:
 
 def test_providers_and_model_factory_are_exclusive() -> None:
     config = Config()
-    with pytest.raises(ValueError, match="either to GraphRAGChain"):
+    with pytest.raises(InvalidArgumentError, match="either to GraphRAGChain"):
         GraphRAGChain(
             config=config,
             providers=_fake_providers(config),
             model_factory=FakeLLMFactory(),
+        )
+
+
+def test_providers_and_a_pipeline_component_are_exclusive(tmp_path) -> None:
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineConfig
+
+    config = Config()
+    with pytest.raises(InvalidArgumentError, match="not both"):
+        DataIngestionPipeline(
+            config,
+            PipelineConfig(local_directory=tmp_path),
+            providers=_fake_providers(config),
+            doc_status=MagicMock(),
         )
 
 

@@ -950,7 +950,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if providers is not None and (
             model_factory is not None or retriever_builders is not None
         ):
-            raise ValueError(
+            raise InvalidArgumentError(
                 "Pass model_factory and retriever_builders either to GraphRAGChain "
                 "or on the Providers bundle (llm_factory=, retriever_builders=), "
                 "not both."

@@ -1014,6 +1014,11 @@ Bugs present in 0.3.0.
 - `mypy --strict` rejected every import from the package root (`Module "unified_kg_rag" does not explicitly export
   attribute "GraphRAGChain"`): `__all__` was built from the lazy-import table, which a type checker cannot read, so it
   took each name as a private import. `__all__` is a literal list now; the exported names are unchanged.
+- Seven argument checks raised a bare `ValueError`, which `classify_error` reads as a failure, not as an argument to
+  fix: `insert_documents` with no document or a repeated id, `delete_documents` with no id, either with an empty
+  `source_scope`, `providers=` given with a component it bundles (`DataIngestionPipeline`, `GraphRAGChain`), and an
+  entity lookup naming not exactly one of id, IRI and name. They raise `InvalidArgumentError` (a `ValueError`, so an
+  `except ValueError` still catches them), class `invalid_argument`.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0

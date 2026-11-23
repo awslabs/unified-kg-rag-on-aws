@@ -166,6 +166,7 @@ from unified_kg_rag.shared import (
     usage,
 )
 from unified_kg_rag.shared.exceptions import (
+    InvalidArgumentError,
     ModelUnreachableError,
     RunBudgetExhausted,
     StoreConnectionError,
@@ -439,8 +440,8 @@ class DataIngestionPipeline:
                 ``ConfirmationDeclinedError`` before it writes.
 
         Raises:
-            ValueError: ``providers`` and one of the shorthand components are
-                both given.
+            InvalidArgumentError: ``providers`` and one of the shorthand
+                components are both given.
             SchemaSourceError: The extraction schema source cannot be loaded.
             SeedGraphError: A seed graph cannot be imported.
         """
@@ -471,7 +472,7 @@ class DataIngestionPipeline:
             borrowed_graph = cast(GraphIndexer, _Borrowed(graph_indexer))
             overrides["graph_indexer_factory"] = lambda: borrowed_graph
         if providers is not None and overrides:
-            raise ValueError(
+            raise InvalidArgumentError(
                 "Pass doc_status, vector_indexer and graph_indexer either to "
                 "DataIngestionPipeline or on the Providers bundle, not both."
             )
@@ -832,8 +833,9 @@ class DataIngestionPipeline:
                 of ``indexing.methodologies`` the namespace does not hold
                 yet, which only a rebuild from every document adds), or
                 ``document_loading`` is not an enabled stage.
-            ValueError: No document, a repeated id, or an invalid document
-                (``pydantic.ValidationError``).
+            InvalidArgumentError: No document, a repeated id, or an empty
+                ``source_scope``.
+            ValueError: An invalid document (``pydantic.ValidationError``).
             DocumentNotFoundError, NamespaceLeaseError,
             ConfirmationDeclinedError, StoreConnectionError,
             PipelineExecutionError: As for :meth:`run`.
@@ -843,11 +845,11 @@ class DataIngestionPipeline:
             for d in documents
         ]
         if not given:
-            raise ValueError("insert_documents needs at least one document")
+            raise InvalidArgumentError("insert_documents needs at least one document")
         counts = Counter(d.id for d in given)
         repeated = sorted(name for name, count in counts.items() if count > 1)
         if repeated:
-            raise ValueError(
+            raise InvalidArgumentError(
                 f"document ids given more than once: {first_names(map(repr, repeated))}"
             )
         return self._run_changes(given, (), source_scope, pipeline_id)
@@ -875,13 +877,14 @@ class DataIngestionPipeline:
             DocumentNotFoundError: An id the registry does not hold for the
                 index namespace and ``source_scope`` (nothing is deleted),
                 that no earlier run of ``pipeline_id`` deleted.
+            InvalidArgumentError: No id, or an empty ``source_scope``.
             ConfigurationError, ValueError, NamespaceLeaseError,
             StoreConnectionError, PipelineExecutionError: As for
                 :meth:`insert_documents`.
         """
         names = list(dict.fromkeys(ids))
         if not names:
-            raise ValueError("delete_documents needs at least one id")
+            raise InvalidArgumentError("delete_documents needs at least one id")
         for name in names:
             # The id rule of insert_documents (a relative path).
             InputDocument(id=name, text="-")
@@ -1055,7 +1058,7 @@ class DataIngestionPipeline:
         """Refuse a run of document changes this pipeline cannot run (see
         :meth:`insert_documents`)."""
         if not isinstance(source_scope, str) or not source_scope.strip():
-            raise ValueError("source_scope must be a non-empty string")
+            raise InvalidArgumentError("source_scope must be a non-empty string")
         if not self.providers.doc_status_enabled:
             raise ConfigurationError(
                 "insert_documents and delete_documents need the doc-status "

@@ -48,6 +48,7 @@ from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
     IndexNotFoundError,
+    InvalidArgumentError,
     MethodologyNotIndexedError,
 )
 from unified_kg_rag.shared.logging import log_failure
@@ -147,6 +148,8 @@ async def find_entities(
     Raises:
         IndexNotFoundError: Nothing was ingested under ``suffix`` (checked
             first, as a query is: no retrieval logs its failure).
+        InvalidArgumentError: Not exactly one of ``entity_id``, ``iri`` and
+            ``name`` is given.
     """
     suffix = resolve_namespace(chain.config, suffix)
     await require_namespace(chain, suffix)
@@ -155,7 +158,7 @@ async def find_entities(
     )
     given = [v for v in (entity_id, iri, name) if v]
     if len(given) != 1:
-        raise ValueError("give exactly one of entity_id, iri and name")
+        raise InvalidArgumentError("give exactly one of entity_id, iri and name")
     await require_graph(chain, suffix)
     retriever = _document_retriever(chain)
     prefix = chain.config.indexing.opensearch.entities_index_prefix
