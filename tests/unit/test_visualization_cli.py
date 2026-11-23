@@ -182,8 +182,10 @@ class TestRunVisualization:
 
     def test_exported_edges_do_not_repeat_their_relationships(self) -> None:
         # Regression: every edge carried a copy of each relationship it merges
-        # under attributes.relationships, about half of the edge bytes, though
-        # no renderer reads it.
+        # under attributes.relationships, about half of the edge bytes. An
+        # edge of one relationship carries none; an edge of several lists
+        # them (E-3: the renderers show each), with only the fields a
+        # renderer reads.
         from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
         from unified_kg_rag.domain.ingestion.visualization_data import graph_data
         from unified_kg_rag.domain.models import Entity, Relationship
@@ -191,18 +193,43 @@ class TestRunVisualization:
         entities = [
             Entity(id="e1", name="Vendor", embedding=[0.1]),
             Entity(id="e2", name="Buyer"),
+            Entity(id="e3", name="Depot"),
         ]
         relationships = [
-            Relationship(id=f"r{i}", source_id="e1", target_id="e2", type="SUPPLIES")
+            Relationship(
+                id=f"r{i}",
+                source_id="e1",
+                target_id="e2",
+                type="SUPPLIES",
+                description_embedding=[0.2],
+                rank=3,
+            )
             for i in range(2)
         ]
+        relationships.append(
+            Relationship(id="r9", source_id="e1", target_id="e3", type="USES")
+        )
         graph = GraphBuilder(entities, relationships).build()
         assert len(graph.edges["e1", "e2"]["relationships"]) == 2  # live graph
         data = graph_data(graph, {"hierarchy": []})
-        (edge,) = data["edges"]
-        assert "relationships" not in edge["attributes"]
-        assert edge["attributes"]["type"] == "SUPPLIES"
-        assert edge["attributes"]["weight"] == 2.0
+        edges = {
+            e["target"] if e["source"] == "e1" else e["source"]: e
+            for e in data["edges"]
+        }
+        merged = edges["e2"]["attributes"]
+        assert merged["type"] == "SUPPLIES"
+        assert merged["weight"] == 2.0
+        assert merged["relationships"] == [
+            {
+                "id": f"r{i}",
+                "source_id": "e1",
+                "target_id": "e2",
+                "type": "SUPPLIES",
+                "weight": 1.0,
+            }
+            for i in range(2)
+        ]
+        assert "relationships" not in edges["e3"]["attributes"]
         assert "embedding" not in data["nodes"][0]["attributes"]
 
     def test_data_only_export_lays_out_only_the_drawn_nodes(

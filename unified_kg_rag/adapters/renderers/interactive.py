@@ -301,6 +301,25 @@ class InteractiveRenderer:
             return dict.fromkeys(scaled, 0.5)
         return {edge: (w - low) / (high - low) for edge, w in scaled.items()}
 
+    @staticmethod
+    def _merged_relationship_lines(attrs: dict[str, Any]) -> list[str]:
+        """The lines that name each relationship of an edge that merges
+        several (its exported ``relationships``), by type and description:
+        the scalar lines above are the first one's only."""
+        merged = attrs.get("relationships")
+        if not isinstance(merged, list) or len(merged) < 2:
+            return []
+        lines = [f"Relationships: {len(merged)}"]
+        for rel in merged:
+            if isinstance(rel, dict):
+                described = ": ".join(
+                    str(part)
+                    for part in (rel.get("type"), rel.get("description"))
+                    if part
+                )
+                lines.append(f"- {described or rel.get('id', '')}")
+        return lines
+
     def _add_edges(self, net: Network, graph: nx.Graph) -> None:
         normalized = self._normalized_edge_weights(graph)
         for u, v, attrs in graph.edges(data=True):
@@ -316,6 +335,7 @@ class InteractiveRenderer:
                 if key != "weight" and isinstance(val, (str | int | float)):
                     clean_key = key.replace("_", " ").title()
                     title_parts.append(f"{clean_key}: {val}")
+            title_parts.extend(self._merged_relationship_lines(attrs))
             title = "\n".join(title_parts)
 
             normalized_weight = normalized.get((u, v), 0.5)

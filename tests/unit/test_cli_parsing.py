@@ -1792,6 +1792,7 @@ async def test_eval_runner_json_reports_judge_reliability_and_categories(
         "answer_span": "first_line",
         "scored": 2,
         "fallbacks": 0,
+        "empty": 0,
     }
     comparison = payload["comparison"]
     assert set(comparison["deltas_by_category"]["mix"]) == {"1hop", "2hop"}

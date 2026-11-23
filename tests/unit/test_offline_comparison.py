@@ -844,7 +844,7 @@ async def test_a_baseline_is_checked_against_the_dataset_before_any_answer(
         stamp="20260101_090000_aaaaaaaa",
         order=["local"],
         started=_T0,
-        scoring={**_SCORING, "answer_contains_reads": "first_line"},
+        scoring={**_SCORING, "answer_contains_reads": "first_line_v2"},
     )
     data = tmp_path / "eval.json"
     data.write_text(
@@ -1263,6 +1263,7 @@ def test_extracted_span_fallbacks_are_warned_per_strategy() -> None:
     assert comparison["strategies"]["mix"]["answer_span_fallbacks"] == {
         "scored": 4,
         "fallbacks": 4,
+        "empty": 0,
     }
     per_strategy, rates = comparison["warnings"]
     assert per_strategy.startswith("mix: 4/4 extracted answer spans fell back")
@@ -1274,6 +1275,38 @@ def test_extracted_span_fallbacks_are_warned_per_strategy() -> None:
             resamples=2000,
         )["strategies"]["mix"]
     )
+
+
+def test_empty_extracted_spans_are_counted_and_warned_per_strategy() -> None:
+    """E-6: a span the span model gave as none (NO_ANSWER) scores exact
+    match and token F1 0 whatever the answer says; it is counted and warned
+    about like a fallback."""
+
+    def spans(run: Any, empty: int) -> Any:
+        for i, report in enumerate(run[0]):
+            report.metadata["answer_span"] = "extracted"
+            if i < empty:
+                report.metadata["answer_span_empty"] = True
+        return run
+
+    comparison = paired_comparison(
+        {
+            "local": [spans(_run(_BASE, "local"), 0)],
+            "mix": [spans(_run(_BASE, "mix"), 3)],
+        },
+        resamples=2000,
+    )
+    assert comparison["strategies"]["mix"]["answer_span_fallbacks"] == {
+        "scored": 4,
+        "fallbacks": 0,
+        "empty": 3,
+    }
+    warnings = comparison["warnings"]
+    assert any(
+        w.startswith("mix: 3/4 extracted answer spans were empty") for w in warnings
+    )
+    assert any("empty-span rates differ (local 0%, mix 75%)" in w for w in warnings)
+    assert not any("fallback rates differ" in w for w in warnings)
 
 
 def test_a_failed_answer_is_not_filled_on_attributable_fraction() -> None:
@@ -1523,6 +1556,44 @@ def test_a_run_whose_contains_read_the_whole_answer_is_not_compared() -> None:
     assert check_answer_scoring(pair, dense_script=False) == []
     pair = [("a", {"answer_scoring": now}), ("b", {"answer_scoring": dict(now)})]
     assert check_answer_scoring(pair, dense_script=False) == []
+
+
+def test_a_run_of_the_earlier_first_line_rule_is_not_compared() -> None:
+    """A run that records answer_contains_reads 'first_line' read a first
+    line that ran on into a support line opening with "[2]" and stopped at
+    a lead-in ("**Title**", "Answer:"): refused beside one of now, naming
+    exact_match and token_f1 too (a first_line span is that line), and
+    only answer_contains under answer_span 'full'."""
+    earlier = {
+        "answer_span": "first_line",
+        "answer_normalization": "official_squad",
+        "token_f1_tokens": "whitespace",
+        "answer_contains_reads": "first_line",
+    }
+    now = {**earlier, "answer_contains_reads": "first_line_v2"}
+    pair = [("before", {"answer_scoring": earlier}), ("now", {"answer_scoring": now})]
+    with pytest.raises(EvaluationException) as refused:
+        check_answer_scoring(pair, dense_script=False)
+    message = str(refused.value)
+    assert message.startswith(
+        "the runs scored exact_match, token_f1 and answer_contains with"
+    )
+    assert "one that records 'first_line' before" in message
+    full = [
+        (label, {"answer_scoring": {**m["answer_scoring"], "answer_span": "full"}})
+        for label, m in pair
+    ]
+    with pytest.raises(EvaluationException) as refused:
+        check_answer_scoring(full, dense_script=False)
+    assert str(refused.value).startswith("the runs scored answer_contains with")
+    # A run saved before answer_contains_reads (the earlier first line for
+    # exact_match and token_f1) beside one of now: all three.
+    unrecorded = {k: v for k, v in earlier.items() if k != "answer_contains_reads"}
+    with pytest.raises(EvaluationException) as refused:
+        check_answer_scoring(
+            [("old", {"answer_scoring": unrecorded}), pair[1]], dense_script=False
+        )
+    assert str(refused.value).startswith("the runs scored exact_match, token_f1")
 
 
 def test_a_run_of_the_earlier_korean_particle_rule_is_not_compared() -> None:

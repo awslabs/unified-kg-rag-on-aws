@@ -107,6 +107,7 @@ from .answer_match_evaluator import (
     ANSWER_TYPE_KEY,
     ANSWER_TYPES,
     DECLINE_IS_CORRECT_KEY,
+    SPAN_EMPTY_KEY,
     SPAN_FALLBACK_KEY,
     AnswerMatchEvaluator,
     answer_aliases,
@@ -1924,6 +1925,7 @@ class EvaluationManager:
             "answer_span": self.config.evaluation.answer_span,
             "scored": len(scored),
             "fallbacks": sum(SPAN_FALLBACK_KEY in r.metadata for r in scored),
+            "empty": sum(SPAN_EMPTY_KEY in r.metadata for r in scored),
         }
 
     @classmethod

@@ -5,6 +5,7 @@ exported ``visualization_data.json`` (no app, no stores)."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,37 @@ def test_the_page_gets_the_drawn_entities_in_full_and_the_rest_by_name(
     # The analysis is of the whole graph.
     assert data["stats"]["nodes"] == total
     assert data["stats"]["edges"] > len(data["edges"])
+
+
+def test_each_relationship_of_a_pair_is_an_edge_of_the_page(tmp_path: Path) -> None:
+    """E-3: an exported edge that merges several relationships lists them;
+    the page and the Entity panel get one edge each (its own type,
+    description and direction) and the counts see every one, while the
+    pair is drawn once at the edge's weight."""
+    path = write_export(tmp_path / "v.json", 3)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["edges"][0]["attributes"] = {
+        "id": "r1",
+        "type": "SUPPLIES",
+        "weight": 3.0,
+        "relationships": [
+            {"id": "r1", "source_id": "n0", "target_id": "n1", "type": "SUPPLIES"},
+            {"id": "r2", "source_id": "n1", "target_id": "n0", "type": "PAYS"},
+        ],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    page = graph_api.cached_graph(path, _CAP).page
+    pair = [e for e in page["edges"] if {e["source"], e["target"]} == {"n0", "n1"}]
+    assert [(e["id"], e["type"], e["source"]) for e in pair] == [
+        ("r1", "SUPPLIES", "n0"),
+        ("r2", "PAYS", "n1"),
+    ]
+    assert page["stats"]["edges"] == len(data["edges"]) + 1
+    assert page["linked"] == len(page["edges"])
+    assert dict(page["stats"]["relation_types"])["PAYS"] == 1
+    found = graph_api.entity(path, "n1", _CAP)
+    assert found is not None
+    assert {e["id"] for e in found["edges"]} >= {"r1", "r2"}
 
 
 def test_an_undrawn_entity_is_read_with_every_edge_that_touches_it(

@@ -97,6 +97,23 @@ def test_markers_are_stripped_from_the_words_of_an_answer() -> None:
     assert strip_markers("In [2020] Depot [3] opened.") == "In [2020] Depot opened."
 
 
+def test_stripped_markers_keep_the_line_breaks() -> None:
+    # E-1: a support line that opens with a marker stays a line of its own
+    # (it was joined to the answer line before), while the spaces before a
+    # marker on its line, full-width ones too, still go.
+    assert strip_markers("Acme buys [1].\n[2] Acme is the buyer.") == (
+        "Acme buys.\n Acme is the buyer."
+    )
+    assert strip_markers("Acme buys.\n\n[2] Acme.\r\n[3] B") == (
+        "Acme buys.\n\n Acme.\r\n B"
+    )
+    assert strip_markers("倉庫\u3000［１］は保管する") == "倉庫は保管する"
+    assert strip_markers("Acme buys.\u2028[2] Acme.").splitlines() == [
+        "Acme buys.",
+        " Acme.",
+    ]
+
+
 @pytest.mark.parametrize(
     "text",
     [

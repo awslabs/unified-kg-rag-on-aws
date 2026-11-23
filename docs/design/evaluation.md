@@ -128,10 +128,26 @@ choices:
   a one-sentence answer on the first line, then its support; the support
   quotes the context, so it names the gold beside a wrong answer (11 of 72
   hits on a 3B local model's answers). Containment reads the first line
-  that is no heading (`first_answer_line`, the same line `first_line` and a
-  number gold read), whatever `answer_span` says; a set gold reads as
-  before. The manifest records it (`answer_contains_reads`), so a run saved
-  when containment read the whole answer is not compared with one of now.
+  (`first_answer_line`, the same line `first_line` and a number gold read),
+  whatever `answer_span` says; a set gold reads as before. The first line
+  is the first line with a letter or digit that is no Markdown heading (a
+  thematic break or a code fence carries no answer), read with the next
+  such line while it is a lead-in: wholly in emphasis (`**Parent
+  company**`, `**Answer**`) or ending in a colon (`Answer:`, `Based on the
+  data:`). Citation markers are stripped first with the line breaks kept,
+  so a support line opening with `[2]` stays apart. The rule is the same
+  for every `search.answer_prompt_style`: a `comprehensive` answer
+  (`global`'s default) opens with the direct answer, and a markdown
+  paragraph is one line, so its first line is its first paragraph. Its
+  limits: a bold-only answer line (`**EMI**`) is read with the line after
+  it, which may name the gold, and a first paragraph that quotes the gold
+  beside a wrong answer still matches (reading a comprehensive answer whole
+  would bring the support back). A lead-in is joined, not skipped, so an
+  opening `**Yes.**` keeps its polarity. The manifest records the rule
+  (`answer_contains_reads`: `first_line_v2`), so a run saved when
+  containment read the whole answer (`full`) or the earlier first line
+  (`first_line`, which stopped at a lead-in and ran on into a support line
+  opening with a marker) is not compared with one of now.
 - **A number item is read by one small rule.** `answer_type: number` asks
   whether the answer's first line (or extracted span) states the gold: a
   gold other than 0 when the line writes it anywhere, a gold of 0 when it

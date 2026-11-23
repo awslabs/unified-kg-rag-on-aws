@@ -31,6 +31,14 @@ a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 �
 | `ragas` | 심사 | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 | `assertion` | 심사 | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`(선택 사항) |
 
+`answer_contains`는 문맥을 인용하는 뒷받침 부분이 아니라 답변의 첫 줄을 읽습니다. 첫 줄은
+글자나 숫자가 있고 Markdown 제목이 아닌 첫 줄이며(`---` 구분선과 코드 펜스는 건너뜀), 그
+줄이 도입 줄이면 다음 줄과 이어서 읽습니다. 도입 줄은 전체가 강조 표시인 줄(`**Answer**`,
+굵은 제목)이나 콜론으로 끝나는 줄(`Answer:`, `Based on the data:`)입니다. 인용 표시는
+줄바꿈을 남긴 채 먼저 지우므로 `[2]`로 시작하는 뒷받침 줄은 읽지 않습니다. 답변 형식과
+관계없이 같은 규칙을 쓰며, `comprehensive` 답변의 첫 줄은 첫 문단입니다
+([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match), 영문).
+
 `assertion`도 선택 사항입니다(`enabled_evaluators`에 추가). 답변마다 항목의 단언문(assertion)을
 확인하며, 답변당 심사 호출을 `evaluation.assertion_trials`번(기본값 3) 하고 extra는 필요 없습니다.
 자세한 내용은 [단언문, 길이 통제, 클로즈드북 기준선](#단언문-길이-통제-클로즈드북-기준선)에 있습니다.

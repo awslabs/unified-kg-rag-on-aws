@@ -562,9 +562,10 @@ class EvaluationSummary(BaseModel):
         description=(
             "The answer span the answer_match exact_match and token_f1 scored "
             "(evaluation.answer_span): 'answer_span', 'scored' (reports with "
-            "those scores) and 'fallbacks' (extracted spans that failed and "
-            "were scored on the first line instead). Empty without "
-            "answer_match."
+            "those scores), 'fallbacks' (extracted spans that failed and "
+            "were scored on the first line instead) and 'empty' (extracted "
+            "spans the span model gave as none, NO_ANSWER: exact_match and "
+            "token_f1 0). Empty without answer_match."
         ),
     )
     usage: dict[str, LLMUsage] = Field(
