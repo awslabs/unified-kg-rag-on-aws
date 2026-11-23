@@ -537,6 +537,9 @@ class CommandLineInterface:
         args = self.parser.parse_args()
         if not args.interactive and args.query is None:
             self.parser.error("either --query or --interactive is required")
+        if args.interactive and args.query is not None:
+            # The chat never answered the --query it was given.
+            self.parser.error("give --query or --interactive, not both")
         if args.query is not None:
             # An empty question is refused as the chain refuses it
             # (RAGInput.checked: invalid_argument), before any model call.

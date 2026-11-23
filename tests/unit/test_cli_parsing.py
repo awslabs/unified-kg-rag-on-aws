@@ -513,6 +513,23 @@ def test_rag_cli_rejects_search_mode_with_interactive(
     assert exc.value.code == 2
 
 
+@pytest.mark.parametrize(
+    "argv", [["-q", "What?", "-i"], ["--interactive", "--query", "What?"]]
+)
+def test_rag_cli_rejects_a_query_with_interactive(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+) -> None:
+    # Final review D-2: the chat started and never answered the --query
+    # (exit 0 at stdin's end, or a wait on an open one).
+    monkeypatch.setattr(sys, "argv", ["run-rag", *argv])
+    with pytest.raises(SystemExit) as exc:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exc.value.code == 2
+    assert "give --query or --interactive, not both" in capsys.readouterr().err
+
+
 def test_rag_cli_rejects_json_output_with_interactive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
