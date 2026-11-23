@@ -64,7 +64,9 @@ decomposed (NFD Hangul from macOS or an archive tool) matches the name as
 typed. A `:` in a name is kept (`notes 10:30.txt`, `a:b.txt`), and a
 corpus folder named like a drive (`x:/y.txt`, as an archive of a Windows
 drive unpacks) is a folder: the corpus walk found it under the root, and
-its citations, `run-describe` and `kg_get_chunks` name that path too. A
+its citations, `run-describe` and `kg_get_chunks` name that path too (the
+walk marks its text units so; a document's own path of that shape is not
+named, even when its own `filters.file` equals it). A
 path recorded for a document instead (a pre-parsed document that names
 where it lived, an `InputDocument.id`) that is absolute, starts with a
 Windows drive (`C:`, `C:/x`) or a URL scheme (`s3://`), or climbs out with

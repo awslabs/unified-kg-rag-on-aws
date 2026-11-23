@@ -23,7 +23,10 @@ from unified_kg_rag.domain.ingestion.seed_graph import SEED_UNIT_PREFIX
 from unified_kg_rag.domain.models import Config, Document, IndexBuildRecord, TextUnit
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import typed_filter_values
-from unified_kg_rag.domain.retrieval.source_fields import PATH_FILTER_KEYS
+from unified_kg_rag.domain.retrieval.source_fields import (
+    PATH_FILTER_KEYS,
+    WALKED_DRIVE_FOLDER_KEY,
+)
 from unified_kg_rag.shared import InvalidFilterError
 
 pytestmark = pytest.mark.unit
@@ -215,12 +218,20 @@ def test_a_folder_the_walk_found_named_like_a_drive_is_a_folder(
     assign_document_identity(document, "/corpus", walked=True)
     assert document.metadata["relative_path"] == path
     assert document.metadata.get("filters") == expected
+    assert document.metadata[WALKED_DRIVE_FOLDER_KEY] is True
     # The same path a document records for itself (an InputDocument id, a
-    # pre-parsed document's) may name a drive: no stamp.
+    # pre-parsed document's) may name a drive: no stamp, and no walk's mark
+    # (R5A-4), one it gives itself included.
     recorded = _document(path)
+    recorded.metadata[WALKED_DRIVE_FOLDER_KEY] = True
     assign_document_identity(recorded, "/corpus")
     assert recorded.metadata["relative_path"] == path
     assert recorded.metadata.get("filters") is None
+    assert WALKED_DRIVE_FOLDER_KEY not in recorded.metadata
+    # A walked path of no drive's shape needs no mark.
+    plain = _document("a/y.txt")
+    assign_document_identity(plain, "/corpus", walked=True)
+    assert WALKED_DRIVE_FOLDER_KEY not in plain.metadata
 
 
 @pytest.mark.parametrize(
@@ -229,8 +240,42 @@ def test_a_folder_the_walk_found_named_like_a_drive_is_a_folder(
         # R4A-6 / R4B-5: the walk's path, stamped as its file filter, reads
         # as the unit's relative path (its citations named none).
         (
-            {"relative_path": "x:/y.txt", "filters": {"file": "x:/y.txt"}},
+            {
+                "relative_path": "x:/y.txt",
+                "filters": {"file": "x:/y.txt"},
+                WALKED_DRIVE_FOLDER_KEY: True,
+            },
             "x:/y.txt",
+        ),
+        # R5A-4: a document's own drive path with its own file filter equal
+        # to it (a pre-parsed document's) names where it lived: none
+        # without the walk's mark.
+        (
+            {
+                "relative_path": "C:/Users/me/a.txt",
+                "filters": {"file": "C:/Users/me/a.txt"},
+            },
+            None,
+        ),
+        (
+            {
+                "relative_path": "C:/Users/me/a.txt",
+                "filters": {
+                    "file": "C:/Users/me/a.txt",
+                    "folder": ["C:", "C:/Users", "C:/Users/me"],
+                },
+                WALKED_DRIVE_FOLDER_KEY: "true",
+            },
+            None,
+        ),
+        # The mark with another file filter: none.
+        (
+            {
+                "relative_path": "x:/y.txt",
+                "filters": {"file": "y.txt"},
+                WALKED_DRIVE_FOLDER_KEY: True,
+            },
+            None,
         ),
         # Stamped NFC from an NFD name.
         (

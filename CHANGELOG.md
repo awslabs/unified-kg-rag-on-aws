@@ -918,8 +918,11 @@ Bugs present in 0.3.0.
   names. Recall, hit and MRR are unchanged.
 - A document in a corpus folder named like a drive (`x:/y.txt`) was scoped by its path filters but cited with no
   path, so `run-rag`, the console and MCP showed it as the root file of the same name and `kg_get_chunks` gave it no
-  `relative_path` (`run-describe` listed its file name): the read side still refused the path as a Windows one. A
-  stored `relative_path` that is the unit's stamped `file` filter is now read as its path.
+  `relative_path` (`run-describe` listed its file name): the read side still refused the path as a Windows one. The
+  corpus walk now marks such a path on its text units (`walked_drive_folder`), and a marked `relative_path` that is
+  the unit's stamped `file` filter is read as its path. A document's own drive path stays unnamed even when its own
+  `filters.file` equals it (a pre-parsed document's `C:/Users/...`). A text unit an earlier build wrote has no mark:
+  re-chunking its document (a full build) names its path.
 - MCP `kg_search` and `kg_answer`: `mcp.max_response_chars` measured each record before its `documents` were filled in
   (up to 20 file names a graph record), so with a raised `mcp.max_top_k` or a lower cap a response's records ran 1.5
   to 2.9 times the cap; and a kept chunk's `entities` could name entity records the cap had dropped. The records are

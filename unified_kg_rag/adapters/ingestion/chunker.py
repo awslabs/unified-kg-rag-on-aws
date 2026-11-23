@@ -57,6 +57,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
+from unified_kg_rag.domain.retrieval.source_fields import WALKED_DRIVE_FOLDER_KEY
 from unified_kg_rag.domain.retrieval.store_names import index_suffix, namespace_suffix
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.logging import log_failure
@@ -729,6 +730,8 @@ class BaseChunker(ABC):
             attributes["document_id"] = document.document_id
             if relative := document.metadata.get(RELATIVE_PATH_KEY):
                 attributes[RELATIVE_PATH_KEY] = relative
+                if document.metadata.get(WALKED_DRIVE_FOLDER_KEY) is True:
+                    attributes[WALKED_DRIVE_FOLDER_KEY] = True
 
             if "filters" in document.metadata:
                 attributes["filters"] = document.metadata["filters"]
