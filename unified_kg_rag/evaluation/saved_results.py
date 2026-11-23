@@ -35,6 +35,7 @@ from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import first_names
 
 from .answer_match_evaluator import (
+    CONTAINS_READS,
     CONTAINS_READS_KEY,
     SPAN_EFFORT_KEY,
     SPAN_MODEL_KEY,
@@ -361,7 +362,16 @@ def _scoring_mismatch(scorings: list[Any], listed: str) -> str:
         else None
     )
     contains = keys is None or CONTAINS_READS_KEY in keys
-    if keys is not None and keys <= {CONTAINS_READS_KEY}:
+    # The first line before "first_line_v2" ("full" and "first_line" runs
+    # read it) is also the span exact_match and token_f1 score under a
+    # first_line or extracted answer_span (its fallback): a run of either
+    # beside a "first_line_v2" one differs on those too.
+    first_line_rules = {
+        sc.get(CONTAINS_READS_KEY) == CONTAINS_READS
+        for sc in scorings
+        if isinstance(sc, dict) and sc.get("answer_span") != "full"
+    }
+    if keys is not None and keys <= {CONTAINS_READS_KEY} and len(first_line_rules) < 2:
         metrics = "answer_contains"
     elif contains:
         metrics = "exact_match, token_f1 and answer_contains"
@@ -377,10 +387,14 @@ def _scoring_mismatch(scorings: list[Any], listed: str) -> str:
             "particles of their closed class",
         ]
     if contains:
-        history.append(
+        history += [
             "one that records answer_contains_reads 'full' before "
-            "answer_contains read the answer's first line only"
-        )
+            "answer_contains read the answer's first line only",
+            "one that records 'first_line' before that line read a lead-in "
+            "line (a bold title, 'Answer:') with the line after it and kept "
+            "the line break before a support line opening with a citation "
+            "marker",
+        ]
     return (
         f"the runs scored {metrics} with different answer_scoring settings "
         f"({listed}); they are not comparable. Score one side's saved "

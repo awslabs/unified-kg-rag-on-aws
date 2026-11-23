@@ -183,8 +183,10 @@ The console prints the same summary.
   match and token F1 used and the token-F1 tokenization they imply
   (`token_f1_tokens`: `script_aware_v2` or `whitespace`) (with
   `answer_match`), what `answer_contains` reads (`answer_contains_reads`:
-  `first_line`; a run saved before it was recorded read the whole answer,
-  `full`), with an `extracted` span its `span_model` and
+  `first_line_v2`, the [first line](#answer_match); `first_line`, an
+  earlier first line that stopped at a lead-in line and ran on into a
+  support line opening with a citation marker; a run saved before it was
+  recorded read the whole answer, `full`), with an `extracted` span its `span_model` and
   `span_effort`, and `models.answer_span` the extracting model; runs
   scored differently are not comparable on those metrics (a run saved
   before the span model was recorded is warned about, not refused);
@@ -730,9 +732,22 @@ positive|negative, source?}]`, or bare strings, which are positive).
 Scores against `answer` and the optional `answer_aliases` (a string or a
 list, top level or under `metadata`, which wins), taking the maximum.
 
+- **The first line** of an answer, which `answer_contains`, the
+  `first_line` span and a number gold read, is its first line with a
+  letter or digit that is no Markdown heading (blank lines, a thematic
+  break `---` and a code fence are skipped), read with the next such line
+  while it is a lead-in: a line wholly in emphasis (`**Parent company**`,
+  `**Answer**`, `**Yes.**`) or one ending in a colon (`Answer:`, `Based on
+  the data:`), joined by a space (`**Answer** Depot.`). With citations on,
+  the markers are stripped first and the line breaks kept, so a support
+  line that opens with `[2]` is not read. The rule is the same for every
+  `search.answer_prompt_style`; a `comprehensive` answer's first line is
+  its first paragraph. A bold-only answer line is read with the line after
+  it, and a first paragraph that names the gold beside a wrong answer
+  still matches.
 - **`answer_contains`** is the headline: 1.0 when the gold answer or an alias
-  appears in the answer's first line that is no heading (the one-sentence
-  answer the answer prompt asks for) as a whole-word phrase. Long RAG answers
+  appears in the answer's first line (the one-sentence answer the answer
+  prompt asks for) as a whole-word phrase. Long RAG answers
   rarely equal a short gold span, so it tracks correctness far better than
   exact match. The support after that line is not read: it quotes the
   context, which names the gold beside a wrong answer (11 of 72 hits on a
@@ -759,8 +774,8 @@ list, top level or under `metadata`, which wins), taking the maximum.
   `وبيروت`, `القاهرة` matches `بالقاهرة`; the contracted `للقاهرة` is not
   read).
 - **Structured golds.** An item's `metadata.answer_type` changes how
-  `answer_contains` reads it: `number` reads the answer's first line that
-  is no heading (its extracted span, with `extracted`) and scores 1.0 on
+  `answer_contains` reads it: `number` reads the answer's first line
+  (its extracted span, with `extracted`) and scores 1.0 on
   this rule only:
   - A gold other than 0 matches when that line writes it as a number,
     anywhere: digits (`−5`, a Unicode minus or en-dash, is -5; an
@@ -812,7 +827,7 @@ list, top level or under `metadata`, which wins), taking the maximum.
   part that answers names must be exactly those items, so an answer
   listing every vendor scores 0. That part is the extracted span (with
   `extracted`, when it did not fall back), else the answer's first line
-  that is no heading and the list items right after it (blank lines
+  and the list items right after it (blank lines
   between them skipped, bullets and enumerators such as `1.`, `1、` and
   `・` dropped): a later `Delta is fourth` names no candidate.
   With `metadata.decline_is_correct` (a question about something the data
@@ -837,8 +852,8 @@ list, top level or under `metadata`, which wins), taking the maximum.
   predicted answer (a span such as `Depot`) against the gold answer, while
   the answer prompt writes a one-sentence answer and then its support, so
   the whole answer would score its length as much as its correctness:
-  - `first_line` (default, free): the first line that is neither empty nor a
-    Markdown heading, the one-sentence answer (`Depot stores widgets for
+  - `first_line` (default, free): the answer's
+    [first line](#answer_match), the one-sentence answer (`Depot stores widgets for
     Vendor.` scores token F1 1/3 against `Depot`; EM still under-counts).
   - `extracted`: the `models.roles.answer_span` model (fast tier; prompt
     `custom_prompts.answer_span_extraction_*`) copies the short span out of

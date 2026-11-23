@@ -844,7 +844,7 @@ async def test_a_baseline_is_checked_against_the_dataset_before_any_answer(
         stamp="20260101_090000_aaaaaaaa",
         order=["local"],
         started=_T0,
-        scoring={**_SCORING, "answer_contains_reads": "first_line"},
+        scoring={**_SCORING, "answer_contains_reads": "first_line_v2"},
     )
     data = tmp_path / "eval.json"
     data.write_text(
@@ -1523,6 +1523,44 @@ def test_a_run_whose_contains_read_the_whole_answer_is_not_compared() -> None:
     assert check_answer_scoring(pair, dense_script=False) == []
     pair = [("a", {"answer_scoring": now}), ("b", {"answer_scoring": dict(now)})]
     assert check_answer_scoring(pair, dense_script=False) == []
+
+
+def test_a_run_of_the_earlier_first_line_rule_is_not_compared() -> None:
+    """A run that records answer_contains_reads 'first_line' read a first
+    line that ran on into a support line opening with "[2]" and stopped at
+    a lead-in ("**Title**", "Answer:"): refused beside one of now, naming
+    exact_match and token_f1 too (a first_line span is that line), and
+    only answer_contains under answer_span 'full'."""
+    earlier = {
+        "answer_span": "first_line",
+        "answer_normalization": "official_squad",
+        "token_f1_tokens": "whitespace",
+        "answer_contains_reads": "first_line",
+    }
+    now = {**earlier, "answer_contains_reads": "first_line_v2"}
+    pair = [("before", {"answer_scoring": earlier}), ("now", {"answer_scoring": now})]
+    with pytest.raises(EvaluationException) as refused:
+        check_answer_scoring(pair, dense_script=False)
+    message = str(refused.value)
+    assert message.startswith(
+        "the runs scored exact_match, token_f1 and answer_contains with"
+    )
+    assert "one that records 'first_line' before" in message
+    full = [
+        (label, {"answer_scoring": {**m["answer_scoring"], "answer_span": "full"}})
+        for label, m in pair
+    ]
+    with pytest.raises(EvaluationException) as refused:
+        check_answer_scoring(full, dense_script=False)
+    assert str(refused.value).startswith("the runs scored answer_contains with")
+    # A run saved before answer_contains_reads (the earlier first line for
+    # exact_match and token_f1) beside one of now: all three.
+    unrecorded = {k: v for k, v in earlier.items() if k != "answer_contains_reads"}
+    with pytest.raises(EvaluationException) as refused:
+        check_answer_scoring(
+            [("old", {"answer_scoring": unrecorded}), pair[1]], dense_script=False
+        )
+    assert str(refused.value).startswith("the runs scored exact_match, token_f1")
 
 
 def test_a_run_of_the_earlier_korean_particle_rule_is_not_compared() -> None:

@@ -20,9 +20,10 @@ Exact match and token F1 read the part of the answer ``evaluation.answer_span``
 names. The benchmarks they come from score a short predicted span; a RAG
 answer is a sentence plus its support, and scored whole (``full``) the two
 metrics measure its length as much as its correctness. ``first_line`` (the
-default) scores the answer's first line that is neither empty nor a Markdown
-heading, the one-sentence answer the answer prompt asks for: closer to a span,
-but EM still under-counts. ``extracted`` asks the ``answer_span`` model role
+default) scores the answer's first line (``first_answer_line``: the first
+line with a letter or digit that is no Markdown heading, a lead-in line read
+with the line it announces), the one-sentence answer the answer prompt asks
+for: closer to a span, but EM still under-counts. ``extracted`` asks the ``answer_span`` model role
 for the span (``AnswerSpanExtractionPrompt``, one call per distinct question
 and answer, cached for the evaluator's life); a failed call, an empty reply
 or a span that is not in the answer falls back to ``first_line`` and is
@@ -160,9 +161,14 @@ SCRIPT_AWARE_TOKENS = "script_aware_v2"
 # What ``answer_contains`` reads of an answer for a phrase or yes/no gold:
 # its first line (``first_answer_line``), the one-sentence answer the answer
 # prompt asks for, not the support after it, which quotes the context. A
-# run saved before it was recorded read the whole answer ("full").
+# run saved before it was recorded read the whole answer ("full"); one that
+# records "first_line" read the first line before a lead-in line ("**Title**",
+# "Answer:") was read with the line after it and a thematic break skipped,
+# and before a support line that opens with a citation marker kept its line
+# break ("first_line_v2" since). The same line is the span ``first_line``
+# scores and an extracted span's fallback.
 CONTAINS_READS_KEY = "answer_contains_reads"
-CONTAINS_READS = "first_line"
+CONTAINS_READS = "first_line_v2"
 SCORED_SPAN_KEY = "scored_span"
 SPAN_FALLBACK_KEY = "answer_span_fallback"
 # The language the answer was normalized in (``answer_language``).
@@ -340,6 +346,43 @@ def items_contained(
     return float(named == set(items))
 
 
+def _carries_text(line: str) -> bool:
+    """Whether ``line`` can hold an answer: it has a letter or digit (not a
+    blank line, a thematic break "---" or a code fence) and is no Markdown
+    heading."""
+    return any(ch.isalnum() for ch in line) and not _MARKDOWN_HEADING.match(line)
+
+
+# A lead-in line: wholly in emphasis ("**Parent company**", "**Answer:**",
+# "_Short answer_:") or ending in a colon ("Answer:", "Based on the data:").
+# It announces the line after it, so it is read with that line.
+_EMPHASIS_LINE = re.compile(
+    r"\s*(\*\*|__|\*|_)(?=\S)(?:(?!\1).)+(?<=\S)\1\s*[:：]?\s*$"
+)
+_COLON_END = re.compile(r"[:：]\s*$")
+
+
+def _lead_in(line: str) -> bool:
+    return bool(_EMPHASIS_LINE.match(line) or _COLON_END.search(line))
+
+
+def _first_line_span(lines: list[str]) -> tuple[int, int] | None:
+    """``(start, end)``: ``lines[start:end]`` holds the first line that
+    carries text and the lines it leads in to (``first_answer_line``);
+    ``None`` when no line carries text."""
+    start = next((i for i, line in enumerate(lines) if _carries_text(line)), None)
+    if start is None:
+        return None
+    end = start
+    for i in range(start, len(lines)):
+        if not _carries_text(lines[i]):
+            continue
+        end = i + 1
+        if not _lead_in(lines[i]):
+            break
+    return start, end
+
+
 # A list item: a bullet ("-", "*", "+", "•", "・") or an enumerator ("1.",
 # "2)", "1、", "一、", "①").
 _LIST_ITEM = re.compile(
@@ -350,25 +393,23 @@ _LIST_ITEM = re.compile(
 
 def first_answer_block(answer: str) -> str:
     """The part of ``answer`` that answers a set question: its first line
-    that is neither empty nor a Markdown heading, then the list items that
-    follow it (blank lines between them skipped) up to the first line that
-    is no list item, each without its bullet or enumerator ("1、Acme" would
-    read as one word); the whole answer, stripped, when every line is empty
-    or a heading."""
+    (``first_answer_line``, a lead-in read with the line it announces), then
+    the list items that follow it (blank lines between them skipped) up to
+    the first line that is no list item, each without its bullet or
+    enumerator ("1、Acme" would read as one word); the whole answer,
+    stripped, when no line carries text."""
     lines = answer.splitlines()
-    start = next(
-        (
-            i
-            for i, line in enumerate(lines)
-            if line.strip() and not _MARKDOWN_HEADING.match(line)
-        ),
-        None,
-    )
-    if start is None:
+    span = _first_line_span(lines)
+    if span is None:
         return answer.strip()
-    first = _LIST_ITEM.match(lines[start])
-    block = [lines[start][first.end() if first else 0 :].strip()]
-    for line in lines[start + 1 :]:
+    start, end = span
+    first = [
+        line[item.end() if (item := _LIST_ITEM.match(line)) else 0 :].strip()
+        for line in lines[start:end]
+        if _carries_text(line)
+    ]
+    block = [" ".join(first)]
+    for line in lines[end:]:
         if not line.strip():
             continue
         item = _LIST_ITEM.match(line)
@@ -379,12 +420,18 @@ def first_answer_block(answer: str) -> str:
 
 
 def first_answer_line(answer: str) -> str:
-    """The answer's first line that is neither empty nor a Markdown heading
-    (the whole answer, stripped, when every line is one of those)."""
-    for line in answer.splitlines():
-        if line.strip() and not _MARKDOWN_HEADING.match(line):
-            return line.strip()
-    return answer.strip()
+    """The answer's first line that carries text and is no Markdown heading
+    (``_carries_text``), read with the lines that follow while it is a
+    lead-in (``_lead_in``: wholly in emphasis, or ending in a colon), joined
+    by a space: "**Parent company**" or "Answer:" then "Acme Corp." reads
+    "**Parent company** Acme Corp.". The whole answer, stripped, when no
+    line carries text."""
+    lines = answer.splitlines()
+    span = _first_line_span(lines)
+    if span is None:
+        return answer.strip()
+    start, end = span
+    return " ".join(line.strip() for line in lines[start:end] if _carries_text(line))
 
 
 # The HotpotQA script scores these only on equality: partial token credit

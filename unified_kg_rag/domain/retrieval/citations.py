@@ -62,8 +62,11 @@ _RAW_ITEM = rf"{_RAW_NUMBER}(?:\s*[-–~～－]\s*{_RAW_NUMBER})?"
 _RAW_SPAN = re.compile(
     rf"[\[［【]\s*{_RAW_ITEM}(?:\s*[,，;；、]\s*{_RAW_ITEM})*\s*[\]］】]"
 )
-# With the space before it, which strip_markers drops too.
-_RAW_MARKER = re.compile(rf"\s*{_RAW_SPAN.pattern}")
+# With the space before it on its line, which strip_markers drops too: any
+# whitespace but a line boundary (those ``str.splitlines`` splits at), so a
+# support line that opens with a marker stays a line of its own.
+_LINE_SPACE = r"[^\S\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]"
+_RAW_MARKER = re.compile(rf"{_LINE_SPACE}*{_RAW_SPAN.pattern}")
 
 
 # A bracket of a marker-shaped span and the parenthesis it reads as in
@@ -82,8 +85,11 @@ def neutralize_markers(text: str) -> str:
 
 
 def strip_markers(text: str) -> str:
-    """``text`` without its citation markers (and the space before each), for
-    scoring an answer's words against a reference (``answer_match``)."""
+    """``text`` without its citation markers (and the space before each on
+    its line), for scoring an answer's words against a reference
+    (``answer_match``). Line breaks are kept: the first line an answer's
+    score reads (``first_answer_line``) is the one the answer wrote, not one
+    joined to the support line after it that opens with "[2]"."""
     return _RAW_MARKER.sub("", text or "")
 
 

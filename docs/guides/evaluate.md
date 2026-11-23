@@ -34,6 +34,16 @@ without it.
 | `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 | `assertion` | judge | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate` (opt-in) |
 
+`answer_contains` reads the answer's first line, not the support after it
+(which quotes the context): the first line with a letter or digit that is
+no Markdown heading (a `---` rule or a code fence is skipped), read with the
+next one while it is a lead-in, a line wholly in emphasis (`**Answer**`, a
+bold title) or ending in a colon (`Answer:`, `Based on the data:`). Citation
+markers are stripped first and the line breaks kept, so a support line
+opening with `[2]` is not read. The same rule reads every answer style; a
+`comprehensive` answer's first line is its first paragraph
+([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match)).
+
 `assertion` is opt-in too (add it to `enabled_evaluators`): it checks each
 answer against the item's assertions, `evaluation.assertion_trials` (default
 3) judge calls per answer, and needs no extra; see

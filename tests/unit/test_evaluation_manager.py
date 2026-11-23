@@ -1356,7 +1356,7 @@ class TestComparability:
             "answer_span": "first_line",
             "answer_normalization": "default",
             "token_f1_tokens": "script_aware_v2",
-            "answer_contains_reads": "first_line",
+            "answer_contains_reads": "first_line_v2",
         }
         assert manifest["models"]["answer_span"] is None
         manager.config.evaluation.answer_span = "extracted"

@@ -23,6 +23,7 @@ from unified_kg_rag.evaluation.answer_match_evaluator import (
     answer_aliases,
     answer_contains,
     exact_match,
+    first_answer_block,
     first_answer_line,
     normalize_answer,
     token_f1,
@@ -908,10 +909,79 @@ class TestContainsReadsTheAnswerProper:
         config.evaluation.answer_span = span
         assert _values(_report(config, answer, gold, {}))["answer_contains"] == expected
 
+    def test_a_support_line_opening_with_a_marker_stays_apart(
+        self, config: Config
+    ) -> None:
+        # E-1: the markers' strip took the line break before "[11]" with
+        # it, so the first line ran on into the support, which names the
+        # gold beside a wrong answer (1.0 before).
+        config.search.citations.enabled = True
+        answer = (
+            "The track is in Forest Acres, South Carolina [13].\n\n"
+            "[11] Tucson Raceway Park is a track in Tucson, Arizona."
+        )
+        report = _report(config, answer, "Tucson Raceway Park", {})
+        assert _values(report)["answer_contains"] == 0.0
+        assert report.metadata["scored_span"] == (
+            "The track is in Forest Acres, South Carolina."
+        )
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            # A comprehensive (markdown) answer's openings: a bold title, a
+            # bold or plain label, a preamble ending in a colon, a thematic
+            # break, each on a line of its own (each scored 0 before).
+            "**Parent Company of Apple Records**\n\nApple Corps Ltd. owns it.",
+            "**Answer**\nApple Corps Ltd.",
+            "**Answer:**\nApple Corps Ltd.",
+            "Answer:\nApple Corps Ltd.",
+            "Based on the information in the dataset:\n\nApple Corps Ltd.",
+            "---\nApple Corps Ltd. owns it.",
+            "## Ownership\n\n---\n\n*Short answer*:\nApple Corps Ltd.",
+        ],
+    )
+    def test_a_lead_in_line_is_read_with_the_line_it_announces(
+        self, config: Config, answer: str
+    ) -> None:
+        assert (
+            _values(_report(config, answer, "Apple Corps", {}))["answer_contains"]
+            == 1.0
+        )
+
+    @pytest.mark.parametrize(
+        ("answer", "gold", "expected"),
+        [
+            # A bold opening that is the answer is not skipped: a skipped
+            # "**Yes.**" would leave the polarity unread.
+            ("**Yes.**\n\nThe contract was signed.", "yes", 1.0),
+            ("**Apple Corps Ltd.**\n\nIt owns the label.", "Apple Corps", 1.0),
+            # The line read after a lead-in is the next one only: the
+            # support after it is still not read.
+            (
+                "**Answer**\nThe parent is EMI.\nSupport: Apple Corps Ltd.",
+                "Apple Corps",
+                0.0,
+            ),
+            # Emphasis inside a line, or text after it, is no lead-in.
+            ("**Answer:** EMI.\nApple Corps Ltd.", "Apple Corps", 0.0),
+        ],
+    )
+    def test_a_lead_in_reads_one_line_more_and_no_more(
+        self, config: Config, answer: str, gold: str, expected: float
+    ) -> None:
+        assert _values(_report(config, answer, gold, {}))["answer_contains"] == expected
+
+    def test_the_set_block_starts_where_the_first_line_does(self) -> None:
+        assert first_answer_block("**Parties**\nVendor and Buyer.\n- Depot") == (
+            "**Parties** Vendor and Buyer.\nDepot"
+        )
+        assert first_answer_block("---\n- Vendor\n- Buyer") == "Vendor\nBuyer"
+
     def test_the_manifest_records_it(self, config: Config) -> None:
         assert answer_match_evaluator.answer_scoring(config)[
             "answer_contains_reads"
-        ] == ("first_line")
+        ] == ("first_line_v2")
 
 
 class TestHotpotQARule:
