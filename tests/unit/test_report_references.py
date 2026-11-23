@@ -157,6 +157,37 @@ def test_findings_keep_the_records_they_cite() -> None:
     assert "Data" not in report.full_content
 
 
+def test_a_data_number_0_is_dropped() -> None:
+    """The records are numbered from 1: a model that cites 0 names none of
+    them (G-8; ``0 <= n`` resolved it to the last record, ``items[-1]``)."""
+    detector = _detector()
+    community = _community()
+    report_input = detector._prepare_report_input(community)
+    entities = [e["id"] for e in report_input["entities"]]
+    relationships = [r["id"] for r in report_input["relationships"]]
+    # The last record (what 0 read as) is not the first.
+    assert len(entities) > 1 and len(relationships) > 1
+    result: dict[str, Any] = {
+        "community_name": "Vendor supply",
+        "summary": "Vendor supplies Buyer.",
+        "rating": "6",
+        "rating_explanation": "Supply is central.",
+        "findings": {
+            "finding": {
+                "summary": "Vendor is central",
+                "explanation": "Vendor links Buyer and parts "
+                "[Data: Entities (0, 1); Relationships (0)].",
+            }
+        },
+    }
+    report = detector._create_community_report(
+        community, result, {}, report_input=report_input
+    )
+    (finding,) = report.findings
+    assert finding.entity_ids == [entities[0]]
+    assert finding.relationship_ids == []
+
+
 def test_the_prompt_asks_for_evidence_and_references_only() -> None:
     system = CommunityReportPrompt.system_prompt_template
     human = CommunityReportPrompt.human_prompt_template
