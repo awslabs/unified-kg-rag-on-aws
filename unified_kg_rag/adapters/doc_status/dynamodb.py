@@ -22,6 +22,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
+from unified_kg_rag.adapters.aws.session import config_boto_session
 from unified_kg_rag.adapters.llm.retry import retry_wait
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
 from unified_kg_rag.domain.ingestion.document_identity import doc_id_namespace
@@ -156,10 +157,7 @@ class DynamoDBDocStatusStore:
         self.config = config
         self.ddb_config = config.aws.dynamodb
         self.table_name = self.ddb_config.table_name
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name,
-            region_name=config.aws.region_name,
-        )
+        self.boto_session = boto_session or config_boto_session(config)
         self._client: DynamoDBClient | None = None
         self._lease_client: DynamoDBClient | None = None
 

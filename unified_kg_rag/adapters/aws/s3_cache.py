@@ -12,6 +12,7 @@ from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 from unified_kg_rag.adapters.aws.s3_transfer import s3_client
+from unified_kg_rag.adapters.aws.session import config_boto_session
 from unified_kg_rag.domain.models import Config, S3EncryptionType
 from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
 from unified_kg_rag.shared import CacheSyncError, ConfigurationError, get_logger
@@ -77,10 +78,7 @@ class S3CacheManager:
             raise ConfigurationError("S3 'bucket_name' must be configured.")
 
         self.prefix = prefix.strip("/")
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name,
-            region_name=self.config.aws.region_name,
-        )
+        self.boto_session = boto_session or config_boto_session(self.config)
         self._s3_client: S3Client | None = None
         # Local cache file -> (size, mtime_ns) when its S3 copy was last
         # written or read; a file that still matches is not uploaded again.

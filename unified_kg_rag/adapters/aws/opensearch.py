@@ -526,12 +526,9 @@ class OpenSearchClient:
         local Gremlin Server or OpenSearch) never resolves an AWS profile,
         nor imports the AWS SDK.
         """
-        import boto3
+        from unified_kg_rag.adapters.aws.session import config_boto_session
 
-        return boto3.Session(
-            profile_name=self.config.aws.profile_name,
-            region_name=self.config.aws.region_name,
-        )
+        return config_boto_session(self.config)
 
     @property
     def client(self) -> OpenSearch:

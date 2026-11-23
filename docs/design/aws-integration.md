@@ -14,8 +14,10 @@ the section numbers: they never change.
 | **DynamoDB** | `adapters/doc_status/dynamodb.py` | The doc-status registry |
 
 The AWS session is the bundle's (`Providers(boto_session=...)`, so a fake or
-moto session can be injected), created from `aws.profile_name` when an AWS
-client first asks for it.
+moto session can be injected), created from `aws.profile_name` and
+`aws.region_name` (`unified_kg_rag/adapters/aws/session.py`, the one place a session is
+built) when an AWS client first asks for it. A Bedrock client names
+`aws.bedrock.region_name` itself.
 
 ### 8.1 Retrieval Error Visibility
 
