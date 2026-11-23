@@ -3870,7 +3870,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         ``scope: joined``, so an intervention on the combination no single
         result draws is reported; its text is never used. ``plan_texts``
         receives the structured plan's texts and what the guardrail made of
-        each (``_screen_structured_metadata``).
+        each (``_screen_model_metadata``).
         """
         if not self._screen_outputs:
             return search_results

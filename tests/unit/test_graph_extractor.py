@@ -339,7 +339,7 @@ class TestMergeRelationships:
 
 
 # --------------------------------------------------------------------------- #
-# _materialize_relationship_endpoints
+# cite_relationship_endpoints
 # --------------------------------------------------------------------------- #
 class TestMaterializeRelationshipEndpoints:
     def test_missing_endpoint_materialized_as_stub(self, extractor) -> None:
