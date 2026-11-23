@@ -724,6 +724,13 @@ def test_a_store_that_cannot_read_unit_attributes_keeps_the_reports_lineage(
     manager.remove_text_units("default", ["t1"])
 
     assert _lineage(vector) == _STORED_LINEAGE
+    # R5A-1: the text units are narrowed all the same (that needs no unit
+    # attributes), so a report the refresh does not write again cites no
+    # removed one.
+    assert {
+        r.community_id: r.text_unit_ids
+        for r in vector.read_community_reports(sorted(_OUTDATED))
+    } == {"c1": ["t2"], "p": ["t2", "t3"]}
     assert manager.outdated_reports["default"] == _OUTDATED
     assert any(
         "_CannotReadUnits leaves VectorIndexer.read_text_unit_attributes" in m

@@ -75,6 +75,10 @@ from unified_kg_rag.domain.models import (
     DocumentDelta,
     settings_changed,
 )
+from unified_kg_rag.domain.retrieval.source_fields import (
+    WALKED_DRIVE_FOLDER_KEY,
+    safe_relative_path,
+)
 from unified_kg_rag.domain.retrieval.store_names import index_suffix
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -184,9 +188,13 @@ def assign_document_identity(
             or document.metadata.get(RELATIVE_PATH_KEY)
             or normalize_source_path(document.file_path)
         )
-        stamp_path_filters(
-            document, relative, under_root=walked and under_root is not None
-        )
+        found = walked and under_root is not None
+        stamp_path_filters(document, relative, under_root=found)
+        # Only the walk says a drive-like first folder is a folder: a
+        # document's own path of that shape names a drive.
+        document.metadata.pop(WALKED_DRIVE_FOLDER_KEY, None)
+        if found and safe_relative_path(relative) is None:
+            document.metadata[WALKED_DRIVE_FOLDER_KEY] = True
     document.metadata[RELATIVE_PATH_KEY] = relative
     document.metadata[REGISTRY_NAMESPACE_KEY] = registry_namespace(
         _document_suffix(document), additional_suffix, store_tag

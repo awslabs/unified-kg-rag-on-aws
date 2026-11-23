@@ -1162,13 +1162,16 @@ class TestChunkBoundaryRecords:
         stored = vector.read_extraction_records(["g:kept", "g:gone", REMOVED_RECORDS])
         assert set(stored) == {"g:kept", "g:gone", REMOVED_RECORDS}
 
-    def test_a_store_that_cannot_read_the_naming_units_keeps_the_records(
+    def test_a_note_an_earlier_store_wrote_is_kept_where_units_cannot_be_read(
         self,
     ) -> None:
         # Regression (R4A-5 / R4B-6): find_documents implemented but
         # read_text_unit_attributes left at the port's default ({}): the
         # units naming the records were found, their keys read as none, and
-        # every record was deleted, those a live unit still names too.
+        # every record was deleted, those a live unit still names too. Such
+        # a store notes no key itself (R5A-2): the keys here are a note a
+        # removal on a store class that could read them left (a run killed
+        # before its commit), then read by one that cannot.
         from unified_kg_rag.application.storage.stored_items import REMOVED_RECORDS
         from unified_kg_rag.ports import VectorIndexer
 
@@ -1176,25 +1179,68 @@ class TestChunkBoundaryRecords:
             read_text_unit_attributes = VectorIndexer.read_text_unit_attributes
 
         config = Config()
-        vector = CannotRead(opensearch_config=config.indexing.opensearch)
+        vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
         vector.upsert_text_units(
             [
-                _unit("t2").model_copy(
-                    update={"attributes": {RECORD_KEYS_ATTRIBUTE: {"graph": "g:kept"}}}
+                _unit(u).model_copy(
+                    update={"attributes": {RECORD_KEYS_ATTRIBUTE: {"graph": key}}}
                 )
+                for u, key in (("t1", "g:gone"), ("t2", "g:kept"), ("t3", "g:kept"))
             ]
         )
         vector.write_extraction_records({"g:kept": {}, "g:gone": {}})
         manager = IndexingManager(
             config=config, vector_indexer=vector, graph_indexer=FakeGraphStore()
         )
-        manager._write_note(REMOVED_RECORDS, "default", {"keys": ["g:gone"]})
-        manager._removed_record_keys["default"] = {"g:kept", "g:gone"}
+        manager.remove_text_units("default", ["t1", "t2"])
+        manager.reset_run_state()  # killed before the commit's collection
+        note = vector.read_extraction_records([REMOVED_RECORDS])[REMOVED_RECORDS]
+        assert set(note["keys"]) == {"g:gone", "g:kept"}
 
+        vector.__class__ = CannotRead
         assert manager.collect_extraction_records() == {}
 
         stored = vector.read_extraction_records(["g:kept", "g:gone", REMOVED_RECORDS])
         assert set(stored) == {"g:kept", "g:gone", REMOVED_RECORDS}
+
+    @pytest.mark.parametrize("reads", [True, False])
+    def test_a_removed_units_records_on_a_store_that_cannot_read_units(
+        self, tmp_path, reads: bool
+    ) -> None:
+        # R5A-2: on the embedded OpenSearch indexer with
+        # read_text_unit_attributes left at the port's default (the shape of
+        # a custom store), a removal finds no key of the removed units: their
+        # records are never collected (garbage, the documented cost), and no
+        # record a live unit names is deleted.
+        from unified_kg_rag.ports import VectorIndexer
+
+        class CannotRead(OpenSearchIndexer):
+            read_text_unit_attributes = VectorIndexer.read_text_unit_attributes
+
+        cls = OpenSearchIndexer if reads else CannotRead
+        vector = cls(
+            Config(),
+            embedding_factory=HashingEmbeddingFactory(dimensions=8),
+            opensearch_client=SQLiteSearchEngine(tmp_path / "v.sqlite3"),
+        )
+        vector.upsert_text_units(
+            [
+                _unit(u).model_copy(
+                    update={"attributes": {RECORD_KEYS_ATTRIBUTE: {"graph": key}}}
+                )
+                for u, key in (("t1", "g:gone"), ("t2", "g:kept"))
+            ]
+        )
+        vector.write_extraction_records({"g:kept": {}, "g:gone": {}})
+        manager = IndexingManager(
+            config=Config(), vector_indexer=vector, graph_indexer=FakeGraphStore()
+        )
+
+        manager.remove_text_units("default", ["t1"])
+        manager.collect_extraction_records()
+
+        stored = set(vector.read_extraction_records(["g:kept", "g:gone"]))
+        assert stored == ({"g:kept"} if reads else {"g:kept", "g:gone"})
 
     def test_reads_nothing_without_reuse_and_writes_either_way(self) -> None:
         vector = FakeVectorStore()

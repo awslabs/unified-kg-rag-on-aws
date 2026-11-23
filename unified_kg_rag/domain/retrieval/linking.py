@@ -38,6 +38,7 @@ covers "Café", "Dang" "Đặng": ``shared.utils.scripts.without_latin_accents``
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Sequence
 from difflib import SequenceMatcher
 from typing import Literal
@@ -142,7 +143,10 @@ def focus_names_anything(
     of the query, and it holds the whole name of no entity but one spelled
     as it (an exact link), so the focus is read as no focus and the query
     itself is searched, without a word list of placeholders (it would hold
-    one language's). A name a stored one only contains does not count: a
+    one language's). A placeholder of several words, one of them a stored
+    name, is kept ("N/A" holds a stored "A", 정보 없음 정보), as any focus
+    that holds a shorter stored name is. A name a stored one only contains
+    does not count: a
     placeholder is a word of many names ("Second to None", "None of the
     Above", 梨なし園), as a part of a name is of other entities' ("York" of
     "New York", 京都 of 東京都), so "Beatles" for the stored "The Beatles"
@@ -180,7 +184,8 @@ def _holds_name(name: str, part: str) -> bool:
     would read it. A run of one letter must be a whole word of ``name``: as
     a start it would hold any name that begins with it (金 of 金正恩, 이 of
     이순신, な of the placeholder なし), and it is a whole term of its own
-    to :func:`covers` as well."""
+    to :func:`covers` as well. A letter is a character with the marks that
+    combine with it (:func:`_letters`: Thai ก็ is one letter, ไม่ two)."""
     held, wanted = _name_words(name), _name_words(part)
     if not wanted:
         return False
@@ -199,9 +204,17 @@ def _holds_name(name: str, part: str) -> bool:
     if run:
         runs.append("".join(run))
     return all(
-        r in held if len(r) == 1 else any(tail.startswith(r) for tail in tails)
+        r in held if _letters(r) == 1 else any(tail.startswith(r) for tail in tails)
         for r in runs
     )
+
+
+def _letters(text: str) -> int:
+    """How many letters ``text`` writes: its characters other than the
+    combining marks (Unicode category M), which belong to the letter before
+    them (a Thai tone mark, a Devanagari vowel sign), as an extended
+    grapheme cluster groups them."""
+    return sum(not unicodedata.category(c).startswith("M") for c in text)
 
 
 LinkPolicy = Literal["cover", "rank"]

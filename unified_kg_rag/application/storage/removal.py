@@ -241,9 +241,11 @@ class TextUnitRemoval:
         matches a report the refresh may not write again. Their text is
         kept (flagged outdated next, it is written again from what remains
         or stays flagged); an unchanged text keeps its vectors. ``None``
-        when the store cannot read reports by id, or the attributes of
-        their text units (``stored_unit_attributes``): the reports keep
-        their stored lineage rather than lose every document and filter."""
+        when the store cannot read reports by id. A store that cannot read
+        their text units' attributes (``stored_unit_attributes``) narrows
+        their text units only, which needs none: the reports keep their
+        stored documents and filters (the removed ones' included) rather
+        than lose every one."""
         vector = self._m.vector_indexer
         stored = vector.read_community_reports(report_ids, suffix)
         if not stored:
@@ -258,7 +260,9 @@ class TextUnitRemoval:
             suffix,
         )
         if attributes is None:
-            return None
+            for report in stored:
+                report.text_unit_ids = remaining[report.community_id]
+            return vector.upsert_community_reports(stored)
         attach_report_lineage(
             stored,
             remaining,
@@ -375,10 +379,13 @@ class TextUnitRemoval:
         # A backend that cannot tell keeps every community still citing
         # other text units.
         live = set(other_units if stored is None else stored)
+        # The keys live only in the units' attributes: a store that cannot
+        # read them (stored_unit_attributes) collects none of the removed
+        # units' records (garbage, which costs space only).
         m._removed_record_keys.setdefault(suffix, set()).update(
             key
-            for attributes in vector.read_text_unit_attributes(
-                text_unit_ids, suffix=suffix
+            for attributes in (
+                stored_unit_attributes(vector, text_unit_ids, suffix) or {}
             ).values()
             for key in attribute_record_keys(attributes).values()
         )
@@ -1224,7 +1231,9 @@ class TextUnitRemoval:
                 if naming_attributes is None:
                     # Nor which records the units name (its
                     # read_text_unit_attributes left at the default, warned
-                    # of): every record is kept, the note with them.
+                    # of): every record is kept, the note with them. A
+                    # tripwire: such a store notes no key itself (above), so
+                    # only a note an earlier store class wrote gets here.
                     continue
                 still_named = {
                     key

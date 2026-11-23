@@ -1244,28 +1244,49 @@ def keeps_build_records(store: object) -> bool:
     return _implements(store, BuildRecordStore, "record_build")
 
 
+def reads_text_unit_attributes(store: object) -> bool:
+    """Whether ``store`` reads its text units' stored attributes: it
+    implements ``VectorIndexer.read_text_unit_attributes`` instead of
+    inheriting the default, whose ``{}`` cannot tell a unit not stored from
+    a store that cannot read it."""
+    return _implements(store, VectorIndexer, "read_text_unit_attributes")
+
+
+def warn_unreadable_unit_attributes(store: object, *, again: bool = False) -> None:
+    """Warn that ``store`` cannot read its text units' attributes
+    (:func:`reads_text_unit_attributes`), once per store class, or each call
+    with ``again`` (an incremental run warns once per run): what incremental
+    runs then keep stale until a full build."""
+    name = type(store).__name__
+    message = (
+        "%s leaves VectorIndexer.read_text_unit_attributes at its default "
+        "(cannot read the text units' attributes): on it, incremental runs "
+        "keep the documents and document filters of community reports, "
+        "entities and relationships as the last full build wrote them (a "
+        "removed document's stay matched by attribute filters, and a report "
+        "kept or written again does not gain an added one), never collect "
+        "the extraction records of removed text units, and keep a stripped "
+        "entity's stored description. A full build (indexing.reset: true), "
+        "or implementing the method, brings them up to date"
+    )
+    if not warn_once(logger, ("read_text_unit_attributes", name), message, name):
+        if again:
+            logger.warning(message, name)
+
+
 def stored_unit_attributes(
     store: VectorIndexer, ids: list[str], suffix: str | None
 ) -> dict[str, dict[str, Any]] | None:
     """``store.read_text_unit_attributes(ids, suffix)``, or ``None`` when the
-    store leaves that method at the port's default: its ``{}`` reads as
-    "none of these text units is stored", which a store that cannot read
-    them does not mean. A caller then keeps what it would derive from them
-    (a report's documents and filters, the extraction records units still
-    name, a description's lines) as stored. Warned of once per store
-    class."""
-    if not _implements(store, VectorIndexer, "read_text_unit_attributes"):
-        name = type(store).__name__
-        warn_once(
-            logger,
-            ("read_text_unit_attributes", name),
-            "%s leaves VectorIndexer.read_text_unit_attributes at its default "
-            "(cannot read the text units' attributes): a removal or report "
-            "refresh keeps the reports' documents and filters, the extraction "
-            "records and the entity descriptions as stored, the removed "
-            "documents' included",
-            name,
-        )
+    store leaves that method at the port's default
+    (:func:`reads_text_unit_attributes`): its ``{}`` reads as "none of these
+    text units is stored", which a store that cannot read them does not
+    mean. A caller then keeps what it would derive from them (a report's
+    documents and filters, the extraction records units still name, a
+    description's lines) as stored. Warned of once per store class
+    (:func:`warn_unreadable_unit_attributes`)."""
+    if not reads_text_unit_attributes(store):
+        warn_unreadable_unit_attributes(store)
         return None
     return store.read_text_unit_attributes(ids, suffix=suffix)
 

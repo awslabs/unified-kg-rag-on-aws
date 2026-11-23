@@ -744,3 +744,48 @@ def test_a_run_with_no_change_reads_the_suffixes_from_the_diff(mocker) -> None:
     for suffix in ("default", "tenant-b"):
         record = vectors.read_build_record(suffix)
         assert record is not None and "graphrag" not in record["methodologies"]
+
+
+@pytest.mark.parametrize(
+    ("reads", "delta", "warnings"),
+    [
+        (False, DocumentDelta(unchanged=["d"]), 2),
+        (False, DocumentDelta(deleted=["d"]), 2),
+        (True, DocumentDelta(unchanged=["d"]), 0),
+        # A first build keeps nothing stored.
+        (False, DocumentDelta(new=["d"]), 0),
+    ],
+)
+def test_every_incremental_run_on_a_store_that_cannot_read_units_warns(
+    mocker, caplog, monkeypatch, reads: bool, delta: DocumentDelta, warnings: int
+) -> None:
+    """R5A-1: on a store that leaves read_text_unit_attributes at its
+    default the documents and filters an incremental run keeps stay as the
+    last full build wrote them; the WARNING was once per process and only
+    on a run that removed or refreshed something, so a later run (one that
+    changes nothing included) said nothing."""
+    from unified_kg_rag.shared import logging as shared_logging
+
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    manager = _RecordingManager()
+    manager.initialize = lambda: True  # type: ignore[attr-defined]
+    if reads:
+        manager.vector_indexer.read_text_unit_attributes = (  # type: ignore[attr-defined]
+            lambda ids, suffix=None: {}
+        )
+    stage = _stage(mocker, FakeDocStatusStore(), manager)
+    mocker.patch.object(stage, "_index_incremental", return_value=({}, None))
+
+    with caplog.at_level("WARNING"):
+        for _ in range(2):
+            stage._execute_core(_context(delta.model_copy(deep=True), []))
+
+    warned = [
+        r.getMessage()
+        for r in caplog.records
+        if "read_text_unit_attributes at its default" in r.getMessage()
+    ]
+    assert len(warned) == warnings
+    if warned:
+        assert "as the last full build wrote them" in warned[0]
+        assert "extraction records of removed text units" in warned[0]

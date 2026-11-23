@@ -832,9 +832,9 @@ Bugs present in 0.3.0.
   the fallback counted.
 - The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
   searched for as a focus entity. Local search now reads a focus that names no stored entity, no word of the query
-  and does not hold its own top hit's whole name (a placeholder such as "none" or "Empty", in any language; "New
-  York City" for the stored "New York" is kept, "Beatles" for "The Beatles" or 京都 for 東京都 is not, as "none" for
-  "None of the Above" is not) as no focus and searches by the query, and the prompt
+  and does not hold its own top hit's whole name (a one-word placeholder such as "none" or "Empty", in any language;
+  "New York City" for the stored "New York" is kept, "Beatles" for "The Beatles" or 京都 for 東京都 is not, as "none"
+  for "None of the Above" is not) as no focus and searches by the query, and the prompt
   asks for an empty answer without naming a placeholder: a wording that named "none" made a 3B model answer "none"
   for 8 of 30 MuSiQue questions that do name entities.
 - The embedded engine's `cjk` analyzer (the `ja` and `zh` default) did not fold width or drop stop words as
@@ -890,26 +890,39 @@ Bugs present in 0.3.0.
 - Local search kept a focus whose top hit is a one-letter name in a script written without spaces and seeded that
   entity: 金 grounded 金正恩, 이 grounded 이순신, な the placeholder なし (10 of 16 shapes in a probe, none kept before
   #870), as a run of one letter starts every name that begins with it. Such a run now holds a focus only as a whole
-  word of it; a run of two or more letters keeps the start rule (東京 for 東京都).
+  word of it; a run of two or more letters keeps the start rule (東京 for 東京都). A letter counts with its combining
+  marks (Thai ก็, two code points, is one letter). A placeholder of several words one of which is a stored name ("N/A"
+  with a stored "A", 정보 없음 with 정보, Thai ไม่มี with ไม่) is still kept, as the design page says.
 - On a custom vector store that leaves `VectorIndexer.read_text_unit_attributes` at its port's default (`{}`), a
   removal and the report refresh wrote every kept or refreshed community report with no `document_ids` and no
-  `filters`, so each attribute filter excluded it and its lineage was lost from the store, and the extraction-record
-  collection deleted the records live text units still name. The default now reads as "cannot tell" (one WARNING names
-  the store): the reports keep their stored documents and filters, the records are kept, and a stripped entity keeps
-  its stored description, as before. `docs/guides/extend.md` names the method.
+  `filters`, so each attribute filter excluded it and its lineage was lost from the store. The default now reads as
+  "cannot tell": a kept report's `text_unit_ids` are narrowed to the units left, its stored documents and filters are
+  kept, and a stripped entity keeps its stored description, as before. On such a store the documents and filters of
+  community reports, entities and relationships therefore stay as the last full build wrote them (a filter on a
+  removed or renamed file keeps matching them, a report does not gain an added file) and the removed text units'
+  extraction records are never collected (their keys are in those units' attributes); a WARNING names the store on
+  every incremental run, one that changes nothing included. `docs/guides/extend.md` names the method.
 - A sync `GraphRAGChain.close()` (or `OpenSearchClient.close()`) called from a coroutine left the OpenSearch async
   client's aiohttp session and every keep-alive socket open (7 of 7 after three searches inside `asyncio.run`), with
   "Unclosed client session" warnings: the awaited close it scheduled on the caller's loop was cancelled by
   `asyncio.run` before it ran. The connectors are now closed synchronously on that loop's thread (`await
   chain.aclose()` was not affected).
+- An OpenSearch client whose event loop had closed (one `GraphRAGChain` used across several `asyncio.run` calls) was
+  closed in name only: aiohttp's connector close returns early on a closed loop, so the chain's eviction of that
+  loop's retrievers, and `close()` or `aclose()` after it, left every keep-alive socket open until the cyclic GC
+  (14 of 14 after two runs of three searches, 6-7 more per run). The client now closes each pooled connection's
+  socket itself (plain and TLS): 0 open after the close, none left for the GC.
 - `retrieval`'s nDCG credited a file to every reference it names, so with `reference_sources` `[a, a.pdf]` the
   ranking `[a.pdf, a.txt]` scored 0.613 and `[a.txt, a.pdf]` 1.0 for the same two relevant files (a deeper cutoff that
   added a.txt lowered the score). A file is now credited to one reference: the one its full name is, else one its stem
   names. Recall, hit and MRR are unchanged.
 - A document in a corpus folder named like a drive (`x:/y.txt`) was scoped by its path filters but cited with no
   path, so `run-rag`, the console and MCP showed it as the root file of the same name and `kg_get_chunks` gave it no
-  `relative_path` (`run-describe` listed its file name): the read side still refused the path as a Windows one. A
-  stored `relative_path` that is the unit's stamped `file` filter is now read as its path.
+  `relative_path` (`run-describe` listed its file name): the read side still refused the path as a Windows one. The
+  corpus walk now marks such a path on its text units (`walked_drive_folder`), and a marked `relative_path` that is
+  the unit's stamped `file` filter is read as its path. A document's own drive path stays unnamed even when its own
+  `filters.file` equals it (a pre-parsed document's `C:/Users/...`). A text unit an earlier build wrote has no mark:
+  re-chunking its document (a full build) names its path.
 - MCP `kg_search` and `kg_answer`: `mcp.max_response_chars` measured each record before its `documents` were filled in
   (up to 20 file names a graph record), so with a raised `mcp.max_top_k` or a lower cap a response's records ran 1.5
   to 2.9 times the cap; and a kept chunk's `entities` could name entity records the cap had dropped. The records are
