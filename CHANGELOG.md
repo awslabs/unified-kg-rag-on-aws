@@ -1005,6 +1005,12 @@ Bugs present in 0.3.0.
   450-document store, against 2.2 s at depth 2 for the same 75 reports). A depth of
   `graph.community_detection.max_levels` or more now starts the step-down at the deepest depth the stores hold, found
   in about log2 of the depth one-report probes.
+- The XML parser's last-resort fallbacks (they run when lxml recovery loses a section of a malformed model response)
+  matched with backtracking regexes, which took cubic time on many unclosed opening tags: 1,600 bare `<e>` tags and a
+  missing later section (4.8 KB) took 30 s, 800 unclosed `<entity>` lines (12 KB) 112 s, with the GIL held, so a
+  model looping on a tag or a document written to provoke one stalled the whole ingestion process. One linear scan
+  reads the tags once now (0.01 s for both); it finds the same elements, except that a tag's name no longer ends early
+  (`<ab>x</a>` was read as an `<a>` element) and an opening tag no longer runs across other tags to a later `>`.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
