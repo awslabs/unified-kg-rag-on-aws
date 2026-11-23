@@ -3085,8 +3085,13 @@ async def _ask_after_start(port: int) -> None:
 
 
 _STDIO_SERVER = textwrap.dedent("""
-    import asyncio, json, os, sys
+    import asyncio, json, os, signal, sys
     from pathlib import Path
+
+    # Ctrl-C as an interactive shell gives it: a suite started in the
+    # background (nohup, cmd &) hands its children SIGINT ignored, which
+    # the server keeps ignored by design, so the SIGINT cases never ended.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
 
     from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
