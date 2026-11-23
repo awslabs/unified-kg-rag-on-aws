@@ -412,21 +412,40 @@ def _close_sockets_of_closed_loop(connector: Any) -> None:
     Called before the connector's close, which forgets its connections.
     Runs here the teardown the loop would have run
     (``_call_connection_lost``), which closes the socket and detaches the
-    protocol. Best-effort: a transport of another shape is left to GC."""
-    protocols = [
-        proto for held in getattr(connector, "_conns", {}).values() for proto, _ in held
-    ]
-    protocols += list(getattr(connector, "_acquired", ()))
-    for proto in protocols:
-        transport = _socket_transport(getattr(proto, "transport", None))
-        if transport is None or getattr(transport, "_sock", None) is None:
-            continue
-        # A later close() of the transport then does nothing.
-        transport._closing = True
+    protocol. Best-effort: a pool or transport of another shape is left
+    to GC (never raises)."""
+    for proto in _pooled_protocols(connector):
         try:
+            transport = _socket_transport(getattr(proto, "transport", None))
+            if transport is None or getattr(transport, "_sock", None) is None:
+                continue
+            # A later close() of the transport then does nothing.
+            transport._closing = True
             transport._call_connection_lost(None)
         except Exception as e:  # noqa: BLE001 - its socket is closed regardless
             logger.debug("Closing a connection of a closed loop: %s", e)
+
+
+def _pooled_protocols(connector: Any) -> list[Any]:
+    """The protocols of ``connector``'s idle (``_conns``: per key, pairs of
+    protocol and release time) and acquired connections; of a pool of
+    another shape, those that can be read."""
+    protocols: list[Any] = []
+    try:
+        held = list(getattr(connector, "_conns", {}).values())
+    except Exception as e:  # noqa: BLE001 - another shape: left to GC
+        logger.debug("Reading the idle connections of a closed loop: %s", e)
+        held = []
+    for entries in held:
+        try:
+            protocols += [proto for proto, _ in entries]
+        except Exception as e:  # noqa: BLE001 - another shape: left to GC
+            logger.debug("Reading the idle connections of a closed loop: %s", e)
+    try:
+        protocols += list(getattr(connector, "_acquired", ()))
+    except Exception as e:  # noqa: BLE001 - another shape: left to GC
+        logger.debug("Reading the connections in use of a closed loop: %s", e)
+    return protocols
 
 
 def _close_connections(async_client: AsyncOpenSearch) -> None:
@@ -440,7 +459,14 @@ def _close_connections(async_client: AsyncOpenSearch) -> None:
     try:
         transport = getattr(async_client, "transport", None)
         pool = getattr(transport, "connection_pool", None)
-        for connection in getattr(pool, "connections", []) or []:
+        connections = list(getattr(pool, "connections", []) or [])
+    except Exception as e:  # noqa: BLE001 - teardown must never raise
+        logger.debug("Could not close the async client's connections: %s", e)
+        return
+    for connection in connections:
+        # Each connector is closed, whatever the one before it or its
+        # sockets' release raised: its session then reads closed.
+        try:
             session = getattr(connection, "session", None)
             connector = getattr(session, "connector", None)
             if connector is None:
@@ -448,10 +474,13 @@ def _close_connections(async_client: AsyncOpenSearch) -> None:
             loop = getattr(connector, "_loop", None)
             if loop is not None and loop.is_closed():
                 # First: the connector's close forgets its connections.
-                _close_sockets_of_closed_loop(connector)
+                try:
+                    _close_sockets_of_closed_loop(connector)
+                except Exception as e:  # noqa: BLE001 - the close below runs
+                    logger.debug("Closing the sockets of a closed loop: %s", e)
             _finish_without_loop(connector.close())
-    except Exception as e:  # noqa: BLE001 - teardown must never raise
-        logger.debug("Could not close the async client's connections: %s", e)
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Could not close the async client's connection: %s", e)
 
 
 def _retryable_query_error(exc: BaseException) -> bool:

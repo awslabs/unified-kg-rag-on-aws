@@ -913,7 +913,9 @@ Bugs present in 0.3.0.
   closed in name only: aiohttp's connector close returns early on a closed loop, so the chain's eviction of that
   loop's retrievers, and `close()` or `aclose()` after it, left every keep-alive socket open until the cyclic GC
   (14 of 14 after two runs of three searches, 6-7 more per run). The client now closes each pooled connection's
-  socket itself (plain and TLS): 0 open after the close, none left for the GC.
+  socket itself (plain and TLS): 0 open after the close, none left for the GC. A pool or transport of a shape the
+  release cannot read (another aiohttp or CPython) is left to the GC, and its connector, and every later one, is still
+  closed: its session reads closed.
 - `retrieval`'s nDCG credited a file to every reference it names, so with `reference_sources` `[a, a.pdf]` the
   ranking `[a.pdf, a.txt]` scored 0.613 and `[a.txt, a.pdf]` 1.0 for the same two relevant files (a deeper cutoff that
   added a.txt lowered the score). A file is now credited to one reference: the one its full name is, else one its stem
