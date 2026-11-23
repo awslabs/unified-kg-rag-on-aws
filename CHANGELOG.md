@@ -176,6 +176,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     on its system prompts unless it defines `prompt_cache_marker(llm)` (`"cache_point"` or `"cache_control"`): the
     choice moved from the provider-neutral chain builder into the Bedrock factory. Define it, as
     `BedrockLanguageModelFactory.prompt_cache_marker` does, to keep the checkpoint.
+18. A script that reads `run-visualization`'s pages from `visualization_outputs/` without passing
+    `--output-directory` finds them under `visualization_outputs/<namespace>/` (*Changed*); pass
+    `--output-directory visualization_outputs` to keep the old place.
 
 ### Added
 
@@ -488,6 +491,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   chosen by the language-model factory's optional `prompt_cache_marker(llm)` hook, not by the provider-neutral chain
   builder, which imported langchain-aws to tell the two Bedrock clients apart. Bedrock prompts are marked as before;
   see Upgrading for a custom factory.
+- `run-visualization` without `--output-directory` writes to `visualization_outputs/<namespace>` (the namespace the
+  data names, else `--namespace`'s) instead of `visualization_outputs/`, where a second namespace's render replaced
+  the first's pages with no warning. A renderer also removes the pages it does not draw this time (the hierarchy and
+  community-size pages of data without communities), which an earlier render had left beside the new ones.
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0

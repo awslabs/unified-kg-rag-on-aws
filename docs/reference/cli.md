@@ -148,7 +148,7 @@ Guide: [Visualization](../guides/visualize.md). Also takes the [provider flags](
 | `--data-path` | — | Path to exported visualization-data JSON (default: --namespace's newest visualization_data.json under graph.visualization.outputs_directory, outputs/visualization and --cache-directory when it shows the build the stores hold, else one built from the stores into --output-directory). |
 | `--namespace` | — | Namespace to render without --data-path (the name run-ingestion --namespace wrote it under; default: the config's processing.document_parsing.namespace, else 'default'). --suffix is its deprecated alias. |
 | `--cache-directory` | `cache` | The run-ingestion cache directory searched for an export without --data-path (default: cache). |
-| `--output-directory` | `visualization_outputs` | Directory to write visualization files. |
+| `--output-directory` | — | Directory to write visualization files (default: visualization_outputs/<namespace>, the namespace the data names, else --namespace's, so two namespaces' pages never replace each other's). |
 | `--renderers` `RENDERER` | — | Renderers to run, any case: interactive, static or one a plugin registers (default: all of them, leaving out with a warning one whose extra is not installed; a renderer named here needs its extra). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing: the load fails on one by default, since a misspelled key would leave its setting at the default. |

@@ -62,6 +62,7 @@ from unified_kg_rag.application.cli.query_args import add_namespace_argument
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.storage.visualization_export import (
     current_visualization_data,
+    export_namespace,
     newest_export,
 )
 from unified_kg_rag.domain.ingestion.graph_analyzer import (
@@ -78,6 +79,7 @@ from unified_kg_rag.domain.models import (
     HierarchicalCommunity,
 )
 from unified_kg_rag.domain.models.config import InteractiveGraphSettings
+from unified_kg_rag.domain.models.retrieval import validate_safe_name
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -268,6 +270,26 @@ def run_visualization(
     return written
 
 
+# Where a render goes without --output-directory: a directory per namespace.
+DEFAULT_RENDER_DIRECTORY = "visualization_outputs"
+
+
+def _render_directory(namespace: str) -> Path:
+    """The default output directory of ``namespace``'s render."""
+    return Path(DEFAULT_RENDER_DIRECTORY) / namespace
+
+
+def _data_namespace(data_path: Path) -> str | None:
+    """The namespace the export at ``data_path`` names, when it is a safe
+    name (a path part); ``None`` for an export that names none, or one that
+    is not."""
+    namespace = export_namespace(data_path)
+    try:
+        return None if namespace is None else validate_safe_name(namespace, "namespace")
+    except ValueError:
+        return None
+
+
 def _namespace_data(config: Any, args: argparse.Namespace) -> Path:
     """The visualization data of ``--namespace``'s namespace (else the
     config's): its newest export under the directories ingestion writes to
@@ -379,8 +401,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-directory",
         type=Path,
-        default=Path("visualization_outputs"),
-        help="Directory to write visualization files",
+        default=None,
+        help=f"Directory to write visualization files (default: "
+        f"{DEFAULT_RENDER_DIRECTORY}/<namespace>, the namespace the data names, "
+        "else --namespace's, so two namespaces' pages never replace each "
+        "other's)",
     )
     parser.add_argument(
         "--renderers",
@@ -411,10 +436,19 @@ def main() -> int:
         setup_cli_logging(config, args)
         if args.renderers is not None:
             args.renderers = _requested_renderers(args.renderers)
+        if args.output_directory is None and args.data_path is None:
+            args.output_directory = _render_directory(
+                resolve_namespace(config, args.namespace)
+            )
         if args.data_path is None:
             args.data_path = _namespace_data(config, args)
         if not args.data_path.is_file():
             usage_error(f"visualization data not found: '{args.data_path}'")
+        if args.output_directory is None:
+            args.output_directory = _render_directory(
+                _data_namespace(args.data_path)
+                or resolve_namespace(config, args.namespace)
+            )
         logger.info("Rendering '%s'", args.data_path)
         failures: dict[str, str] = {}
         # Only the default list leaves out a renderer it cannot run.

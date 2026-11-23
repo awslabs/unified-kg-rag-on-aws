@@ -2246,7 +2246,8 @@ def test_visualization_without_a_data_path_reads_the_namespace_s_stores(
 def test_visualization_parser_defaults() -> None:
     args = run_visualization._build_parser().parse_args(["--data-path", "g.json"])
     assert args.data_path == Path("g.json")
-    assert args.output_directory == Path("visualization_outputs")
+    # None: visualization_outputs/<namespace> (main resolves it).
+    assert args.output_directory is None
     # None: every registered renderer, leaving out one whose extra is missing
     # (a named list needs every extra it names).
     assert args.renderers is None
