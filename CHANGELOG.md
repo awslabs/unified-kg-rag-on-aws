@@ -390,8 +390,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   with exit code 130. `Ctrl-C` at the prompt, or a second one while the question stops, ends the session as before.
 - Dependencies: pypdf 7.1.0, langchain-core 1.8.1, langchain-aws 1.9.3, langchain-openai 1.8.0, pydantic 2.14.3, fastapi
   0.163.1, ragas 0.4.4, boto3 1.44 (also in the CDK lock), aws-cdk-lib 2.277, the `ollama/ollama` 0.40.16 image in
-  `docker/compose.local.yaml`. ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046), which the pip-audit job
-  no longer accepts. botocore 1.44 makes `standard` the default retry mode, so the clients the package leaves
+  `docker/compose.local.yaml`. The `eval` extra requires ragas 0.4.4 (it allowed 0.4.3) and no longer caps
+  langchain-community below 0.4 (locked at 0.4.2, dropping dataclasses-json, marshmallow and typing-inspect): ragas
+  0.4.4 imports its Vertex AI chat model only when installed; 0.4.3 imported it from a module community 0.4 removed.
+  botocore 1.44 makes `standard` the default retry mode, so the clients the package leaves
   at botocore's defaults (the Bedrock control plane client that resolves inference profiles, and STS: the role check of
   `aws.bedrock.assumed_role_arn` and credential refresh) make 3 attempts, not 5. Every client in standard or adaptive
   mode now also retries an unmodeled HTTP 429 as throttling. The Bedrock runtime, guardrail, DynamoDB and S3 clients set
@@ -952,6 +954,11 @@ Bugs present in 0.3.0.
 - The MCP guide and the `mcp.max_response_chars` description said a trimmed `kg_search` response is the response of a
   search at a smaller `top_k`. It holds the records the search's own `top_k` cut would keep at that size, which differs
   for `local`, `ppr`, `simple` and `drift` (they size their candidate pools by `top_k`); the wording says that now.
+
+### Security
+- ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
+  accepted: the `eval` extra requires it (`ragas>=0.4.4`), and the pip-audit job no longer accepts the advisory
+  (`.github/pip-audit-accepted.txt` lists only diskcache PYSEC-2026-2447).
 
 ## [0.3.0] - 2026-11-14
 

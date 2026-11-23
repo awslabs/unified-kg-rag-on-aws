@@ -125,10 +125,10 @@ eval = [
     # langchain-community removed in 0.4 — see the ragas floor below.
     "datasets>=4.0.0",
     # Not imported by this package (the parser's loaders are its own); ragas
-    # depends on it without a bound and imports
-    # langchain_community.chat_models.vertexai unconditionally, which 0.4
-    # removed, so this only holds ragas' copy at 0.3.x. Drop it with ragas.
-    "langchain-community>=0.3.27,<0.4.0",
+    # depends on it without a bound. No upper cap: ragas 0.4.4 (the floor
+    # below) imports its Vertex AI chat model optionally, so it runs on
+    # community 0.4, which removed that module. Drop it with ragas.
+    "langchain-community>=0.3.27",
     # Not imported here: ragas depends on it without a bound. 1.1.14 fixes
     # SSRF through image token counting (GHSA-r7w7-9xr2-qq2r).
     "langchain-openai>=1.1.14,<2.0.0",
@@ -139,10 +139,12 @@ eval = [
     # Not imported here: datasets (through ragas) depends on pyarrow, and
     # 26.0.1 fixes CVE-2026-92287 (unvalidated Parquet KMS URLs).
     "pyarrow>=26.0.1",
-    # ragas 0.3.2 imports langchain_community.chat_models.vertexai, removed in
-    # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
-    # can requires datasets>=4.0.0.
-    "ragas>=0.4.3,<0.5.0",
+    # Security floor: 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 /
+    # GHSA-95ww-475f-pr4f). It also runs on langchain-community 0.4: 0.4.3
+    # imports langchain_community.chat_models.vertexai, which community 0.4
+    # removed, and fails at import time there.
+    # Every ragas that runs on LangChain 1.x requires datasets>=4.0.0.
+    "ragas>=0.4.4,<0.5.0",
 ]
 # Optional: Word (.docx) source files. The ParserFactory registers .docx only
 # when python-docx is importable; without it a .docx is skipped with a WARNING
