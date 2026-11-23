@@ -1031,9 +1031,8 @@ class BaseSearchStrategy(ABC):
         )
         key = (answer_keys, schema)
         if (reader := readers.get(key)) is None:
-            providers = getattr(self, "providers", None)
             reader = readers[key] = create_json_output_parser(
-                getattr(providers, "llm_factory", None),  # type: ignore[arg-type]
+                self.providers.llm_factory,
                 self.config.model_id(ModelRole.FIXING),
                 answer_keys=answer_keys,
                 schema=schema,

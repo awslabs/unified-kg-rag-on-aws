@@ -1498,19 +1498,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         by ``models.roles.fixing``), built once per chain. Its fixing model
         is built on the first answer that does not parse."""
         key = ("json", prompt_class, answer_keys, schema, instructions)
-        cache = getattr(self, "_prompt_chains", None)
-        with getattr(self, "_cache_lock", None) or threading.RLock():
-            if cache is not None and (cached := cache.get(key)) is not None:
+        with self._cache_lock:
+            if (cached := self._prompt_chains.get(key)) is not None:
                 return cast(FixingJsonOutputParser, cached)
             parser = create_json_output_parser(
-                getattr(self, "factory", None),  # type: ignore[arg-type]
+                self.factory,
                 self.config.model_id(ModelRole.FIXING),
                 answer_keys=answer_keys,
                 schema=schema,
                 instructions=instructions,
             )
-            if cache is not None:
-                cache[key] = cast(Runnable[Any, Any], parser)
+            self._prompt_chains[key] = cast(Runnable[Any, Any], parser)
             return parser
 
     def _start_query_inputs(

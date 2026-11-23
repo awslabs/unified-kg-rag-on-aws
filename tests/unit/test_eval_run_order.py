@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -298,6 +299,11 @@ class _ExtractingChain:
         self.config = Config()
         self._extractions = _ExtractionCache(size)
         self.model = _KeywordModel(fail_first)
+        # What GraphRAGChain._json_parser reads: its cache and the factory
+        # of the fixing model (built on a first unreadable answer only).
+        self._cache_lock = threading.RLock()
+        self._prompt_chains: dict[Any, Any] = {}
+        self.factory = None
 
     def _extraction_key(
         self, prompt: Any, query: str, language: str, *, namespace: Any = None

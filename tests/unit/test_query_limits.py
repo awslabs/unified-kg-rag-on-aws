@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any
 
 import httpx
@@ -413,6 +414,8 @@ def test_the_answer_context_is_cut_to_the_tokens_left() -> None:
 
 def _router_chain() -> GraphRAGChain:
     chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = Config()
     return chain
 

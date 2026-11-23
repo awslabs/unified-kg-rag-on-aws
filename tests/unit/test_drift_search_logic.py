@@ -199,6 +199,8 @@ def _strategy(
         setattr(drift, key, value)
     strat = DriftSearchStrategy.__new__(DriftSearchStrategy)
     strat.config = config
+    # The JSON readers' fixing model (built on a first unreadable answer).
+    strat.providers = SimpleNamespace(llm_factory=None)  # type: ignore[assignment]
     strat.drift_config = drift
     strat.ignore_errors = ignore_errors
     strat.max_concurrency = 4
