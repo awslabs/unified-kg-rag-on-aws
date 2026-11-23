@@ -72,9 +72,9 @@ Use the committed lockfile for reproducible installations. The optional
 `unstructured` extra requires a patched parser (`>=0.27.37`; 0.24.1 fixed
 URL-partitioning SSRF and unescaped markup). Do not install an older parser.
 
-The lockfile holds Ragas 0.4.4, which fixes the Ragas multimodal SSRF
-([GHSA-95ww-475f-pr4f](https://github.com/advisories/GHSA-95ww-475f-pr4f));
-an installation outside the lockfile should take Ragas 0.4.4 or later.
+The `eval` extra requires Ragas 0.4.4 or later (`>=0.4.4`), which fixes the
+Ragas multimodal SSRF
+([GHSA-95ww-475f-pr4f](https://github.com/advisories/GHSA-95ww-475f-pr4f)).
 
 The following upstream advisory currently has no patched release identified
 in the GitHub Advisory Database and remains open for tracking:
