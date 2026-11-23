@@ -1043,6 +1043,11 @@ Bugs present in 0.3.0.
   only).
 - `--trusted-identity-header` (*Added*) refuses a request that holds the header more than once or with a comma, a
   client's copy a proxy appended to, so a client cannot pass an identity of its own through a proxy that appends.
+- Prompt fencing escaped a data block's closing tag only in its exact ASCII forms: a value holding `</context>` with
+  a zero-width character inside, a fullwidth or small `<` (`＜/context＞`), a lookalike `/`, or a name with a fullwidth
+  or Cyrillic letter (`</cоntext>`) passed through, and a list value was formatted into the prompt unescaped. Those
+  forms are escaped too, and a list, tuple, set or dict value is escaped as the text it is formatted as. Whether a
+  model honours such a tag was not measured.
 
 ## [0.3.0] - 2026-11-14
 
