@@ -132,11 +132,17 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 12. A custom vector store that implements `VectorIndexer.scan_text_units` and not `scan_text_unit_pages` builds no
     summary tree (*Breaking changes*): the method is gone and nothing calls it. Implement
     `SummaryTreeStore.scan_text_unit_pages`, which yields the text units in id order, one page at a time.
-13. Python code that reads `RAGInput.search_type` gets `None` where the caller set none (the query runs the config's
+13. A custom document retriever that does not override `BaseGraphRAGRetriever.aholds_root_depth_reports`, or a custom
+    vector store that does not override `StoreInspection.holds_root_depth_reports`, answers `None` (cannot tell)
+    (*Breaking changes*): global search then steps no cut below depth 0 on it (one WARNING names the retriever class),
+    and the `community_depths` rebuild reason is never named for the store. Implement both
+    (`docs/guides/extend.md`): each says whether the namespace's live report index holds a report written without
+    `min_cut_depth`, `False` when it holds none.
+14. Python code that reads `RAGInput.search_type` gets `None` where the caller set none (the query runs the config's
     `search.search_type`), and code that reads `EvaluationConfig.retrieval_k` gets a list of cutoffs (*Breaking
     changes*): read `config.search.search_type` for the type a query runs, and `retrieval_k[0]` for the cutoff that
     scores `hit_at_k`, `recall_at_k` and `ndcg_at_k`.
-14. A namespace a development build of `main` before #852 wrote holds community reports without `min_cut_depth` too,
+15. A namespace a development build of `main` before #852 wrote holds community reports without `min_cut_depth` too,
     though its build record names 0.4.0.dev0: `run-describe` names `community_depths` for it (it reads the reports,
     not the record), and global search steps no cut below depth 0 there. Run with `indexing.reset: true` to write
     every report at its depth.
@@ -383,8 +389,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - `Ctrl-C` while `run-rag --interactive` answers stops that question and returns to the prompt; it ended the session
   with exit code 130. `Ctrl-C` at the prompt, or a second one while the question stops, ends the session as before.
 - Dependencies: pypdf 7.1.0, langchain-core 1.8.1, langchain-aws 1.9.3, langchain-openai 1.8.0, pydantic 2.14.3, fastapi
-  0.162.7, boto3 1.44 (also in the CDK lock), aws-cdk-lib 2.277, the `ollama/ollama` 0.40.16 image in
-  `docker/compose.local.yaml`. botocore 1.44 makes `standard` the default retry mode, so the clients the package leaves
+  0.163.1, ragas 0.4.4, boto3 1.44 (also in the CDK lock), aws-cdk-lib 2.277, the `ollama/ollama` 0.40.16 image in
+  `docker/compose.local.yaml`. ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046), which the pip-audit job
+  no longer accepts. botocore 1.44 makes `standard` the default retry mode, so the clients the package leaves
   at botocore's defaults (the Bedrock control plane client that resolves inference profiles, and STS: the role check of
   `aws.bedrock.assumed_role_arn` and credential refresh) make 3 attempts, not 5. Every client in standard or adaptive
   mode now also retries an unmodeled HTTP 429 as throttling. The Bedrock runtime, guardrail, DynamoDB and S3 clients set

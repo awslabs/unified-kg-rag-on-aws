@@ -72,13 +72,13 @@ Use the committed lockfile for reproducible installations. The optional
 `unstructured` extra requires a patched parser (`>=0.27.37`; 0.24.1 fixed
 URL-partitioning SSRF and unescaped markup). Do not install an older parser.
 
-The following upstream advisories currently have no patched release identified
-in the GitHub Advisory Database and remain open for tracking:
+The lockfile holds Ragas 0.4.4, which fixes the Ragas multimodal SSRF
+([GHSA-95ww-475f-pr4f](https://github.com/advisories/GHSA-95ww-475f-pr4f));
+an installation outside the lockfile should take Ragas 0.4.4 or later.
 
-- [Ragas multimodal SSRF (GHSA-95ww-475f-pr4f)](https://github.com/advisories/GHSA-95ww-475f-pr4f):
-  the built-in evaluator uses text metrics and does not invoke the affected
-  `metrics.collections.multi_modal_faithfulness` helpers. Custom evaluators
-  must not pass untrusted URLs or local paths to those helpers.
+The following upstream advisory currently has no patched release identified
+in the GitHub Advisory Database and remains open for tracking:
+
 - [DiskCache pickle deserialization (GHSA-w8v5-vhqr-4h9v)](https://github.com/advisories/GHSA-w8v5-vhqr-4h9v):
   Ragas brings DiskCache in transitively. The built-in evaluator does not
   configure Ragas's disk-cache backend. If custom code enables it, keep its

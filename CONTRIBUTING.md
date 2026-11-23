@@ -198,7 +198,7 @@ that one included.
 workflow actions and the local store images in `docker/compose.local.yaml`. These pins it cannot read; bump them by
 hand, together where they must match:
 
-- The uv version, `version: "0.12.23"` under every `astral-sh/setup-uv` step in `.github/workflows/` (Dependabot moves
+- The uv version, `version: "0.12.24"` under every `astral-sh/setup-uv` step in `.github/workflows/` (Dependabot moves
   the action's SHA, not this input), and the `ghcr.io/astral-sh/uv` image `docker/Dockerfile` copies uv from
   (`COPY --from`, tag and digest). Held at 0.12 for now (`HELD` in `scripts/check_pins.py`: the weekly report lists
   uv 0.13 as held, which opens no issue, and a newer 0.12 patch as behind; delete the entry to lift the hold): 0.13.0 has breaking changes (Python 3.15 as the default, the tar codec, constraint-file parsing) to check against
