@@ -314,7 +314,14 @@ as upstream starts at level 0
   shallower cut that fits (`global_cut_depth`), covering the same entities in
   broader reports: past depth 0 into the coarser levels (a negative
   `global_cut_depth`), as long as the stores hold one (a one-report probe
-  per coarser step). MS GraphRAG has no cap and maps the whole cut; the
+  per coarser step). A `community_depth` no hierarchy built with the
+  configured `graph.community_detection.max_levels` reaches (that many or
+  more: "the leaves") starts the step-down at the deepest depth the stores
+  hold, whose cut holds the same leaves, found by bisection in about
+  log2(`community_depth`) one-report probes (a failed probe walks every
+  depth as before): the walk took one browse per empty depth, 25.9 s at
+  depth 2,000 on a 450-document store against 2.2 s at depth 2, both
+  mapping the same 75 reports. MS GraphRAG has no cap and maps the whole cut; the
   coarser levels are this hierarchy's own. The depth-0 cut outgrows the cap
   with the corpus: on planted graphs at the default settings it held 60,
   132 and 120 reports at 2,400, 6,000 and 9,000 entities, where the coarsest

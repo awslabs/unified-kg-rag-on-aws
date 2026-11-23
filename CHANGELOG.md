@@ -996,6 +996,11 @@ Bugs present in 0.3.0.
   clusters) gave one community, and one report call, per entity: its singletons skipped the merge of communities
   under `graph.community_detection.min_community_size`. They merge as Leiden's small leaves do (a 5-entity chain: one
   community, not 5).
+- A `search.global_search.community_depth` deeper than the hierarchy ("a large value = the leaves") over
+  `max_reports_per_level` stepped down through every empty depth, one store request each (25.9 s at depth 2,000 on a
+  450-document store, against 2.2 s at depth 2 for the same 75 reports). A depth of
+  `graph.community_detection.max_levels` or more now starts the step-down at the deepest depth the stores hold, found
+  in about log2 of the depth one-report probes.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
