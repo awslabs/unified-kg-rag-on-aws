@@ -101,17 +101,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     OptimizedContext,
     TokenManager,
 )
-
-# Importing the package executes each strategy module's @register_strategy
-# decorator, populating the strategy registry used by _get_strategy_instance.
-from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
-    DriftSearchStrategy,
-    GlobalSearchStrategy,
-    IterativeSearchStrategy,
-    LightRAGSearchStrategy,
-    LocalSearchStrategy,
-    SimpleSearchStrategy,
-)
 from unified_kg_rag.application.bootstrap import (
     build_providers,
     build_query_guard,
