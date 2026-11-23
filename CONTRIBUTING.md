@@ -391,7 +391,10 @@ unit test fails when a page is stale):
 
 A public name is one a user writes: a name of the root package (`from unified_kg_rag import ...`), a field or keyword
 of one, a CLI flag, a configuration key or its `UKR__` variable. Renaming or replacing one keeps the old name working
-as a deprecated alias for at least one minor release:
+as a deprecated alias for at least one minor release. A nested configuration section's field is public through its
+key and `UKR__` variable, which keep working so; its Python attribute (`config.evaluation.prices`) and a method of a
+port or base class a custom backend implements (`VectorIndexer.scan_text_units`) may go with no alias, as a
+*Breaking change* with an *Upgrading* step:
 
 - **What is deprecated.** An alias that maps to its replacement in one place (`DEPRECATED_KEYS` for configuration
   keys, `domain/models/namespace.py` for the namespace's old names); an old and a new name given different values are
