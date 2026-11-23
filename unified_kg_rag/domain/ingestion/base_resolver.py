@@ -143,6 +143,10 @@ def _minhash_permutations(num_perm: int) -> Any:
 
 # Characters per shingle of a name's MinHash signature.
 _NAME_SHINGLE_CHARS = 3
+# Permutations of a name's MinHash signature: datasketch's default, under
+# which the LSH layouts above were measured (entity resolution; the loader's
+# document dedup has its own, DEDUP_MINHASH_PERMUTATIONS).
+NAME_MINHASH_PERMUTATIONS = 128
 
 
 def name_shingles(name: str) -> frozenset[str]:
@@ -171,7 +175,7 @@ class FuzzyMatcher:
         *,
         resolution_method: str,
         similarity_threshold: float,
-        minhash_permutations: int = 128,
+        minhash_permutations: int = NAME_MINHASH_PERMUTATIONS,
         fuzzy: bool = True,
     ):
         if not 0.0 <= similarity_threshold <= 1.0:
@@ -242,7 +246,9 @@ class FuzzyMatcher:
         return self._create_minhash(query, self.minhash_permutations)
 
     @classmethod
-    def _create_minhash(cls, text: str, minhash_permutations: int = 128) -> "MinHash":
+    def _create_minhash(
+        cls, text: str, minhash_permutations: int = NAME_MINHASH_PERMUTATIONS
+    ) -> "MinHash":
         return cls._minhash_of(name_shingles(text), minhash_permutations)
 
     @staticmethod
