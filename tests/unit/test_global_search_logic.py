@@ -645,6 +645,29 @@ async def test_a_retriever_left_at_the_gates_default_is_warned_of_once(
     assert "_DefaultDepthStore leaves aholds_root_depth_reports" in warned[0]
 
 
+class _OtherDefaultDepthStore(_DefaultDepthStore):
+    """A second custom retriever class left at the gate's default."""
+
+
+async def test_each_retriever_class_left_at_the_gates_default_is_warned_of(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R5A-5: the warning is once per class, so a second class is told too
+    # (a key without the class name warned of the first one only).
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    with caplog.at_level("WARNING", logger=global_search_module.__name__):
+        for cls in (_DefaultDepthStore, _OtherDefaultDepthStore, _DefaultDepthStore):
+            store = cls(_coarser_documents(), record=_incremental_record("0.4.0"))
+            strat = _strategy(store, max_reports_per_level=3)
+            await strat.asearch(SearchQuery(query="themes"))
+
+    warned = [r.getMessage() for r in caplog.records if "depth 0" in r.getMessage()]
+    assert [m.split()[0] for m in warned] == [
+        "_DefaultDepthStore",
+        "_OtherDefaultDepthStore",
+    ]
+
+
 async def test_a_retriever_that_answers_none_itself_is_not_warned_of_here(
     caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
