@@ -261,7 +261,7 @@ error naming what it holds.
 | A strategy the namespace does not hold | tool error with the chain's message (what it holds, how to add it) |
 | The deadline passes | tool error `QueryTimeoutError`; the chain cancels its calls |
 | A store or model failure | tool error with a generic message; logged by `log_error` (an outage with its text, an unexpected failure as its type, a digest and where it happened, its text and traceback at DEBUG) |
-| The client closes stdin (stdio) | the server exits 0; SIGTERM exits 143, Ctrl-C 130 |
+| The client closes stdin (stdio) | the server exits 0; SIGTERM exits 143, Ctrl-C 130, at once with stdin still open (the read in flight is abandoned, the spans flushed) |
 
 **Cost.** `kg_search` costs what `run-rag --mode search` costs for the same
 strategy (with `auto`, the router call; the query embedding; one rerank

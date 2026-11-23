@@ -17,9 +17,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import io
 import logging
+import os
 import sys
-from typing import Any
+from collections.abc import Iterator
+from typing import IO, Any, cast
 
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.cli.config_args import (
@@ -227,6 +231,89 @@ async def serve_http(
     await signal_stopped_server(config).serve()
 
 
+class _StdinLines:
+    """The lines of ``stream`` for the SDK's stdio transport, each read in a
+    worker thread that a cancel abandons.
+
+    The SDK's own stdin reader waits for its read to return before a
+    cancel ends it: a server a signal stopped while its host kept stdin
+    open ran on, its calls already ended, until the stop's watchdog ended
+    it (100 s), its spans not exported. The read left behind blocks
+    until the process exits."""
+
+    def __init__(self, stream: IO[str]) -> None:
+        self._stream = stream
+
+    def __aiter__(self) -> _StdinLines:
+        return self
+
+    async def __anext__(self) -> str:
+        import anyio
+
+        line = await anyio.to_thread.run_sync(
+            self._stream.readline, abandon_on_cancel=True
+        )
+        if not line:
+            raise StopAsyncIteration
+        return line
+
+
+class _UnownedText(io.TextIOWrapper):
+    """A text layer that leaves its buffer open when it closes."""
+
+    def close(self) -> None:
+        with contextlib.suppress(ValueError):
+            self.detach()
+
+
+@contextlib.contextmanager
+def _claimed_stdin() -> Iterator[IO[str]]:
+    """stdin's text for the stdio transport. As the SDK's claim of a stdin
+    it reads itself, the wire moves to a descriptor of its own and fd 0
+    to the null device while the server runs (a handler or child process
+    reading stdin reads its end, not the protocol); where it cannot move,
+    ``sys.stdin``'s buffer is read in place."""
+    buffer: IO[bytes] = sys.stdin.buffer
+    wire: int | None = None
+    try:
+        import fcntl  # POSIX only, as the SDK's claim
+
+        if buffer.fileno() == 0:
+            wire = fcntl.fcntl(0, fcntl.F_DUPFD_CLOEXEC, 3)
+            null = os.open(os.devnull, os.O_RDONLY)
+            try:
+                os.dup2(null, 0)
+            finally:
+                os.close(null)
+            # Never closed: an abandoned read may still block on it.
+            buffer = os.fdopen(wire, "rb", closefd=False)
+    except (ImportError, OSError, ValueError, AttributeError):
+        if wire is not None:
+            os.close(wire)
+            wire = None
+    try:
+        yield _UnownedText(buffer, encoding="utf-8", errors="replace")
+    finally:
+        if wire is not None:
+            os.dup2(wire, 0)
+
+
+async def serve_stdio(tools: KnowledgeGraphTools) -> None:
+    """Serve ``tools`` over stdio until the client closes stdin, or until
+    the process is stopped: a stop (a signal) ends the server at once, with
+    its host's stdin still open (:class:`_StdinLines`)."""
+    from mcp.server.stdio import stdio_server
+
+    server = build_mcp_server(tools)
+    # The SDK's MCPServer.run_stdio_async, reading stdin here.
+    lowlevel = server._lowlevel_server
+    with _claimed_stdin() as stdin:
+        # An AsyncFile to the SDK, which only iterates its lines.
+        lines = cast(Any, _StdinLines(stdin))
+        async with stdio_server(stdin=lines) as (read, write):
+            await lowlevel.run(read, write, lowlevel.create_initialization_options())
+
+
 async def warn_of_missing_namespaces(
     chain: GraphRAGChain, namespaces: list[str]
 ) -> None:
@@ -278,7 +365,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
             ", ".join(config.mcp.tools),
         )
         if args.transport == "stdio":
-            await build_mcp_server(tools).run_stdio_async()
+            await serve_stdio(tools)
         else:
             await serve_http(tools, args.host, args.port, args.trusted_identity_header)
         return 0

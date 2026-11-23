@@ -950,6 +950,11 @@ Bugs present in 0.3.0.
   the telemetry reference says they end `ERROR`. The second `Ctrl-C` now cancels them, as `run-console`'s 60 s
   graceful-shutdown limit does: their queries end `ERROR` (`CancelledError`), recorded `stopped`, and the server exits
   at once.
+- `run-mcp-server` over stdio, stopped by `SIGTERM` or `Ctrl-C` while its host kept stdin open (a `kill`, a
+  supervisor), exited only at the stop's 100 s grace limit: the MCP SDK's stdin reader waits for its read in flight
+  before a cancel ends it. Its calls had ended (`ERROR`, recorded `stopped`), but a batching span exporter flushes at
+  the exit, so a platform's kill inside those 100 s lost their spans. The server now reads stdin itself, abandoning
+  the read in flight on a stop, and exits at once (143 or 130), its spans flushed; stdin's end still exits 0.
 - The console composer's "Search strategy" and "Options" toggles were 20 px high, under WCAG 2.2's 24 px target size
   (axe passed them only on their spacing): each is a 24 px target now.
 - MCP `kg_neighbors` and `kg_get_entity` still measured their records against `mcp.max_response_chars` before their

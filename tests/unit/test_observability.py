@@ -20,6 +20,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -3003,6 +3004,165 @@ def test_a_second_ctrl_c_cancels_a_draining_server_s_request(
         assert errors.get("kg_rag.console.ask") == "CancelledError", errors
     assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)
     assert [r.outcome.value for r in records] == ["stopped"]
+
+
+_STDIO_SERVER = textwrap.dedent("""
+    import asyncio, json, os, sys
+    from pathlib import Path
+
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+    from tests.unit.test_observability import _Held
+    from unified_kg_rag.application.cli.conventions import (
+        exits_on_sigterm, stoppable,
+    )
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    from unified_kg_rag.application.cli.run_mcp_server import serve_stdio
+    from unified_kg_rag.adapters.observability.otel import build_backend
+    from unified_kg_rag.application.retrieval import query_audit
+    from unified_kg_rag.domain.models import ObservabilityConfig
+    from unified_kg_rag.shared import observability
+
+    out = Path(sys.argv[1])
+
+    def write(record):
+        with (out / "records.jsonl").open("a") as f:
+            f.write(json.dumps(record) + "\\n")
+
+    class Exporter(SpanExporter):
+        def export(self, spans):
+            for s in spans:
+                write({"span": s.name, "status": s.status.status_code.name,
+                       "error_type": (s.attributes or {}).get("error.type")})
+            return SpanExportResult.SUCCESS
+
+    # The OTLP backend's batching, its exporter replaced: the spans are
+    # exported when its batch is flushed (every 10 minutes, or as the
+    # process ends).
+    observability.install(build_backend(
+        ObservabilityConfig(enabled=True, backend="otlp"),
+        span_exporter=Exporter(),
+    ))
+    query_audit.audit_enabled = lambda: True
+    query_audit.emit = lambda r: write({"audit": r.outcome.value})
+    held = _Held(sys.argv[2])
+    chain = held.chain()
+
+    async def run():
+        async def mark():
+            await held.wait()
+            # The wire is the transport's: fd 0 reads the null device.
+            null = os.stat(os.devnull).st_rdev
+            write({"fd0_null": os.fstat(0).st_rdev == null})
+            (out / "held").touch()
+
+        marking = asyncio.create_task(mark())
+        try:
+            await serve_stdio(KnowledgeGraphTools(chain))
+        finally:
+            marking.cancel()
+            await chain.aclose()
+        return 0
+
+    @exits_on_sigterm
+    def main():
+        return asyncio.run(stoppable(run()))
+
+    main()
+    """)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
+@pytest.mark.parametrize("where", ["idle", "model"])
+def test_a_signal_ends_a_stdio_server_whose_stdin_stays_open(
+    tmp_path: Path, signum: int, where: str
+) -> None:
+    # R6C-2: the SDK's stdin reader waits for its read before a cancel ends
+    # it, so a stdio server stopped by a signal with its host's stdin open
+    # (a kill or a supervisor, not a host closing stdin first) exited only
+    # at the stop's 100 s watchdog, its spans exported at that exit or
+    # (killed first) lost. It exits at once, the call in flight ERROR and
+    # recorded stopped, its spans flushed.
+    pytest.importorskip("mcp")
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "kg_answer",
+                "arguments": {"query": "Who ships?", "strategy": "simple"},
+            },
+        },
+    ]
+    repository = Path(__file__).resolve().parents[2]
+    process = subprocess.Popen(
+        [sys.executable, "-c", _STDIO_SERVER, str(tmp_path), "model"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=repository,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(repository),
+            "OTEL_BSP_SCHEDULE_DELAY": "600000",
+        },
+    )
+    assert process.stdin is not None and process.stdout is not None
+    try:
+        process.stdin.write(json.dumps(messages[0]) + "\n")
+        process.stdin.flush()
+        assert json.loads(process.stdout.readline())["id"] == 1
+        if where == "model":
+            for message in messages[1:]:
+                process.stdin.write(json.dumps(message) + "\n")
+            process.stdin.flush()
+            for _ in range(600):
+                if (tmp_path / "held").exists():
+                    break
+                time.sleep(0.05)
+            assert (tmp_path / "held").exists()
+        start = time.monotonic()
+        process.send_signal(signum)
+        # stdin stays open.
+        code = process.wait(timeout=60)
+        took = time.monotonic() - start
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.stdin.close()
+        stderr = process.stderr.read() if process.stderr else ""
+    assert code == 128 + signum, stderr[-2000:]
+    assert took < 10, took
+    records = (
+        [
+            json.loads(line)
+            for line in (tmp_path / "records.jsonl").read_text().splitlines()
+        ]
+        if (tmp_path / "records.jsonl").exists()
+        else []
+    )
+    if where == "idle":
+        assert records == []
+        return
+    errors = {r["span"]: r["error_type"] for r in records if r.get("status") == "ERROR"}
+    assert errors.get("kg_rag.query") == "CancelledError", records
+    assert errors.get(_Held.span["model"]) == "CancelledError", records
+    assert [r["audit"] for r in records if "audit" in r] == ["stopped"]
+    assert [r["fd0_null"] for r in records if "fd0_null" in r] == [True]
 
 
 async def test_a_reader_stop_sets_no_stop_while_the_process_stops() -> None:
