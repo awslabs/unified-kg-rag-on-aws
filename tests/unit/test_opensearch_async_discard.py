@@ -165,7 +165,9 @@ async def test_async_client_binds_the_loop_object(monkeypatch) -> None:
 
 class _KeepAliveServer:
     """A keep-alive HTTP server on a loop thread of its own (plain or TLS):
-    the connections it accepted and those whose client closed them."""
+    the connections it accepted and those whose client closed them. A
+    request for ``/held`` is answered with its headers only, the body never
+    sent, so its client's response holds the connection."""
 
     def __init__(self, ssl_context: Any = None) -> None:
         self.accepted = 0
@@ -182,10 +184,11 @@ class _KeepAliveServer:
         self.accepted += 1
         try:
             while True:
-                await reader.readuntil(b"\r\n\r\n")
+                head = await reader.readuntil(b"\r\n\r\n")
                 writer.write(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
-                    b"Connection: keep-alive\r\n\r\nok"
+                    b"Connection: keep-alive\r\n\r\n"
+                    + (b"" if head.startswith(b"GET /held ") else b"ok")
                 )
                 await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError, OSError):
@@ -256,10 +259,12 @@ def _tls_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
 
 
 def _session_of_a_closed_loop(
-    url: str, client_ssl: Any, connections: int
-) -> tuple[aiohttp.ClientSession, asyncio.AbstractEventLoop]:
+    url: str, client_ssl: Any, connections: int, unreleased: int = 0
+) -> tuple[aiohttp.ClientSession, asyncio.AbstractEventLoop, list[Any]]:
     """A session whose pool holds ``connections`` keep-alive connections,
-    made in an ``asyncio.run`` that has returned (its loop is closed)."""
+    and ``unreleased`` more still acquired by a response never read nor
+    released (returned, so that none is collected and released), made in an
+    ``asyncio.run`` that has returned (its loop is closed)."""
     made: list[Any] = []
 
     async def main() -> None:
@@ -269,11 +274,13 @@ def _session_of_a_closed_loop(
             async with session.get(url) as response:
                 await response.read()
 
+        # Held first: a pooled connection would be reused for them.
+        held = [await session.get(f"{url}held") for _ in range(unreleased)]
         await asyncio.gather(*(get() for _ in range(connections)))
-        made.extend([session, asyncio.get_running_loop()])
+        made.extend([session, asyncio.get_running_loop(), held])
 
     asyncio.run(main())
-    return made[0], made[1]
+    return made[0], made[1], made[2]
 
 
 @pytest.mark.parametrize("tls", [False, True])
@@ -290,7 +297,7 @@ def test_closing_a_client_whose_loop_is_closed_closes_its_sockets(
     scheme = "https" if tls else "http"
     gc.disable()
     try:
-        session, loop = _session_of_a_closed_loop(
+        session, loop, _ = _session_of_a_closed_loop(
             f"{scheme}://127.0.0.1:{server.port}/", client_ssl, connections=3
         )
         assert loop.is_closed()
@@ -320,6 +327,57 @@ def test_closing_a_client_whose_loop_is_closed_closes_its_sockets(
             del session, client
             gc.collect()
         assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    finally:
+        gc.enable()
+        server.stop()
+
+
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("how", ["close", "aclose"])
+def test_closing_a_client_whose_loop_is_closed_closes_its_acquired_sockets(
+    tls: bool, how: str
+) -> None:
+    # R6B-2: a connection still acquired when its loop closed (a response
+    # left unreleased) is in the connector's _acquired, not its pool: the
+    # closed-loop close closes its socket as well.
+    server_ssl, client_ssl = _tls_contexts() if tls else (None, False)
+    server = _KeepAliveServer(server_ssl)
+    scheme = "https" if tls else "http"
+    gc.disable()
+    try:
+        session, loop, held = _session_of_a_closed_loop(
+            f"{scheme}://127.0.0.1:{server.port}/", client_ssl, 1, unreleased=1
+        )
+        assert loop.is_closed()
+        connector = session.connector
+        assert connector is not None
+        assert len(connector._acquired) == 1  # type: ignore[attr-defined]
+        assert sum(map(len, connector._conns.values())) == 1  # type: ignore[attr-defined]
+        assert server.accepted == 2 and server.closed == 0
+        client = _bound(_client_over(session), loop)
+        (acquired,) = connector._acquired  # type: ignore[attr-defined]
+        transport = opensearch._socket_transport(acquired.transport)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            if how == "close":
+                client.close()
+            else:
+                asyncio.run(client.aclose())
+            assert server.wait_closed(2) == 2
+            assert transport.is_closing()
+            del session, client, connector, acquired, transport, held
+            gc.collect()
+        # No socket or transport left to GC ("unclosed <socket ...>",
+        # "unclosed transport ..."). The unreleased response's own aiohttp
+        # Connection object may still report "Unclosed connection": the test
+        # never released it, on purpose.
+        assert not [
+            w
+            for w in caught
+            if issubclass(w.category, ResourceWarning)
+            and str(w.message).startswith("unclosed")
+        ]
     finally:
         gc.enable()
         server.stop()
