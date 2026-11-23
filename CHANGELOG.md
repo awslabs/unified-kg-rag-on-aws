@@ -832,9 +832,9 @@ Bugs present in 0.3.0.
   the fallback counted.
 - The query entity prompt did not say what to answer for a query that names no entity, and a model's "none" was
   searched for as a focus entity. Local search now reads a focus that names no stored entity, no word of the query
-  and does not hold its own top hit's whole name (a placeholder such as "none" or "Empty", in any language; "New
-  York City" for the stored "New York" is kept, "Beatles" for "The Beatles" or 京都 for 東京都 is not, as "none" for
-  "None of the Above" is not) as no focus and searches by the query, and the prompt
+  and does not hold its own top hit's whole name (a one-word placeholder such as "none" or "Empty", in any language;
+  "New York City" for the stored "New York" is kept, "Beatles" for "The Beatles" or 京都 for 東京都 is not, as "none"
+  for "None of the Above" is not) as no focus and searches by the query, and the prompt
   asks for an empty answer without naming a placeholder: a wording that named "none" made a 3B model answer "none"
   for 8 of 30 MuSiQue questions that do name entities.
 - The embedded engine's `cjk` analyzer (the `ja` and `zh` default) did not fold width or drop stop words as
@@ -890,7 +890,9 @@ Bugs present in 0.3.0.
 - Local search kept a focus whose top hit is a one-letter name in a script written without spaces and seeded that
   entity: 金 grounded 金正恩, 이 grounded 이순신, な the placeholder なし (10 of 16 shapes in a probe, none kept before
   #870), as a run of one letter starts every name that begins with it. Such a run now holds a focus only as a whole
-  word of it; a run of two or more letters keeps the start rule (東京 for 東京都).
+  word of it; a run of two or more letters keeps the start rule (東京 for 東京都). A letter counts with its combining
+  marks (Thai ก็, two code points, is one letter). A placeholder of several words one of which is a stored name ("N/A"
+  with a stored "A", 정보 없음 with 정보, Thai ไม่มี with ไม่) is still kept, as the design page says.
 - On a custom vector store that leaves `VectorIndexer.read_text_unit_attributes` at its port's default (`{}`), a
   removal and the report refresh wrote every kept or refreshed community report with no `document_ids` and no
   `filters`, so each attribute filter excluded it and its lineage was lost from the store. The default now reads as

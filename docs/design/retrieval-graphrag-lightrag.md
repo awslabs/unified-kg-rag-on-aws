@@ -142,11 +142,18 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   hit's whole name (`focus_names_anything`: whole words, and a run in a
   script written without spaces from the start of one of its words, a run
   of one letter only as a whole word: 金 does not hold 金正恩, nor な the
-  placeholder なし) is read
+  placeholder なし; a letter counts with its combining marks, so Thai ก็
+  is one letter and ไม่ two) is read
   as no focus: every section then searches by the query, as without one.
-  That drops the placeholder a model writes for a query that names no
-  entity ("none" or "Empty" in any language) and keeps "New York City" for
-  the stored "New York" or 東京都 for 東京. A name a stored one only
+  That drops the one-word placeholder a model writes for a query that
+  names no entity ("none" or "Empty", in any language) and keeps "New York
+  City" for the stored "New York" or 東京都 for 東京. It keeps a placeholder
+  of several words one of which is a stored name, by the kept direction
+  below: "N/A" with a stored "A" or "N", "I don't know" with "I", 정보 없음
+  with 정보, 해당 없음 with 해당, لا يوجد with لا, and, in Thai (written
+  without spaces, so only the start rule applies), ไม่มี or ไม่ทราบ with ไม่.
+  How often a model writes these against a corpus that stores such a name
+  is not measured. A name a stored one only
   contains does not count, as a placeholder is a word of many names ("None
   of the Above", "Second to None", 梨なし園) and a part of a name one of
   other entities' ("York", 京都 in 東京都): "Beatles" for the stored "The
