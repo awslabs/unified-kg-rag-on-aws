@@ -423,6 +423,9 @@ def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> No
         # is two code points, one letter; ไม่ is two letters, a start.
         (["ก็อปปี้"], [[_hit("ก็", 1.0)]], "q", False),
         (["ไม่มี"], [[_hit("ไม่", 1.0)]], "q", True),
+        # A spacing mark (category Mc) belongs to its letter too: Myanmar
+        # ကျ is a letter and its medial sign, one letter (R6A-2).
+        (["ကျောင်း"], [[_hit("ကျ", 1.0)]], "q", False),
         # A one-letter name that is a whole word of the focus still holds
         # (a run is read whole, so 金 正恩 is the one word 金正恩).
         (["王 / Electronics"], [[_hit("王", 1.0)]], "q", True),
