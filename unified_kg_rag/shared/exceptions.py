@@ -59,8 +59,9 @@ class GraphRAGException(Exception):
     @classmethod
     def caused_by(cls, context: str, cause: BaseException, **kwargs: Any) -> Self:
         """``cls(f"{context}: {cause}")``, to raise ``from cause``, whose own
-        text (:func:`own_text`) is ``context`` and the cause's ``error_name``
-        (its type, code and HTTP status): ``context`` is the package's (an
+        text (:func:`own_text`) is ``context`` and the cause's own text, or,
+        when it has none, its ``error_name`` (its type, code and HTTP
+        status): ``context`` is the package's (an
         operation, a URI, ids), the cause's message a store's, a provider's
         or a library's, which may quote a document, a prompt or an ARN. A
         surface and an INFO+ record show the own text, so an unexpected
@@ -69,7 +70,8 @@ class GraphRAGException(Exception):
         from .utils.common import error_name
 
         error = cls(f"{context}: {cause}", **kwargs)
-        error.own_text = f"{context}: {error_name(cause)}"
+        own = own_text(cause)
+        error.own_text = f"{context}: {error_name(cause) if own is None else own}"
         return error
 
     def described(self, namespaces: Collection[str] | None = None) -> str:
@@ -90,7 +92,11 @@ class CacheSyncError(AWSServiceError):
     Raised instead of returning a partial result so the run that lost its
     checkpoint exits non-zero, not the next run (another task, or an
     ``--enabled-stages`` window) with a misleading "missing stage" error.
+    Its message (the pipeline id, the bucket and the keys) is the package's
+    own (:func:`has_own_text`).
     """
+
+    own_text = True
 
 
 class ConfigurationError(GraphRAGException, ValueError):
@@ -340,7 +346,11 @@ class RunBudgetExhausted(PipelineInterrupted):
 class NamespaceLeaseError(PipelineExecutionError):
     """Another run holds the index namespace's write lease, or this run lost
     it: two runs writing one namespace at once would corrupt the registry
-    and the stores, so the run stops before (or instead of) writing."""
+    and the stores, so the run stops before (or instead of) writing. Its
+    message (the namespace, the holder's ``host:pid``, its expiry and the
+    settings to wait on) is the package's own (:func:`has_own_text`)."""
+
+    own_text = True
 
 
 class ConfirmationDeclinedError(PipelineExecutionError):
@@ -353,7 +363,11 @@ class ConfirmationDeclinedError(PipelineExecutionError):
 
 
 class PipelineResumeError(GraphRAGException):
-    pass
+    """A run cannot resume its pipeline id as asked: a stage it needs did
+    not complete, or its cached output is gone. Its message (the stages and
+    the flags that run them) is the package's own (:func:`has_own_text`)."""
+
+    own_text = True
 
 
 class PipelineStageError(PipelineExecutionError):
@@ -374,7 +388,11 @@ class PipelineStageError(PipelineExecutionError):
 
 
 class PipelineStateError(GraphRAGException):
-    pass
+    """A pipeline's metadata file is missing, empty, corrupt or could not be
+    saved. Its message (the file's path) is the package's own
+    (:func:`has_own_text`)."""
+
+    own_text = True
 
 
 class QueryTimeoutError(GraphRAGException, TimeoutError):

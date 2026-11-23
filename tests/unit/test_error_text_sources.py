@@ -399,6 +399,46 @@ def test_a_saved_result_names_the_cause_an_own_message_leaves_out() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "NamespaceLeaseError",
+        "PipelineResumeError",
+        "PipelineStateError",
+        "CacheSyncError",
+    ],
+)
+def test_the_run_state_errors_show_their_own_message(kind: str) -> None:
+    # Final review C-1: their messages are the package's (a namespace, a
+    # holder's host:pid, stages, flags, a metadata path, cache keys) and
+    # say what to do; a CLI showed "an unexpected error" instead.
+    from unified_kg_rag.shared import exceptions
+
+    message = "Index namespace 'default' is being written by host:1 (wait)"
+    error = getattr(exceptions, kind)(message)
+    assert operator_error_text(error) == message
+    assert result_error_text(error) == f"[failure] {kind}: {message}"
+
+
+def test_a_wrapped_own_message_is_shown_not_its_type() -> None:
+    # Final review C-1: "Pipeline resume failed: PipelineResumeError" hid
+    # the stage to run; a cause whose message is the package's own is shown
+    # in full, a cause's foreign text still never is.
+    from unified_kg_rag.shared import PipelineExecutionError, PipelineResumeError
+
+    cause = PipelineResumeError("Run 'graph_resolution' first.")
+    error = PipelineExecutionError.caused_by("Pipeline resume failed", cause)
+    assert operator_error_text(error) == (
+        "Pipeline resume failed: Run 'graph_resolution' first."
+    )
+    partial = AWSServiceError.caused_by("Neptune read failed", _boom())
+    outer = PipelineExecutionError.caused_by("Stage failed", partial)
+    assert operator_error_text(outer) == (
+        "Stage failed: Neptune read failed: RuntimeError"
+    )
+    _assert_no_marker(str(operator_error_text(outer)))
+
+
 def test_a_failed_export_names_its_folder_at_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

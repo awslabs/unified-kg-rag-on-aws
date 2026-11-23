@@ -98,6 +98,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import (
     ErrorClass,
+    NamespaceLeaseError,
     RunBudgetExhausted,
     with_own_text,
 )
@@ -727,16 +728,18 @@ class IngestionPipelineRunner:
                 f"'{markup_safe(self.args.pipeline_id)}' under "
                 f"'{markup_safe(self.args.cache_directory)}'[/red]"
             )
-            raise PipelineExecutionError(
-                f"Pipeline '{self.args.pipeline_id}' not found"
+            raise with_own_text(
+                PipelineExecutionError(f"Pipeline '{self.args.pipeline_id}' not found")
             )
         if not self.pipeline.verify_pipeline_metadata(self.args.pipeline_id):
             console.print("[red]✗ Metadata file is corrupted or invalid[/red]")
             # Raise so main() exits non-zero: a scripted check must see the
             # corruption, not a success exit code.
-            raise PipelineExecutionError(
-                f"Metadata for pipeline '{self.args.pipeline_id}' is "
-                "corrupted or invalid"
+            raise with_own_text(
+                PipelineExecutionError(
+                    f"Metadata for pipeline '{self.args.pipeline_id}' is "
+                    "corrupted or invalid"
+                )
             )
         console.print("[green]✓ Metadata file is valid[/green]")
         if self.json_output:
@@ -754,7 +757,9 @@ class IngestionPipelineRunner:
                 pipeline_id=self.args.pipeline_id,
                 resume_from_stage=self.args.resume_from_stage,
             )
-        except ConfirmationDeclinedError:
+        except (ConfirmationDeclinedError, NamespaceLeaseError):
+            # Their message says what to do: answer the question, or wait for
+            # the run that holds the namespace (a rebuild would not help).
             raise
         except PipelineExecutionError:
             # main() prints the error itself, after these suggestions.
