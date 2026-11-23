@@ -35,6 +35,7 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    SERVER_GRACEFUL_SHUTDOWN_SECONDS,
     ArgumentParser,
     add_log_level_and_version_arguments,
     exits_on_sigterm,
@@ -227,7 +228,15 @@ async def serve_http(
     logger.info(
         "Serving MCP over streamable HTTP on http://%s:%s/mcp", shown_host, port
     )
-    config = uvicorn.Config(app, host=host, port=port, log_config=None)
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_config=None,
+        # A call still running then is cut: its query ends ERROR, recorded
+        # stopped, before the platform's kill.
+        timeout_graceful_shutdown=SERVER_GRACEFUL_SHUTDOWN_SECONDS,
+    )
     await signal_stopped_server(config).serve()
 
 

@@ -155,6 +155,7 @@ ALLOWED: dict[str, str] = {
         "application/cli/mcp_tools.py:_BACKSTOP_GRACE_SECONDS",
         "application/cli/conventions.py:_CHILD_EXIT_SECONDS",
         "application/cli/conventions.py:_STOP_GRACE_SECONDS",
+        "application/cli/conventions.py:SERVER_GRACEFUL_SHUTDOWN_SECONDS",
         "application/ingestion/incremental.py:_PROBE_DOCUMENTS",
         "application/ingestion/incremental.py:_PROBE_UNITS",
         "application/ingestion/incremental.py:MASS_DELETION_MIN_DOCUMENTS",

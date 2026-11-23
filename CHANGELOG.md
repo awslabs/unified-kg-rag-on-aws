@@ -1067,6 +1067,11 @@ Bugs present in 0.3.0.
   set (a laptop or an EC2 host). With `create_table_if_missing` a run then made an empty registry table in that
   region beside stores in the configured one. Every AWS session is now built in one place, from `aws.profile_name` and
   `aws.region_name`.
+- `run-mcp-server --transport streamable-http` set no limit to its graceful shutdown, and a second `SIGTERM` does not
+  force uvicorn, so one `SIGTERM` (all ECS sends before its kill) let a call in flight run to its end: one longer than
+  the task's `stopTimeout` was killed with no span and no audit record. It now cuts the calls still running after
+  60 s, the console's limit (one named constant for both servers): their queries end `ERROR`, recorded `stopped`. The
+  MCP guide says to set the ECS container's `stopTimeout` to 120 s.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0

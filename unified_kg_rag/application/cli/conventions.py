@@ -104,6 +104,14 @@ _CHILD_EXIT_SECONDS = 1.0
 # the stack gives the app container (ECS's default is 30 s). A second signal
 # ends it at once.
 _STOP_GRACE_SECONDS = 100.0
+# How long a server (run-console, run-mcp-server over HTTP) a signal stopped
+# lets its requests in flight run before it cancels them (uvicorn's
+# timeout_graceful_shutdown): a cancelled one's query ends ERROR, recorded
+# stopped, its spans exported as the process ends. Inside a 120 s
+# StopTimeout (the most ECS allows) it leaves the rest for that flush;
+# a query longer than it (search.query_timeout_seconds is 180 s by default)
+# is cut. A second Ctrl-C cancels them at once.
+SERVER_GRACEFUL_SHUTDOWN_SECONDS = 60
 # The task a stop cancels (see stoppable), the signal that stopped the
 # run once one did, whether the loop's thread waits in a blocking call
 # (see interruptible), and the turn a Ctrl-C cancels instead of the task,
