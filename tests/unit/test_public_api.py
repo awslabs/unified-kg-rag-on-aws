@@ -205,6 +205,26 @@ def test_the_type_checking_imports_match_the_exports() -> None:
     assert imported == unified_kg_rag._EXPORTS
 
 
+def test_all_is_a_literal_list_type_checkers_can_read() -> None:
+    # mypy --strict and pyright take a name imported without ``as`` in the
+    # TYPE_CHECKING block as a private import unless a literal ``__all__``
+    # lists it; built from _EXPORTS (``[*_EXPORTS]``), it hid every export.
+    tree = ast.parse(Path(unified_kg_rag.__file__).read_text(encoding="utf-8"))
+    (value,) = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(getattr(target, "id", "") == "__all__" for target in node.targets)
+    ]
+    assert isinstance(value, ast.List)
+    assert all(
+        isinstance(item, ast.Constant) and isinstance(item.value, str)
+        for item in value.elts
+    )
+    written = [item.value for item in value.elts]  # type: ignore[attr-defined]
+    assert written == ["__version__", *unified_kg_rag._EXPORTS]
+
+
 def test_an_unknown_name_raises_attribute_error() -> None:
     with pytest.raises(AttributeError, match="no attribute 'GraphRagChain'"):
         unified_kg_rag.GraphRagChain  # noqa: B018
