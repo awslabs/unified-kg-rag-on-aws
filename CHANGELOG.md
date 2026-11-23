@@ -167,11 +167,7 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     the examples inside a `<domain_examples>` block the prompt declares as data, each profile answer one short line
     without `<`. A changed `graph_extraction_system` extracts every document again on the next run (model calls); a
     changed `community_report_system` is a rebuild reason (`answer_settings`) until the next full build.
-15. A namespace a development build of `main` before #852 wrote holds community reports without `min_cut_depth` too,
-    though its build record names 0.4.0.dev0: `run-describe` names `community_depths` for it (it reads the reports,
-    not the record), and global search steps no cut below depth 0 there. Run with `indexing.reset: true` to write
-    every report at its depth.
-16. A `run-eval` result a development build of `main` saved with `answer_scoring.answer_contains_reads: first_line`
+17. A `run-eval` result a development build of `main` saved with `answer_scoring.answer_contains_reads: first_line`
     cannot be compared with a run of now, which records `first_line_v2` (*Fixed*): its first line stopped at a
     lead-in line and ran on into a support line opening with a citation marker, so its `answer_contains`, and its
     `exact_match` and `token_f1` under a `first_line` or `extracted` `answer_span`, read other text. Score its saved
