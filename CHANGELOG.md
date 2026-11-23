@@ -1011,6 +1011,9 @@ Bugs present in 0.3.0.
   model looping on a tag or a document written to provoke one stalled the whole ingestion process. One linear scan
   reads the tags once now (0.01 s for both); it finds the same elements, except that a tag's name no longer ends early
   (`<ab>x</a>` was read as an `<a>` element) and an opening tag no longer runs across other tags to a later `>`.
+- `mypy --strict` rejected every import from the package root (`Module "unified_kg_rag" does not explicitly export
+  attribute "GraphRAGChain"`): `__all__` was built from the lazy-import table, which a type checker cannot read, so it
+  took each name as a private import. `__all__` is a literal list now; the exported names are unchanged.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0

@@ -299,7 +299,10 @@ paths are internal; only a change to the exported names, configuration keys,
 CLI flags and exit codes, or stored formats is breaking. Names resolve on
 first access (`import unified_kg_rag` loads nothing), and
 `tests/unit/test_public_api.py` pins the list and checks that closure (a
-`@final` helper's return type aside).
+`@final` helper's return type aside). `__all__` is written out as a literal
+list beside the lazy-import table, which the test keeps equal to it: strict
+type checkers (`mypy --strict`, pyright) count a name as exported only when a
+literal `__all__` lists it.
 
 ---
 
