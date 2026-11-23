@@ -85,8 +85,9 @@ for a failure, `130` and `143` for a signal. It has no `--output-format`:
 over stdio its stdout carries the MCP messages only
 ([MCP server](../guides/mcp.md)).
 
-`run-console` exits `0` when Ctrl-C stops it (the server finishes running
-requests first, up to 60 s), `143` on SIGTERM, `2` for a usage error (the
+`run-console` exits `130` when Ctrl-C stops it (the server finishes running
+requests first, up to 60 s; a second Ctrl-C cuts them short), `143` on
+SIGTERM, as `run-mcp-server` does, `2` for a usage error (the
 `console` extra missing, a non-loopback `--host` without `--allow-remote`,
 a `--source-directory` that is not a directory) and `1` when it cannot
 listen on the address. A config file that does not load is no error: the

@@ -32,6 +32,7 @@ from unified_kg_rag.application.cli.conventions import (
     is_loopback,
     json_output,
     print_json,
+    served_exit_code,
     setup_cli_logging,
     signal_stopped_server,
     usage_error,
@@ -349,7 +350,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     server.run(sockets=[sock])
-    return 0
+    # Reached when no signal stopped it, or a Ctrl-C the process inherited
+    # ignored did (uvicorn takes it, and raises it again into SIG_IGN).
+    return served_exit_code(server)
 
 
 if __name__ == "__main__":

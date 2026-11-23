@@ -536,12 +536,23 @@ def signal_stopped_server(config: Any) -> Any:
     A second ``Ctrl-C`` cancels the requests in flight, as uvicorn's own
     graceful-shutdown timeout does: uvicorn's force exit only ends its own
     waits, and then (CPython 3.12+) waits for every connection to close,
-    so the requests would run to their end."""
+    so the requests would run to their end.
+
+    ``stopped_by`` names the first signal it took. uvicorn raises the
+    signals it took again once it has served, so the process exits as that
+    signal's stop would; a ``SIGINT`` the process inherited ignored (a
+    background launch) raises nothing, and the caller exits with
+    ``128 + stopped_by`` itself (:func:`served_exit_code`)."""
     import uvicorn
 
     class _Server(uvicorn.Server):
+        # The first signal that stopped it (None: not stopped by one).
+        stopped_by: int | None = None
+
         def handle_exit(self, sig: int, frame: FrameType | None) -> None:
             mark_process_stopping()
+            if self.stopped_by is None:
+                self.stopped_by = sig
             forced = self.force_exit
             super().handle_exit(sig, frame)
             if not self.force_exit or forced:
@@ -559,6 +570,14 @@ def signal_stopped_server(config: Any) -> Any:
                 task.cancel(msg="Task cancelled, the server was forced to stop")
 
     return _Server(config)
+
+
+def served_exit_code(server: Any) -> int:
+    """The exit code of a CLI whose :func:`signal_stopped_server` ``server``
+    has served: ``128 + signum`` of the signal that stopped it (``130`` for
+    Ctrl-C, ``143`` for SIGTERM, as the CLIs exit at a stop), else ``0``."""
+    stopped_by = getattr(server, "stopped_by", None)
+    return 0 if stopped_by is None else 128 + int(stopped_by)
 
 
 async def stoppable(main: Awaitable[_R]) -> _R:

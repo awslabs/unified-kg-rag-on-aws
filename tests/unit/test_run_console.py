@@ -6,6 +6,7 @@ the console extra checked first, the address printed once it is bound."""
 from __future__ import annotations
 
 import json
+import signal
 import socket
 import sys
 from pathlib import Path
@@ -154,6 +155,49 @@ def test_it_binds_then_prints_where_it_serves(
     # Uvicorn's records go through the logging setup's handlers and their
     # filter, not a log config of its own that prints a library's text.
     assert served["log_config"] is None
+
+
+@requires_console
+@pytest.mark.parametrize(
+    ("signum", "code"), [(signal.SIGINT, 130), (signal.SIGTERM, 143)]
+)
+def test_a_signal_s_stop_exits_with_its_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    signum: int,
+    code: int,
+) -> None:
+    # Final review D-3: uvicorn raises the signal that stopped it again once
+    # it served, and that exits 130 or 143, but a SIGINT the process
+    # inherited ignored (a background launch) raised nothing: the console
+    # exited 0. It exits as a signal's stop does either way.
+    import uvicorn
+
+    from unified_kg_rag.shared.query_stop import mark_process_stopping
+
+    def run(self: Any, sockets: list[socket.socket]) -> None:
+        sockets[0].close()
+        self.handle_exit(signum, None)  # taken, then raised into SIG_IGN
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    try:
+        exit_code = run_console.main(
+            [
+                "--source-directory",
+                str(tmp_path),
+                "--cache-directory",
+                str(tmp_path / "cache"),
+                "--port",
+                "0",
+                "--output-format",
+                "json",
+            ]
+        )
+    finally:
+        mark_process_stopping(False)
+    assert exit_code == code
+    assert json.loads(capsys.readouterr().out)["status"] == "serving"
 
 
 @requires_console

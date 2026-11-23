@@ -1036,6 +1036,11 @@ Bugs present in 0.3.0.
   `--verify-metadata`. Each now shows its own message (the lease's holder and when it expires, the stage to run and
   the flag, the file, the keys), as `docs/operations.md` documents, and a held lease no longer prints the recovery
   suggestions that end in "Use --force-rebuild".
+- `run-rag --query Q --interactive` started the chat and never answered Q (exit 0 at stdin's end); the pair is
+  refused as a usage error (exit 2), as the help's "exactly one" says.
+- `run-console` exits 130 when Ctrl-C stops it, as `run-mcp-server` and the exit-code table say; the exit-code
+  reference said 0. A Ctrl-C the process inherited ignored (a background launch) still stopped it but exited 0: it
+  exits 130 too.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
