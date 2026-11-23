@@ -240,11 +240,12 @@ call replaces only the handlers it added. What the logs contain:
 
 ## Extensions and injected backends
 
-Extensions import from the package root too: the ports (`LLMFactoryPort`,
+Plugins import from the package root too: the ports (`LLMFactoryPort`,
 `GraphIndexer`, `DocStatusPort`, ...), `Providers`, `register_provider`,
-`BaseSearchStrategy` with `register_strategy`, `ParserFactory` and
-`register_renderer` (a new strategy also needs a `SearchStrategy` member,
-so it is an in-tree change). Both constructors take injected backends, either as a
+`ParserFactory` and `register_renderer`. A new search strategy needs a
+`SearchStrategy` member, so it is an in-tree change, and in-tree code imports
+from the package's own modules, not the root
+([Extension Guide](./extend.md#15-extension-guide)). Both constructors take injected backends, either as a
 `providers=Providers(config, ...)` bundle or as individual arguments, not
 both: `doc_status=`, `vector_indexer=` and `graph_indexer=` on the pipeline,
 `model_factory=` and `retriever_builders=` on the chain (which also takes
