@@ -50,6 +50,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     NAME_KEY_PROPERTY,
     census_row_from_edge,
     census_row_from_vertex,
+    community_children,
     community_properties,
     edge_text_unit_ids,
     entity_from_vertex,
@@ -366,6 +367,37 @@ class NeptuneIndexer(GraphIndexer):
             return [entity for entity in entities if entity is not None]
         except Exception as e:
             raise AWSServiceError.caused_by("Neptune read_entities failed", e) from e
+
+    def read_community_children(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]] | None:
+        """The children of ``suffix``'s community vertices among ``ids``
+        (see the port).
+
+        Raises:
+            AWSServiceError: The read failed (see :meth:`read_entities`).
+        """
+        if not ids:
+            return {}
+        label = self._label(self.neptune_config.community_label_prefix, suffix)
+        try:
+            rows = self._read_batches(
+                ids,
+                lambda g, batch: self._vertices(g, (label,), batch)
+                .project("id", "children")
+                .by("id")
+                .by(__.values("children").fold()),
+                "read_community_children",
+            )
+        except Exception as e:
+            raise AWSServiceError.caused_by(
+                "Neptune read_community_children failed", e
+            ) from e
+        return {
+            str(row["id"]): community_children(row)
+            for row in rows
+            if isinstance(row, dict) and "id" in row
+        }
 
     def read_relationships(
         self, ids: list[str], suffix: str | None = None

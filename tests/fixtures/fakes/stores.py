@@ -426,6 +426,17 @@ class FakeGraphStore:
                 found[item_id] = units
         return found
 
+    def read_community_children(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]] | None:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get("communities", {})
+        return {
+            i: list(bucket[(scope, i)].children or [])
+            for i in dict.fromkeys(ids)
+            if (scope, i) in bucket
+        }
+
     def find_relationship_ids_citing(
         self, text_unit_ids: list[str], suffix: str | None = None
     ) -> dict[str, list[str]] | None:

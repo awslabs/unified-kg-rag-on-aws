@@ -410,6 +410,32 @@ def test_find_ids_citing_reads_entities_and_communities_of_a_suffix(
     assert graph.find_ids_citing([], suffix="default") == {}
 
 
+def test_read_community_children_reads_the_hierarchy_of_a_suffix(
+    harness: StoreHarness,
+) -> None:
+    # B-1: the hierarchy of a community stored without a report, which an
+    # outdated parent's report written again reads its members through.
+    graph = harness.graph_indexer
+    tenant = harness.suffix("s1")
+    parent = _community("p", ["a", "b"]).model_copy(
+        update={"level": "1", "children": ["c1", "c2"]}
+    )
+    graph.upsert_communities(
+        [
+            parent,
+            _community("c1", ["a"]),
+            _community("x", ["a"], tenant).model_copy(update={"children": ["y"]}),
+        ]
+    )
+    found = graph.read_community_children(["p", "c1", "c2", "x"], suffix="default")
+    assert {c: sorted(below) for c, below in (found or {}).items()} == {
+        "p": ["c1", "c2"],
+        "c1": [],
+    }
+    assert graph.read_community_children(["x", "p"], suffix=tenant) == {"x": ["y"]}
+    assert graph.read_community_children([], suffix="default") == {}
+
+
 def test_find_relationship_ids_citing_reads_the_edges_of_a_suffix(
     harness: StoreHarness,
 ) -> None:
