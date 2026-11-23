@@ -1263,6 +1263,7 @@ def test_extracted_span_fallbacks_are_warned_per_strategy() -> None:
     assert comparison["strategies"]["mix"]["answer_span_fallbacks"] == {
         "scored": 4,
         "fallbacks": 4,
+        "empty": 0,
     }
     per_strategy, rates = comparison["warnings"]
     assert per_strategy.startswith("mix: 4/4 extracted answer spans fell back")
@@ -1274,6 +1275,38 @@ def test_extracted_span_fallbacks_are_warned_per_strategy() -> None:
             resamples=2000,
         )["strategies"]["mix"]
     )
+
+
+def test_empty_extracted_spans_are_counted_and_warned_per_strategy() -> None:
+    """E-6: a span the span model gave as none (NO_ANSWER) scores exact
+    match and token F1 0 whatever the answer says; it is counted and warned
+    about like a fallback."""
+
+    def spans(run: Any, empty: int) -> Any:
+        for i, report in enumerate(run[0]):
+            report.metadata["answer_span"] = "extracted"
+            if i < empty:
+                report.metadata["answer_span_empty"] = True
+        return run
+
+    comparison = paired_comparison(
+        {
+            "local": [spans(_run(_BASE, "local"), 0)],
+            "mix": [spans(_run(_BASE, "mix"), 3)],
+        },
+        resamples=2000,
+    )
+    assert comparison["strategies"]["mix"]["answer_span_fallbacks"] == {
+        "scored": 4,
+        "fallbacks": 0,
+        "empty": 3,
+    }
+    warnings = comparison["warnings"]
+    assert any(
+        w.startswith("mix: 3/4 extracted answer spans were empty") for w in warnings
+    )
+    assert any("empty-span rates differ (local 0%, mix 75%)" in w for w in warnings)
+    assert not any("fallback rates differ" in w for w in warnings)
 
 
 def test_a_failed_answer_is_not_filled_on_attributable_fraction() -> None:

@@ -1384,9 +1384,18 @@ class TestComparability:
             )
 
         stats = manager._calculate_answer_span_statistics(
-            [report("a"), report("b", answer_span_fallback="throttled")]
+            [
+                report("a"),
+                report("b", answer_span_fallback="throttled"),
+                report("c", answer_span_empty=True),
+            ]
         )
-        assert stats == {"answer_span": "first_line", "scored": 2, "fallbacks": 1}
+        assert stats == {
+            "answer_span": "first_line",
+            "scored": 3,
+            "fallbacks": 1,
+            "empty": 1,
+        }
         manager.evaluators = {}
         assert manager._calculate_answer_span_statistics([report("a")]) == {}
 

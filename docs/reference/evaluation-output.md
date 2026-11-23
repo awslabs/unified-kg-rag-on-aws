@@ -94,8 +94,10 @@ from the text, and under
   every metric
   ([Unanswerable questions and declines](../guides/evaluate.md#unanswerable-questions-and-declines)).
 - `answer_span_statistics`: the `answer_span` exact match and token F1
-  read, the reports `scored` and the extracted spans that fell back to the
-  first line (`fallbacks`).
+  read, the reports `scored`, the extracted spans that fell back to the
+  first line (`fallbacks`) and those the span model gave as none (`empty`,
+  `NO_ANSWER`: exact match and token F1 0; the report carries
+  `answer_span_empty`).
 - `rerank_status_counts`: queries per [rerank status](../guides/query.md#rerank-status); each
   result carries `rerank_status` (`null` when answer generation failed
   first). The `failed` ones count against `--max-failure-rate` over
@@ -295,7 +297,8 @@ strategies, or `--repeats`) saves every run's files and adds
   COMPARABLE AS IS`, when the rates differ), runs whose exact match and
   token F1 read different `answer_span`s, and, with `answer_span:
   extracted`, each strategy whose extracted spans fell back to the first
-  line (`answer_span_fallbacks`) and fallback rates that differ). A
+  line or were empty (`answer_span_fallbacks`: `scored`, `fallbacks`,
+  `empty`) and fallback or empty-span rates that differ). A
   difference is
   supported when its interval excludes 0; a 10-point difference on binary
   metrics is detected in 15% of runs with 50 queries and 59% with 200, so
@@ -860,7 +863,10 @@ list, top level or under `metadata`, which wins), taking the maximum.
     the answer, one call per distinct question and answer, reused across
     repeats and strategies. A failed call, an empty reply or a span that is
     not in the answer is scored on the first line instead and counted in
-    `answer_span_statistics.fallbacks`. A yes/no span (`no` for `The clause
+    `answer_span_statistics.fallbacks`. A span the model gives as none
+    (`NO_ANSWER`) scores exact match and token F1 0 and is counted in
+    `answer_span_statistics.empty` (`answer_contains` reads the first line
+    then). A yes/no span (`no` for `The clause
     does not apply.`) need not be written in the answer, but it is the span
     only when the gold answer (or an alias) is a yes/no word; for any other
     gold it falls back the same way. This is the setting for numbers

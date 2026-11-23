@@ -27,7 +27,8 @@ whose failure counts differ. Likewise each strategy reports its
 guardrail-blocked answers (by blocked text), and different counts are warned
 about too, as are runs whose exact match and token F1 read different answer
 spans (``evaluation.answer_span``), and extracted spans that fell back to
-the first line (``answer_span_fallbacks``).
+the first line or that the span model gave as none
+(``answer_span_fallbacks``).
 
 With unanswerable items (``metadata.answerable: false``) the declines are
 paired too: ``abstention/recall`` is per unanswerable query whether its
@@ -85,7 +86,7 @@ from unified_kg_rag.domain.pricing import (
 )
 from unified_kg_rag.shared import get_logger
 
-from .answer_match_evaluator import ANSWER_SPAN_KEY, SPAN_FALLBACK_KEY
+from .answer_match_evaluator import ANSWER_SPAN_KEY, SPAN_EMPTY_KEY, SPAN_FALLBACK_KEY
 from .iterative_statistics import iterative_statistics
 from .structured_statistics import structured_statistics
 
@@ -682,7 +683,8 @@ def _paired_comparison(
                 }
         fallbacks = _span_fallbacks(runs[strategy])
         if fallbacks is not None:
-            # Extracted spans that fell back to the answer's first line.
+            # Extracted spans that fell back to the answer's first line, and
+            # those the span model gave as none.
             summary[strategy]["answer_span_fallbacks"] = fallbacks
 
     stats: dict[str, Any] = {
@@ -814,8 +816,10 @@ def _span_warnings(runs: Mapping[str, Sequence[Run]]) -> list[str]:
 
 
 def _span_fallbacks(strategy_runs: Sequence[Run]) -> dict[str, int] | None:
-    """The answer_match reports scored on an extracted span and those of them
-    that fell back to the first line; ``None`` without extracted spans."""
+    """The answer_match reports scored on an extracted span, those of them
+    that fell back to the first line and those whose span the span model
+    gave as none (``empty``: exact match and token F1 0); ``None`` without
+    extracted spans."""
     scored = [
         report
         for reports, _ in strategy_runs
@@ -829,12 +833,14 @@ def _span_fallbacks(strategy_runs: Sequence[Run]) -> dict[str, int] | None:
     return {
         "scored": len(scored),
         "fallbacks": sum(SPAN_FALLBACK_KEY in r.metadata for r in scored),
+        "empty": sum(SPAN_EMPTY_KEY in r.metadata for r in scored),
     }
 
 
 def _span_fallback_warnings(summary: Mapping[str, Any]) -> list[str]:
-    """Warnings on extracted spans that fell back to the first line: per
-    strategy that had any, and when the strategies' fallback rates differ."""
+    """Warnings on extracted spans that fell back to the first line or that
+    the span model gave as none: per strategy that had any, and when the
+    strategies' rates differ."""
     rates = {
         s: stats["answer_span_fallbacks"]
         for s, stats in summary.items()
@@ -848,14 +854,22 @@ def _span_fallback_warnings(summary: Mapping[str, Any]) -> list[str]:
         for s, f in rates.items()
         if f["fallbacks"]
     ]
-    shares = {s: f["fallbacks"] / f["scored"] for s, f in rates.items()}
-    if len(set(shares.values())) > 1:
-        listed = ", ".join(f"{s} {share:.0%}" for s, share in shares.items())
-        warnings.append(
-            f"The strategies' extracted-span fallback rates differ ({listed}): "
-            "their exact_match and token_f1 deltas compare the fallbacks as "
-            "well as the strategies."
-        )
+    warnings += [
+        f"{s}: {f['empty']}/{f['scored']} extracted answer spans were empty "
+        "(the span model found no answer in the answer), so exact_match and "
+        "token_f1 scored 0 there whatever the answer says."
+        for s, f in rates.items()
+        if f.get("empty")
+    ]
+    for key, what in (("fallbacks", "fallback"), ("empty", "empty-span")):
+        shares = {s: f.get(key, 0) / f["scored"] for s, f in rates.items()}
+        if len(set(shares.values())) > 1:
+            listed = ", ".join(f"{s} {share:.0%}" for s, share in shares.items())
+            warnings.append(
+                f"The strategies' extracted-span {what} rates differ ({listed}): "
+                f"their exact_match and token_f1 deltas compare the {what} "
+                "spans as well as the strategies."
+            )
     return warnings
 
 

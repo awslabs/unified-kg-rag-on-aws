@@ -786,6 +786,12 @@ class TestExtractedSpan:
         assert _values(report)["token_f1"] == 0.0
         assert report.metadata["scored_span"] == ""
         assert "answer_span_fallback" not in report.metadata
+        # Marked, so the run's answer_span_statistics count it (E-6).
+        assert report.metadata["answer_span_empty"] is True
+        found = await _ascore(
+            _extracting(mocker, config, "Depot")[0], _DEPOT_ANSWER, "Depot"
+        )
+        assert "answer_span_empty" not in found.metadata
 
     @pytest.mark.parametrize(
         ("answer", "span"),

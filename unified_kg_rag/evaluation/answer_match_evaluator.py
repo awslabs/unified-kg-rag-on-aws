@@ -171,6 +171,9 @@ CONTAINS_READS_KEY = "answer_contains_reads"
 CONTAINS_READS = "first_line_v2"
 SCORED_SPAN_KEY = "scored_span"
 SPAN_FALLBACK_KEY = "answer_span_fallback"
+# An extracted span the span model gave as none (``NO_ANSWER``): exact
+# match and token F1 score "" (0), counted beside the fallbacks.
+SPAN_EMPTY_KEY = "answer_span_empty"
 # The language the answer was normalized in (``answer_language``).
 ANSWER_LANGUAGE_KEY = "answer_language"
 ABSTAINED_KEY = "abstained"
@@ -610,7 +613,9 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 first_answer_line(answer),
                 {SPAN_FALLBACK_KEY: result_error_text(e)},
             )
-        return self._score(query, result, ground_truth, span, {})
+        return self._score(
+            query, result, ground_truth, span, {} if span else {SPAN_EMPTY_KEY: True}
+        )
 
     async def _extracted_span(self, question: str, answer: str) -> str:
         """The model's short span of ``answer`` ("" when it gives none).

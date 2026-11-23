@@ -984,6 +984,11 @@ Bugs present in 0.3.0.
   `**Yes.**` keeps its polarity. The run manifest records the rule (`answer_scoring.answer_contains_reads:
   first_line_v2`), and the refusal of a run that records `first_line` names `exact_match` and `token_f1` too when a
   first-line span scored them.
+- `answer_match` with `evaluation.answer_span: extracted` scored a span the span model gave as none (`NO_ANSWER`) as
+  exact match and token F1 0, uncounted, while a fallback is counted and warned about (24 of 75 spans on the 3B local
+  baseline, 7 of them on an answer whose first line held the gold). The report marks it (`answer_span_empty`), the
+  run summary counts it (`answer_span_statistics.empty`), and a comparison names each strategy with empty spans and
+  warns when their rates differ, as it does for fallbacks.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
