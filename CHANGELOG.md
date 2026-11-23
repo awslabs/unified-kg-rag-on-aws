@@ -955,6 +955,11 @@ Bugs present in 0.3.0.
   search at a smaller `top_k`. It holds the records the search's own `top_k` cut would keep at that size, which differs
   for `local`, `ppr`, `simple` and `drift` (they size their candidate pools by `top_k`); the wording says that now.
 
+### Security
+- ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
+  accepted: the `eval` extra requires it (`ragas>=0.4.4`), and the pip-audit job no longer accepts the advisory
+  (`.github/pip-audit-accepted.txt` lists only diskcache PYSEC-2026-2447).
+
 ## [0.3.0] - 2026-11-14
 
 The first release after 0.2.3, the initial public snapshot (commit `81ea498`,
