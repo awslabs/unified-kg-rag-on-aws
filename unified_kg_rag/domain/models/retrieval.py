@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+)
 from typing_extensions import TypedDict
 
 from unified_kg_rag.domain.retrieval.section_types import SectionType as SectionType
@@ -453,3 +460,9 @@ class SearchResult(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional search result metadata"
     )
+    # The score groups' record counts before the search's cut
+    # (``{group: count}``, the group ranked first first; ``None``: uncut),
+    # set by the chain's cut and read by a later cut of the returned results
+    # (the MCP response cap: ``cut_by_kind``'s ``counts``), so it keeps what
+    # the search's own cut to that bound would. Internal: never serialized.
+    _cut_group_counts: dict[str, int] | None = PrivateAttr(default=None)

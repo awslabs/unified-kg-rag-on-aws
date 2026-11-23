@@ -25,20 +25,13 @@ from typing import TypeVar
 
 from unified_kg_rag.domain.models import RetrievalResult
 
-__all__ = ["CUT_GROUP_COUNTS", "RERANKED", "apportion", "cut_by_kind", "score_group"]
+__all__ = ["RERANKED", "apportion", "cut_by_kind", "score_group"]
 
 T = TypeVar("T")
 
 # The metadata flag the reranker sets on each record it scored, and the
 # group of every record so flagged: one comparator across their kinds.
 RERANKED = "reranked"
-
-# The search output's metadata key of the score groups' record counts before
-# its cut (``{group: count}``, the group ranked first first), when the
-# search was cut: a later cut of the returned records apportions on them, so
-# it keeps what a search cut to that bound would (``cut_by_kind``'s
-# ``counts``).
-CUT_GROUP_COUNTS = "cut_group_counts"
 
 
 def score_group(result: RetrievalResult) -> str:
@@ -105,7 +98,7 @@ def cut_by_kind(
 
     The shares are of ``items``' own composition, or of ``counts`` (by
     kind, in rank order) when ``items`` is itself a cut of a longer list
-    with those counts (:data:`CUT_GROUP_COUNTS`): as the seats are house
+    with those counts (a search's, ``SearchResult._cut_group_counts``): as the seats are house
     monotone, the cut is then that list's cut to ``bound``, not a second
     apportionment of the first cut's seats."""
     if len(items) <= bound:

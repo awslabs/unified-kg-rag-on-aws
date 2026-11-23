@@ -163,6 +163,8 @@ class FakeChain:
         }
         self.closed = False
         self.unrun: list[tuple[dict[str, Any], Any, bool]] = []
+        # The score groups' counts before the search's cut (the chain's).
+        self.cut_group_counts: dict[str, int] | None = None
 
     def record_unrun_query(
         self, query: Any, error: Any, *, started: float, search: bool = False
@@ -176,8 +178,10 @@ class FakeChain:
 
     async def asearch(self, rag_input: RAGInput) -> SearchOutput:
         self.inputs.append(rag_input)
+        search_results = _search_result(self.results)
+        search_results._cut_group_counts = self.cut_group_counts
         return SearchOutput(
-            search_results=_search_result(self.results),
+            search_results=search_results,
             processed_query=self._processed(rag_input),
             metadata=dict(self.metadata),
         )
@@ -605,20 +609,17 @@ def _ranked_mix(counts: dict[str, int]) -> list[RetrievalResult]:
     return results
 
 
-async def test_a_trimmed_search_is_the_cut_a_smaller_search_returns() -> None:
+async def test_a_trimmed_search_is_the_searchs_own_cut_at_that_size() -> None:
     # R4B-4: the trim apportioned the seats of the chain's cut again, not
     # the strategy's counts, so trimmed to 10 the search's cut of 20 kept
-    # {reranked 6, entity 2, relationship 1, community 1}, while a search
-    # at top_k 10 returns {5, 2, 2, 1} (probes/recut_example.txt).
-    from unified_kg_rag.domain.retrieval.kind_shares import (
-        CUT_GROUP_COUNTS,
-        cut_by_kind,
-        score_group,
-    )
+    # {reranked 6, entity 2, relationship 1, community 1}, while the
+    # search's own cut to 10 keeps {5, 2, 2, 1} (probes/recut_example.txt).
+    from unified_kg_rag.domain.retrieval.kind_shares import cut_by_kind, score_group
 
     counts = {"reranked": 40, "entity": 12, "relationship": 12, "community": 1}
     strategy = _ranked_mix(counts)
-    chain = FakeChain(**{CUT_GROUP_COUNTS: dict(counts)})
+    chain = FakeChain()
+    chain.cut_group_counts = dict(counts)
     chain.results = cut_by_kind(strategy, 20, score_group)
     full = (await _tools(chain).search("q", top_k=20)).records
     assert len(full) == 20
@@ -659,6 +660,89 @@ async def test_documents_count_in_the_response_cap_at_raised_caps(
         assert result.truncated, top_k
         assert all(len(r.documents) == 20 for r in result.records)
         assert sum(len(r.model_dump_json()) for r in result.records) <= budget
+
+
+def _long_file_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every text unit's file name 200-odd characters long (a deep corpus
+    path), so a graph record's 20 documents outweigh its own text."""
+
+    async def names(
+        chain: Any,
+        suffix: str | None,
+        unit_ids: list[str],
+        *,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        return {u: f"{u}-{'n' * 200}.txt" for u in unit_ids}
+
+    monkeypatch.setattr(graph_lookup, "text_unit_file_names", names)
+
+
+@pytest.mark.parametrize(
+    "caps",
+    [{}, {"max_neighbors": 200, "max_response_chars": 100000}],
+    ids=["defaults", "raised"],
+)
+async def test_documents_and_the_start_entity_count_in_kg_neighbors_cap(
+    monkeypatch: pytest.MonkeyPatch, caps: dict[str, int]
+) -> None:
+    # R5B-1: kg_neighbors capped its records before their documents were
+    # filled in, and left the start entity out of the budget: a hub's
+    # response ran 3.94 times max_response_chars at the defaults
+    # (probes/hub_probe.py).
+    _long_file_names(monkeypatch)
+    units = [f"u{i}" for i in range(20)]
+    limit = caps.get("max_neighbors", 50)
+
+    async def find(chain: Any, suffix: str | None, **kwargs: Any) -> Any:
+        return "name", [_entity("Hub", units=units)]
+
+    async def walk(
+        chain: Any, suffix: str | None, entity_id: str, **kwargs: Any
+    ) -> Any:
+        partners = [_entity(f"Partner{i}", units=units) for i in range(limit)]
+        return graph_lookup.Neighbourhood(
+            neighbours=partners,
+            hops={f"e-Partner{i}": 1 for i in range(limit)},
+            relationships=[_relationship()],
+        )
+
+    monkeypatch.setattr(graph_lookup, "find_entities", find)
+    monkeypatch.setattr(graph_lookup, "neighbourhood", walk)
+    tools = _tools(**caps)
+    result = await tools.neighbors(name="Hub", limit=limit)
+    assert result.truncated and result.records
+    assert result.entity is not None and len(result.entity.documents) == 20
+    assert all(len(r.documents) == 20 for r in result.records if r.kind == "entity")
+    returned = len(result.entity.model_dump_json()) + sum(
+        len(r.model_dump_json()) for r in result.records
+    )
+    assert returned <= tools.settings.max_response_chars
+
+
+@pytest.mark.parametrize(
+    "caps",
+    [{}, {"max_top_k": 100, "max_response_chars": 100000}],
+    ids=["defaults", "raised"],
+)
+async def test_documents_count_in_kg_get_entity_cap(
+    monkeypatch: pytest.MonkeyPatch, caps: dict[str, int]
+) -> None:
+    # R5B-1: kg_get_entity capped before filling in documents, too.
+    _long_file_names(monkeypatch)
+    units = [f"u{i}" for i in range(20)]
+    limit = caps.get("max_top_k", 20)
+
+    async def find(chain: Any, suffix: str | None, **kwargs: Any) -> Any:
+        return "search", [_entity(f"Hub{i}", units=units) for i in range(limit)]
+
+    monkeypatch.setattr(graph_lookup, "find_entities", find)
+    tools = _tools(**caps)
+    result = await tools.get_entity(name="Hub", limit=limit)
+    assert result.truncated and result.records
+    assert all(len(r.documents) == 20 for r in result.records)
+    returned = sum(len(r.model_dump_json()) for r in result.records)
+    assert returned <= tools.settings.max_response_chars
 
 
 async def test_a_kept_chunk_names_only_kept_entity_records() -> None:
