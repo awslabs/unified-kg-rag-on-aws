@@ -14,6 +14,7 @@ gone, the connector's awaitable settled.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import gc
 import ssl
@@ -200,8 +201,18 @@ class _KeepAliveServer:
         return self.closed
 
     def stop(self) -> None:
-        self._server.close()
+        # Closed on its own loop: asyncio.Server is not thread-safe, and a
+        # close() from this thread raced the loop thread detaching a
+        # connection the test had just closed (``_wakeup`` iterated None).
+        self._runner.run(self._close())
         self._runner.stop()
+
+    async def _close(self) -> None:
+        self._server.close()
+        # Bounded: on 3.12+ wait_closed also waits for open connections,
+        # which a failed assertion above may have left open.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._server.wait_closed(), timeout=5.0)
 
 
 def _tls_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
