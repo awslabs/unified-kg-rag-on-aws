@@ -1401,7 +1401,10 @@ async def test_a_call_that_ends_waiting_for_a_slot_is_recorded_once_with_its_cal
         assert record.top_k == 3 and record.filter_keys == ["n_tokens"]
         assert record.requested_strategy == "local"
         assert record.namespace == "default" and record.question is not None
-        assert record.usage is None
+        # Final review D-8: no model call, so 0.0 as a query that ran and
+        # called nothing records (null is a model without a price).
+        assert record.usage is not None and record.usage.llm_calls == 0
+        assert (record.cost_usd, record.unpriced_models) == (0.0, [])
     assert left.strategy == "local" and left.error_class is None
     assert answer_timeout.error_class == search_timeout.error_class == "timeout"
     # The answers' metrics: the stopped one no failure, the timeout one.

@@ -1041,6 +1041,10 @@ Bugs present in 0.3.0.
 - `run-console` exits 130 when Ctrl-C stops it, as `run-mcp-server` and the exit-code table say; the exit-code
   reference said 0. A Ctrl-C the process inherited ignored (a background launch) still stopped it but exited 0: it
   exits 130 too.
+- A query audit record's `cost_usd` was `null` for a query that sent no model call because it was refused or ended
+  before it ran (an MCP call that timed out waiting for a call slot), while one that timed out in the chain recorded
+  `0.0`, and `null` is documented as "a model without a price". Such a record now has `cost_usd` `0.0` and a usage of
+  0 (its query metrics emit `query_cost_usd` 0 too).
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
