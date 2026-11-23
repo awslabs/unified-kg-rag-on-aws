@@ -450,7 +450,7 @@ Community detection configuration
 | `trials` | integer (≥ 1) | `3` | deviation: MS GraphRAG runs 1 | Number of independent Leiden runs to find best partition (MS GraphRAG runs 1). |
 | `extra_forced_iterations` | integer (≥ 0) | `2` | deviation: MS GraphRAG runs 0 | Additional optimization iterations after convergence (MS GraphRAG runs 0). |
 | `max_cluster_size` | integer (≥ 2) | `20` | deviation: MS GraphRAG's max_cluster_size: 10 | Maximum members per community before it is split: entities at level 0, child communities above. A larger Leiden community is re-partitioned on its own subgraph, recursively, until every piece fits or Leiden finds no finer split, and stays the parent of its pieces (as in MS GraphRAG's hierarchical Leiden). Without the bound, modularity's resolution limit grows communities with the corpus beyond what one report's max_report_context_tokens can describe (or a parent's roll-up can summarize). MS GraphRAG's default is 10 with a larger report budget; 20 typically keeps a leaf's entities and relationships, or a parent's child summaries, within the default 4000-token report context. |
-| `min_community_size` | integer (≥ 1) | `3` | unmeasured | Minimum entities per level-0 community: a smaller one merges into the neighbour it shares the most edge weight with, unless that would exceed max_cluster_size. A connected component of fewer entities (an isolated entity, a pair) has no neighbour and gets no community or report. 1 = cluster every component. |
+| `min_community_size` | integer (≥ 1) | `3` | deviation: MS GraphRAG keeps every community (no size floor) | Minimum entities per level-0 community: a smaller one merges into the neighbour it shares the most edge weight with, unless that would exceed max_cluster_size. A connected component of fewer entities (an isolated entity, a pair) has no neighbour and gets no community or report. 1 = cluster every component. MS GraphRAG keeps every Leiden community whatever its size: a deliberate extension, as a one- or two-entity report restates its members at a report call each. |
 
 #### `graph.community_detection.report_generation`
 
@@ -1264,6 +1264,7 @@ The numeric defaults that change what is retrieved or answered and that no run c
 | `graph.community_detection.trials` | `3` | deviation: MS GraphRAG runs 1 |
 | `graph.community_detection.extra_forced_iterations` | `2` | deviation: MS GraphRAG runs 0 |
 | `graph.community_detection.max_cluster_size` | `20` | deviation: MS GraphRAG's max_cluster_size: 10 |
+| `graph.community_detection.min_community_size` | `3` | deviation: MS GraphRAG keeps every community (no size floor) |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | deviation: MS GraphRAG's community report max_input_length: 8000 |
 | `indexing.summary_tree.target_children` | `6` | deviation: RAPTOR picks k by BIC (max_clusters 50); its trees average 6.7 children |
 | `indexing.summary_tree.min_level_shrink` | `0.2` | deviation: RAPTOR never stops for it (0) |
@@ -1288,7 +1289,6 @@ The numeric defaults that change what is retrieved or answered and that no run c
 | `processing.gleaning.max_relationships_per_prompt` | `100` | unmeasured |
 | `processing.claim_extraction.max_entities_per_prompt` | `100` | unmeasured |
 | `graph.community_detection.max_levels` | `5` | unmeasured |
-| `graph.community_detection.min_community_size` | `3` | unmeasured |
 | `graph.community_detection.report_generation.max_entities_per_report` | `50` | unmeasured |
 | `indexing.summary_tree.min_leaves_per_tree` | `3` | unmeasured |
 | `search.hybrid.lexical_weight` | `0.5` | unmeasured: an equal split |

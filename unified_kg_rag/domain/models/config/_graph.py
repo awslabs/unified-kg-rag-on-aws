@@ -205,9 +205,14 @@ class CommunityDetectionConfig(ConfigSection):
             " the neighbour it shares the most edge weight with, unless that "
             "would exceed max_cluster_size. A connected component of fewer "
             "entities (an isolated entity, a pair) has no neighbour and gets "
-            "no community or report. 1 = cluster every component."
+            "no community or report. 1 = cluster every component. MS GraphRAG "
+            "keeps every Leiden community whatever its size: a deliberate "
+            "extension, as a one- or two-entity report restates its members "
+            "at a report call each."
         ),
-        json_schema_extra=evidence("unmeasured"),
+        json_schema_extra=evidence(
+            "deviation", "MS GraphRAG keeps every community (no size floor)"
+        ),
     )
     report_generation: ReportGenerationConfig = Field(
         default_factory=ReportGenerationConfig,
