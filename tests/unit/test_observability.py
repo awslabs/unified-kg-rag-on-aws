@@ -2860,7 +2860,7 @@ def test_a_served_signal_marks_the_process_stopping() -> None:
         process_stopping,
     )
 
-    server = signal_stopped_server(uvicorn.Config(lambda *_: None))
+    server = signal_stopped_server(uvicorn.Config(lambda *_: None, log_config=None))
     assert not process_stopping()
     try:
         server.handle_exit(signal.SIGTERM, None)

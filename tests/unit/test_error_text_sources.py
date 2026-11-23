@@ -46,6 +46,29 @@ pytestmark = pytest.mark.unit
 
 MARKER = "Quokkasecret 홍길동 arn:aws:iam::000000000000:role/Zebrapassword"
 _FRAGMENTS = ("Quokkasecret", "홍길동", "Zebrapassword", "000000000000")
+# The loggers whose records the server tests below read through the
+# logging setup's handlers.
+_UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
+
+
+@pytest.fixture(autouse=True)
+def _uvicorn_loggers_as_served(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """uvicorn's loggers as the servers leave them (``log_config=None``):
+    propagating to the root handlers, at no level of their own, whatever
+    another test in the process left. A ``uvicorn.Config`` built with
+    uvicorn's default log config gives them handlers of their own and no
+    propagation; run-console's sets ``uvicorn.error`` to WARNING. The
+    state is restored after the test."""
+    for name in _UVICORN_LOGGERS:
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "propagate", True)
+        monkeypatch.setattr(logger, "handlers", [])
+        monkeypatch.setattr(logger, "disabled", False)
+        level = logger.level
+        logger.setLevel(logging.NOTSET)  # setLevel: the loggers' level cache too
+        request.addfinalizer(lambda logger=logger, level=level: logger.setLevel(level))
 
 
 def _info_text(caplog: pytest.LogCaptureFixture) -> str:
@@ -565,19 +588,9 @@ def test_a_library_record_is_digested_once_for_every_handler(tmp_path: Path) -> 
     assert console[-1].startswith("RuntimeError (len=")
 
 
-def test_an_access_line_drops_its_query_string(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
-) -> None:
-    # The access logger as a process that serves with access lines on has it:
-    # a ``uvicorn.Config(access_log=False)`` another test built (the
-    # console's) leaves it without propagation and a level of its own.
-    access = logging.getLogger("uvicorn.access")
-    monkeypatch.setattr(access, "propagate", True)
-    monkeypatch.setattr(access, "handlers", [])
-    monkeypatch.setattr(access, "disabled", False)
-    level = access.level
-    access.setLevel(logging.NOTSET)  # setLevel: the loggers' level cache too
-    request.addfinalizer(lambda: access.setLevel(level))
+def test_an_access_line_drops_its_query_string(tmp_path: Path) -> None:
+    # The access logger as a process that serves with access lines on has
+    # it (_uvicorn_loggers_as_served).
     stream, _ = _setup(tmp_path)
     try:
         logging.getLogger("uvicorn.access").info(
