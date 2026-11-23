@@ -2869,6 +2869,142 @@ def test_a_served_signal_marks_the_process_stopping() -> None:
         mark_process_stopping(False)
 
 
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+async def _ask_served(surface: str, url: str) -> None:
+    """Ask the served ``surface`` one question, reading its answer to the
+    end (or until the server cuts it off)."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        if surface == "mcp":
+            await client.post(
+                f"{url}/mcp",
+                headers={
+                    "Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "kg_answer",
+                        "arguments": {"query": "Who ships?", "strategy": "simple"},
+                    },
+                },
+            )
+            return
+        async with client.stream(
+            "POST",
+            f"{url}/api/ask",
+            headers={"X-Console-Request": "1"},
+            json={"query": "Who ships?", "search_strategy": "simple"},
+        ) as response:
+            async for _ in response.aiter_bytes():
+                pass
+
+
+@pytest.mark.parametrize("surface", ["mcp", "console"])
+def test_a_second_ctrl_c_cancels_a_draining_server_s_request(
+    tracing: Tracing,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+) -> None:
+    # R6C-1: a second Ctrl-C while run-mcp-server (streamable HTTP) or
+    # run-console drained did not cut the request in flight short: uvicorn's
+    # force exit then waits for every connection to close (CPython 3.12+),
+    # so the query answered and the server exited when it ended. It cancels
+    # the request: its query ends ERROR, recorded stopped, and the server
+    # exits at once.
+    pytest.importorskip("uvicorn")
+    pytest.importorskip("httpx")
+    import uvicorn
+
+    from unified_kg_rag.application.cli.conventions import signal_stopped_server
+    from unified_kg_rag.application.retrieval import query_audit
+    from unified_kg_rag.shared.query_stop import mark_process_stopping
+
+    if surface == "mcp":
+        pytest.importorskip("mcp")
+        from unified_kg_rag.application.cli.mcp_server import build_mcp_app
+        from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    else:
+        pytest.importorskip("fastapi")
+        from unified_kg_rag.application.cli.console.server import (
+            ConsoleOptions,
+            create_app,
+        )
+
+    records: list[Any] = []
+    monkeypatch.setattr(query_audit, "audit_enabled", lambda: True)
+    monkeypatch.setattr(query_audit, "emit", records.append)
+    exporter = tracing()
+    held = _Held("model")  # held 10 s: past this test's wait for the exit
+    chain = held.chain()
+    if surface == "mcp":
+        app = build_mcp_app(KnowledgeGraphTools(chain))
+    else:
+        options = ConsoleOptions(workspace=tmp_path, cache_directory=tmp_path / "cache")
+        app = create_app(options, chain_factory=lambda _config: chain)
+    port = _free_port()
+    server = signal_stopped_server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, lifespan="on")
+    )
+    exited_after: list[float] = []
+
+    async def run() -> None:
+        serving = asyncio.create_task(server.serve())
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        asking = asyncio.create_task(_ask_served(surface, f"http://127.0.0.1:{port}"))
+        try:
+            await asyncio.wait_for(held.wait(), 30)
+            os.kill(os.getpid(), signal.SIGINT)
+            await asyncio.sleep(0.5)  # the server drains, the call held
+            assert server.should_exit and not serving.done()
+            os.kill(os.getpid(), signal.SIGINT)
+            start = asyncio.get_running_loop().time()
+            await asyncio.wait_for(asyncio.shield(serving), 5)
+            exited_after.append(asyncio.get_running_loop().time() - start)
+        finally:
+            server.should_exit = server.force_exit = True
+            await serving
+            await asyncio.gather(asking, return_exceptions=True)
+            await chain.aclose()
+
+    # The SIGINTs uvicorn took are raised again once it served: not into
+    # the suite's KeyboardInterrupt.
+    previous = signal.signal(signal.SIGINT, lambda *_: None)
+    try:
+        asyncio.run(run())
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        mark_process_stopping(False)
+    assert exited_after[0] < 5
+    spans = exporter.get_finished_spans()
+    errors = {
+        s.name: _attrs(s).get("error.type")
+        for s in spans
+        if s.status.status_code == StatusCode.ERROR
+    }
+    assert errors.get("kg_rag.query") == "CancelledError", errors
+    assert errors.get(_Held.span["model"]) == "CancelledError", errors
+    if surface == "console":
+        assert errors.get("kg_rag.console.ask") == "CancelledError", errors
+    assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)
+    assert [r.outcome.value for r in records] == ["stopped"]
+
+
 async def test_a_reader_stop_sets_no_stop_while_the_process_stops() -> None:
     # The one mark every reader path reads (await_as_reader, aquery_events,
     # the console's ask stream): set, a cancelled reader cancels its query

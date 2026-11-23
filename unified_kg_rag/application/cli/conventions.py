@@ -531,13 +531,32 @@ def signal_stopped_server(config: Any) -> Any:
     ``SIGTERM`` while it serves. Its shutdown lets the requests in flight
     finish (their queries answer); one it then cancels (past its graceful
     shutdown's timeout, or at a second ``Ctrl-C``) is the server stopping,
-    and its query ends with its error status, not as a reader that left."""
+    and its query ends with its error status, not as a reader that left.
+
+    A second ``Ctrl-C`` cancels the requests in flight, as uvicorn's own
+    graceful-shutdown timeout does: uvicorn's force exit only ends its own
+    waits, and then (CPython 3.12+) waits for every connection to close,
+    so the requests would run to their end."""
     import uvicorn
 
     class _Server(uvicorn.Server):
         def handle_exit(self, sig: int, frame: FrameType | None) -> None:
             mark_process_stopping()
+            forced = self.force_exit
             super().handle_exit(sig, frame)
+            if not self.force_exit or forced:
+                return
+            try:
+                # The serving loop (its thread takes the signal).
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return  # not serving: no request to cancel
+            # A signal handler: the cancels run on the loop.
+            loop.call_soon_threadsafe(self._cancel_requests)
+
+        def _cancel_requests(self) -> None:
+            for task in list(self.server_state.tasks):
+                task.cancel(msg="Task cancelled, the server was forced to stop")
 
     return _Server(config)
 

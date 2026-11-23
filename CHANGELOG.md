@@ -944,6 +944,12 @@ Bugs present in 0.3.0.
   that question's reader stop, as the console's Stop (no error status, marked stopped); a `SIGTERM` stays `ERROR`. The
   [telemetry reference](docs/reference/telemetry.md#spans-of-a-stopped-query) has a table of every stop, and gives
   `kg_rag.mcp.tool`'s parent as the MCP SDK's `tools/call` span under a global tracer provider (it said root).
+- A second `Ctrl-C` to `run-console` or `run-mcp-server --transport streamable-http` while it drains its requests did
+  not cut them short on Python 3.12 and later (the image's): uvicorn's force exit then waits for every connection to
+  close, so the queries answered and the server exited when they ended, though uvicorn logs "CTRL+C to force quit" and
+  the telemetry reference says they end `ERROR`. The second `Ctrl-C` now cancels them, as `run-console`'s 60 s
+  graceful-shutdown limit does: their queries end `ERROR` (`CancelledError`), recorded `stopped`, and the server exits
+  at once.
 - The console composer's "Search strategy" and "Options" toggles were 20 px high, under WCAG 2.2's 24 px target size
   (axe passed them only on their spacing): each is a 24 px target now.
 - MCP `kg_neighbors` and `kg_get_entity` still measured their records against `mcp.max_response_chars` before their
