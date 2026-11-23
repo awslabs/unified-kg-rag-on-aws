@@ -6,7 +6,8 @@ the section numbers: they never change.
 ## 9. Evaluation Framework
 
 `EvaluationManager` (`evaluation/`) builds the evaluators through
-`_resolve_evaluator_class` (one lazy-import branch per `EvaluatorType`) and
+`_resolve_evaluator_class` (one branch per `EvaluatorType`; only `ragas`, which
+needs the `eval` extra, is imported in its branch) and
 scores every result after all answers are generated. What each evaluator
 measures is in [Evaluation: Evaluators](../guides/evaluate.md#evaluators) (how it
 scores: [Evaluation output](../reference/evaluation-output.md#evaluator-details)); the design

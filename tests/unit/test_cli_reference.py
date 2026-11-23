@@ -8,6 +8,7 @@ when a flag changed without the file being regenerated.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 from importlib.metadata import entry_points
 from pathlib import Path
@@ -79,3 +80,15 @@ def test_environment_defaults_do_not_leak_into_the_reference(monkeypatch) -> Non
     monkeypatch.setenv("UKR_SOURCE_DIRECTORY", "/somewhere/else")
     monkeypatch.setenv("UKR_PIPELINE_ID", "run-from-env")
     assert generator.render() == expected
+
+
+def test_a_value_the_flag_may_go_without_is_shown_optional() -> None:
+    # `run-eval --from-results <runs> --rescore` takes no dataset: the
+    # reference must not show DATASET as required.
+    generator = _generator()
+    parser = argparse.ArgumentParser()
+    optional = parser.add_argument("--rescore", nargs="?", const="", metavar="DATASET")
+    required = parser.add_argument("--dataset", metavar="DATASET")
+    assert generator._flag(optional) == "`--rescore` `[DATASET]`"
+    assert generator._flag(required) == "`--dataset` `DATASET`"
+    assert "`--rescore` `[DATASET]`" in generator.render()

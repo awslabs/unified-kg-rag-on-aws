@@ -64,7 +64,7 @@ for the Acme warehouse robots.
 EOF
 ```
 
-**4. 지식 그래프 만들기:**
+**4. 지식 그래프 만들기**(느린 CPU 전용 컴퓨터에서는 모델 호출이 로컬 프리셋의 300초 제한을 넘어 늦게 끝나는 대신 실패할 수 있습니다. `UKR__PROVIDERS__LLM__TIMEOUT_SECONDS`를 올리거나 `UKR__PROCESSING__MAX_CONCURRENCY`를 Ollama가 한 번에 처리하는 요청 수로 낮추세요. [Local mode](./docs/guides/local-mode.md#differences-from-aws-mode)(영문)):
 
 ```bash
 UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-ingestion --backend local --source-directory ./sample-corpus

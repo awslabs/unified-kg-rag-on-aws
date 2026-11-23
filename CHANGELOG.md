@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One `retry` profile per caller, an evidence tag on every numeric default, MinHash name matching and deduplication
   that propose the pairs at their threshold (deduplication also compares the numbers: a form filled in twice stays two
   documents) (#758, #762).
+- A per-query audit record from every surface, its caller named by a trusted proxy's identity header (#820), and
+  `namespace` as the one name of an index namespace, the old names deprecated (#834).
+- Path filters (`attr_file`, `attr_folder`) that scope a question to a file or a folder (#835), and the MCP tool
+  `kg_get_chunks`, which reads the chunks a record cites (#836).
+- Held-out evaluation splits and retrieval nDCG@k (#818); Korean on a CDK deployment split from the Latin terms beside
+  it (`cjk_script_split`, #819).
+- Two later breaking changes: the CLIs log to stderr, stdout holding only a run's output (#833), and a community
+  report's `depth` counts from the first Leiden pass, as MS GraphRAG's `community_level` does (#828).
 
 ### Breaking changes
 
@@ -82,6 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `holds_any_item`), which `GraphIndexer` inherits too, one contract for both stores. The rest stays on
   `VectorIndexer`. `VectorIndexer.scan_text_units` is gone, and `scan_text_unit_pages` no longer pages it by default:
   a store that implemented only `scan_text_units` implements `scan_text_unit_pages` or builds no summary tree.
+- CDK: the stacks map `ko` to `cjk_script_split` (*Fixed*), so a redeployed stack's Korean indices, built with `cjk`,
+  stop the first incremental run before any write until one run with `indexing.reset: true` rebuilds them (*Upgrading*
+  step 2; `-c opensearch_korean_analyzer=cjk` keeps the old analyzer).
+- With `processing.deduplicate` on, an incremental run deletes the near-copies 0.3.0 indexed beside their originals
+  and indexes the template documents 0.3.0 dropped as copies (*Fixed*; *Upgrading* step 6).
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
@@ -142,10 +155,18 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     `search.search_type`), and code that reads `EvaluationConfig.retrieval_k` gets a list of cutoffs (*Breaking
     changes*): read `config.search.search_type` for the type a query runs, and `retrieval_k[0]` for the cutoff that
     scores `hit_at_k`, `recall_at_k` and `ndcg_at_k`.
-15. A namespace a development build of `main` before #852 wrote holds community reports without `min_cut_depth` too,
-    though its build record names 0.4.0.dev0: `run-describe` names `community_depths` for it (it reads the reports,
-    not the record), and global search steps no cut below depth 0 there. Run with `indexing.reset: true` to write
-    every report at its depth.
+15. From a `main` checkout: a namespace a development build of `main` before #852 wrote holds community reports
+    without `min_cut_depth` too, though its build record names 0.4.0.dev0: `run-describe` names `community_depths` for
+    it (it reads the reports, not the record), and global search steps no cut below depth 0 there. Run with
+    `indexing.reset: true` to write every report at its depth.
+16. A `custom_prompts` block that 0.3.0's `run-prompt-tuning` wrote holds its few-shot examples (corpus text) bare in
+    `graph_extraction_system`, and the profile's domain, language and persona as the model answered them
+    (*Security*), so a sampled document can still add instructions to every extraction and report. Run
+    `run-prompt-tuning` again and copy the prompts it writes
+    ([Domain adaptation](docs/guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning)), or edit the old block:
+    the examples inside a `<domain_examples>` block the prompt declares as data, each profile answer one short line
+    without `<`. A changed `graph_extraction_system` extracts every document again on the next run (model calls); a
+    changed `community_report_system` is a rebuild reason (`answer_settings`) until the next full build.
 
 ### Added
 
@@ -204,12 +225,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `astream_events` is left as LangChain defines it. `astream` / `stream` yield the text of these events, so a streamed
   answer now reads its citations' lineage, records its answer on the query span and is traced in the query's trace, as
   an unstreamed one is. The query waits for its reader at each event; a reader that stops ends it as the Fixed entry
-  on a cancelled streamed answer says, its query span naming the strategy it ran.
-  Under the output guardrail the answer model still streams (its first chunk bounded by
-  `search.model_timeout_seconds`) and nothing is shown until the whole answer is screened: then its sources and the
-  screened answer, one chunk, before the turn is written. The console's Ask page reads the events. A transient retry
-  while the stream waits for its first chunk starts only if it can end within that window, as in 0.3.0: past it the
-  model's error is raised, not a first-chunk timeout.
+  on a cancelled streamed answer says, its query span naming the strategy it ran. Under the output guardrail the
+  answer model still streams (its first chunk bounded by `search.model_timeout_seconds`) and nothing is shown until
+  the whole answer is screened: then its sources and the screened answer, one chunk, before the turn is written. The
+  console's Ask page reads the events. A transient retry while the stream waits for its first chunk starts only if it
+  can end within that window, as in 0.3.0: past it the model's error is raised, not a first-chunk timeout.
 - Rebuild due: `run-describe` (`rebuild`, `Rebuild due (...)` lines), the console's Ingest page
   (`/api/namespace/methodologies`, under the methodologies picked) and the MCP `kg_describe_schema` tool say why a
   namespace is due for a rebuild under the config, from one owner (`rebuild_due`; `RebuildReason`, `RebuildReasonKind`
@@ -236,21 +256,20 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   already sent have answered (`RunBudgetExhausted`, exported, error class `limit_exceeded`, exit 1): its finished
   stages are checkpointed and those answers kept in the LLM response cache, whose hits take none of the budget, so a
   re-run with the same pipeline id (the stop's message names it, as does a refusal to index after a failed corpus
-  stage) resumes and pays only for what was not answered. The
-  stop's JSON status and message give the calls the run paid for (`token_usage`, `cost_usd` when priced), and the
-  stage it stopped in keeps its calls in its record and publishes them (`llm_calls_<stage>`), so the stop and its
-  resume count each paid call once. `run-ingestion` refuses a `max_run_usd` run whose stages call a model
-  `models.prices` does not price before any stage runs (exit 2, error class `configuration`), naming it (the
-  description summaries of the community detection and the indexing included).
-  `run-ingestion --estimate` parses, deduplicates (`processing.deduplicate`) and chunks the corpus without a model
-  call and prints each stage's calls, tokens and USD for the stages the text units decide (extraction, gleaning,
-  claims, translation, intelligent chunking; `about` for the stages that read text translated into another
+  stage) resumes and pays only for what was not answered. The stop's JSON status and message give the calls the run
+  paid for (`token_usage`, `cost_usd` when priced), and the stage it stopped in keeps its calls in its record and
+  publishes them (`llm_calls_<stage>`), so the stop and its resume count each paid call once. `run-ingestion` refuses
+  a `max_run_usd` run whose stages call a model `models.prices` does not price before any stage runs (exit 2, error
+  class `configuration`), naming it (the description summaries of the community detection and the indexing
+  included). `run-ingestion --estimate` parses, deduplicates (`processing.deduplicate`) and chunks the corpus without
+  a model call and prints each stage's calls, tokens and USD for the stages the text units decide (extraction,
+  gleaning, claims, translation, intelligent chunking; `about` for the stages that read text translated into another
   language, counted at the source text), naming the graph-dependent ones it cannot count (its table folds a long
-  model id or stage name at 80 columns rather than cutting it). The console's Ingest
-  page offers to resume a run stopped at its budget (its options without the forced recompute), and its run lists and
-  the Dashboard mark such a run as stopped at its budget, a warning, not failed, its card keeping its own stages after
-  the resume. The Dashboard and the Ingest job card give a job's USD as its run recorded it (`cost_usd`), else an
-  ingestion job's at `models.prices`.
+  model id or stage name at 80 columns rather than cutting it). The console's Ingest page offers to resume a run
+  stopped at its budget (its options without the forced recompute), and its run lists and the Dashboard mark such a
+  run as stopped at its budget, a warning, not failed, its card keeping its own stages after the resume. The
+  Dashboard and the Ingest job card give a job's USD as its run recorded it (`cost_usd`), else an ingestion job's at
+  `models.prices`.
 - Every numeric configuration default says what it rests on: an evidence tag (`json_schema_extra=evidence(...)`,
   `domain/models/evidence.py`) of `measured` (linked to its run in Defaults and evidence), `upstream` or `deviation`
   (naming the original's value), `operational` or `unmeasured`. The configuration reference prints it in an Evidence
@@ -300,6 +319,11 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   settings that differ.
 - Retrieval `ndcg_at_k` (binary relevance, log2 discount), and several cutoffs: `evaluation.retrieval_k` takes a
   list, the first keeping the `*_at_k` names, each further k adding `hit_at_<k>`, `recall_at_<k>`, `ndcg_at_<k>`.
+  nDCG credits a file to one reference: the one its full name is, else one its stem names. A reference spelled as
+  others' stem is one with them when every file retrieved within the cutoff it matches one of them matches too, the
+  specific spelling kept (`report-a` beside `Report-A.pdf` is one relevant document; a file past the cutoff never
+  changes a score at it). A file only the stem matches is another document, so a title another title begins with
+  (`Amazon` beside `Amazon.com`) stays its own reference, and two files of one stem stay two.
 - `search.search_type`, the search type of a query that names none (hybrid), so a `run-eval --arm` compares hybrid
   with lexical or vector in one paired run. The console's questions, the MCP tools and the LangChain retriever
   interface (a retriever's `invoke` / `ainvoke`) read it too when they name none (they sent hybrid).
@@ -334,7 +358,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   authenticating proxy's, such as an Application Load Balancer's `x-amzn-oidc-identity`) as their `user_id`, and a
   request without exactly one valid value (UTF-8, no comma: a comma is a second copy folded into one line) is
   refused (401, saying whether it was missing, sent more than once or malformed). Only behind a proxy that replaces
-  (removes or overwrites, never appends to) any copy a client sends.
+  (removes or overwrites, never appends to) any copy a client sends. The console's `/api/history` rows name the
+  `namespace` a question asked and, under the header, the `user_id` who asked it (new keys; the console's
+  `console.sqlite3` gains a `user_id` column on open).
 - A `golden-metrics` CI job: every strategy and search type answers the synthetic structural and bridge datasets on
   fake models, and the LLM-free scores and each answer's fingerprint (its ranked sources, the context it read and the
   answer) of the held-out `test` half must equal `tests/fixtures/golden_metrics.json`, which
@@ -356,7 +382,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   document's, an `InputDocument.id`) that starts with a Windows drive (`C:/`) or a URL scheme gets none: that
   document matches no path filter, and ingestion names it in a WARNING. The build record names the keys
   (`document_filter_keys`), and a namespace built without them refuses them, in `kg_get_chunks` too
-  ([Path filters](docs/reference/filters.md#path-filters)).
+  ([Path filters](docs/reference/filters.md#path-filters)). A document in a corpus folder named like a drive
+  (`x:/y.txt`) is cited with that path too (`run-rag`, the console, MCP and `kg_get_chunks`' `relative_path`): the
+  corpus walk marks such a path on its text units (`walked_drive_folder`), and a marked `relative_path` that is the
+  unit's stamped `file` filter is read as its path. A document's own drive path stays unnamed even when its own
+  `filters.file` equals it (a pre-parsed document's `C:/Users/...`). A text unit an earlier build wrote has no mark:
+  re-chunking its document (a full build) names its path.
 - MCP `kg_get_chunks(ids)`: an agent reads the chunks a record cites (`chunk_id`, `text_unit_ids`) by id, with their
   text, document, relative path, pages, communities and document filters, and no model call; at most
   `mcp.max_top_k` ids, each record's text cut to `mcp.max_text_chars`; the namespace and filters apply as in
@@ -393,8 +424,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `docker/compose.local.yaml`. The `eval` extra requires ragas 0.4.4 (it allowed 0.4.3) and no longer caps
   langchain-community below 0.4 (locked at 0.4.2, dropping dataclasses-json, marshmallow and typing-inspect): ragas
   0.4.4 imports its Vertex AI chat model only when installed; 0.4.3 imported it from a module community 0.4 removed.
-  botocore 1.44 makes `standard` the default retry mode, so the clients the package leaves
-  at botocore's defaults (the Bedrock control plane client that resolves inference profiles, and STS: the role check of
+  With botocore 1.44, whose default retry mode is `standard`, the clients the package leaves at botocore's defaults
+  (the Bedrock control plane client that resolves inference profiles, and STS: the role check of
   `aws.bedrock.assumed_role_arn` and credential refresh) make 3 attempts, not 5. Every client in standard or adaptive
   mode now also retries an unmodeled HTTP 429 as throttling. The Bedrock runtime, guardrail, DynamoDB and S3 clients set
   their own attempts (S3: 5 requests, see below). The IaC's Nori package handlers run on Python 3.15, the newest Python
@@ -416,9 +447,6 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - Every final `--output-format json` document has the run's `status` and `exit_code` (`completed` and `0` for a
   success): `run-rag` said `success`, `run-ingestion` `status`, and a successful `run-eval` neither. Additive: no key
   was removed.
-- The `unstructured` extra requires `unstructured>=0.27.37` (locked at 0.27.37, from 0.24.1), the first release that
-  allows filelock 4, so the lockfile no longer overrides its filelock cap and a `pip install` gets the patched
-  filelock too.
 - `tenacity` is no longer a dependency of the package (langchain-core still installs it): a batch item retries through
   the package's one retry loop and schedule, with the same attempts, waits, budget, stops and log line.
 - Every S3 client (the stage-cache sync, `run-eval`'s `s3://` paths, schema and seed sources) connects within 10 s
@@ -480,6 +508,7 @@ Each name below warns and still works, and is removed in 0.5.0
   (`... is deprecated (removed in 0.5.0): ...`).
 
 ### Fixed
+Bugs present in 0.3.0.
 
 - Closing a chain (or the garbage collector releasing a dropped one) whose retrievers are bound to an event loop that
   ends before it runs their close now closes them synchronously instead of leaving them open and waiting 30 s; that
@@ -491,8 +520,6 @@ Each name below warns and still works, and is removed in 0.5.0
   ("11-2111-22") when adjacent days have bars; they thin out, counted back from the latest day.
 - The console's Graph page: an entity's relationship types (`RELATED_TO`, `DELIVERS_TO`) no longer shrink to one or
   two letters per line beside a long description in the Entity panel.
-Bugs present in 0.3.0.
-
 - The guardrail's client made 4 requests per screening call, not 3: it set botocore's `max_attempts`, which counts
   retries only, where every other client of the package sets `total_max_attempts`. A stalled guardrail held a query for
   up to about 160 s (10 s connect + 30 s read per request); it is now about 120 s.
@@ -517,15 +544,6 @@ Bugs present in 0.3.0.
   `kg_search` the same way, to the largest such cut that fits: it trimmed the tail, so with `mcp.max_top_k` raised to
   60 and long chunks the graph records were dropped again. An answer's context keeps the
   strategy's pools, and `kg_answer`'s `top_k` schema says so.
-- `cjk_script_split` on OpenSearch put a space between halfwidth Katakana and the Hangul after it (`ｶﾀｶﾅ한글` lost the
-  `ナ한` bigram) where the embedded engine, which folds width first, did not: its split reads U+FF65-FF9F as Kana. An
-  index's analysis is set when it is created, so an index built before keeps the old split until a reset.
-- `retrieval`'s nDCG@k counted two references a single file matches (`report-a` beside `Report-A.pdf`) as two
-  relevant documents, so perfect retrieval scored 0.61. A reference spelled as others' stem is one with them when
-  every file retrieved within the cutoff it matches one of them matches too, the specific spelling kept (a file past
-  the cutoff never changes a score at it: `a.txt` at rank 20 lowered nDCG@5 to 0.61). A file only the stem matches
-  is another document, so a title another title begins with (`Amazon` beside `Amazon.com`) stays its own reference,
-  and two files of one stem stay two.
 - The Graph page's layout, and `run-visualization`'s, moved from one process to the next: a component's nodes were laid
   out in a set's order, which follows the process's hash seed. They are laid out in the graph's own order.
 - Entity and community writes to Neptune or a Gremlin Server closed a batch at `indexing.neptune.batch_size` items
@@ -545,7 +563,8 @@ Bugs present in 0.3.0.
   `cjk_script_split`, `cjk` with a Hangul run split from the Latin letters, digits and other characters next to it,
   which the indexer defines in each index from built-in components (no plugin;
   `adapters/storage/opensearch_analysis.py`) and tokenizes as the embedded engine and `nori` do (every term found).
-  Japanese and Chinese were not affected.
+  Its split reads halfwidth Katakana (U+FF65-FF9F) as Kana, as the embedded engine, which folds width first, does
+  (`ｶﾀｶﾅ한글` keeps the `ナ한` bigram). Japanese and Chinese were not affected.
 - A base-level community report that failed for an error of its own (cut off at the output limit, output that does
   not parse) recorded its documents `FAILED` uncounted, so every incremental run processed them again and, at
   temperature 0, failed the same way. It now counts toward `indexing.max_document_failures`, as an extraction's own
@@ -629,8 +648,8 @@ Bugs present in 0.3.0.
   `kg_answer` timeout one without its `user_id`, `top_k` and `filter_keys`). A stopped query names the strategy it was
   routed to, else the explicit one it asked for, in its audit record and span as in its metrics (an `ainvoke` stopped
   after its route recorded `strategy: null`).
-  uvicorn's start line keeps the address the server listens on, which the logging setup digested (`Uvicorn running
-  on len=4 sha=...`); a record that matches it keeps no traceback, and only the text and numbers it formats.
+- The logging setup digested uvicorn's start line (`Uvicorn running on len=4 sha=...`): the line keeps the address
+  the server listens on, and a record that matches it keeps no traceback, only the text and numbers it formats.
 - The console's Settings page read a field a `UKR__` variable of the console sets as its default, and passed an edit
   of it that had no effect (the variable wins over the file): the field names the variable (`AWS_PROFILE` and
   `AWS_REGION` as filling it while the file leaves it unset), and a review lists such changes (removing a key
@@ -780,17 +799,6 @@ Bugs present in 0.3.0.
 - An `auto` query's speculative extraction left running past its query failed silently once its retries ran out; its
   failure is logged at WARNING (type and digest; the text at DEBUG).
 - An Ollama model's capability check (`/api/show`) left its connection's socket unclosed; the client is closed.
-- `run-prompt-tuning` wrote corpus-derived text into the tuned system prompts unfenced: the profile's sample sat in
-  plain quotes, the model's domain, language and persona answers could span lines, and the few-shot examples were
-  pasted bare, so a sampled document could add instructions to every later extraction and report. The sample and the
-  examples sit in tag blocks the prompts declare as data (their tags neutralised), and each answer is one short line
-  without `<`.
-- More prompts pasted corpus-derived text outside a data tag: the `intelligent` chunker's boundary prompt
-  (`text_chunking`) the document's numbered lines, the description summary prompt (`description_summarization`) the
-  name of the entity or relationship, and the pairwise judge (`pairwise_comparison`) and the answer-span extractor
-  (`answer_span_extraction`) the answers they read. Each value sits in a tag block the prompt declares as data, whose
-  tags the chain neutralises in it, and the `structured` planner's refusal, quoted back for a repair, can no longer
-  close its `<refusal>` block. Judge scores from before read the answers through the earlier prompts.
 - The console's Graph page drew the newest export of any namespace, so once a second namespace was ingested it, and an
   answer's "Show in the graph", opened another namespace's graph under the config's name. It opens the config
   namespace's current export (`/api/graphs` names it as `current.ref`), and "Show in the graph" the graph of the
@@ -880,8 +888,6 @@ Bugs present in 0.3.0.
   WCAG 2.2's 24 px target size: each is a 24 px target now.
 - `run-mcp-server --help` said its `--log-level` logs are plain lines "with --output-format text", a flag it does not
   have: it names `logging.log_format` (structured JSON records by default), the format its logs take on stderr.
-- The console's `/api/history` rows name the `namespace` a question asked and, under `--trusted-identity-header`,
-  the `user_id` who asked it (new keys; the console's `console.sqlite3` gains a `user_id` column on open).
 - A query its reader stopped ended its spans as errors, while its metrics and audit record count it as stopped: an
   MCP client that left a `kg_search` or `kg_answer` call left its `kg_rag.query` span `ERROR` (`CancelledError`), and
   the console's Stop or a closed page its `kg_rag.console.ask` root; the retrieval or model span in flight was `ERROR`
@@ -917,17 +923,6 @@ Bugs present in 0.3.0.
   socket itself (plain and TLS): 0 open after the close, none left for the GC. A pool or transport of a shape the
   release cannot read (another aiohttp or CPython) is left to the GC, and its connector, and every later one, is still
   closed: its session reads closed.
-- `retrieval`'s nDCG credited a file to every reference it names, so with `reference_sources` `[a, a.pdf]` the
-  ranking `[a.pdf, a.txt]` scored 0.613 and `[a.txt, a.pdf]` 1.0 for the same two relevant files (a deeper cutoff that
-  added a.txt lowered the score). A file is now credited to one reference: the one its full name is, else one its stem
-  names. Recall, hit and MRR are unchanged.
-- A document in a corpus folder named like a drive (`x:/y.txt`) was scoped by its path filters but cited with no
-  path, so `run-rag`, the console and MCP showed it as the root file of the same name and `kg_get_chunks` gave it no
-  `relative_path` (`run-describe` listed its file name): the read side still refused the path as a Windows one. The
-  corpus walk now marks such a path on its text units (`walked_drive_folder`), and a marked `relative_path` that is
-  the unit's stamped `file` filter is read as its path. A document's own drive path stays unnamed even when its own
-  `filters.file` equals it (a pre-parsed document's `C:/Users/...`). A text unit an earlier build wrote has no mark:
-  re-chunking its document (a full build) names its path.
 - MCP `kg_search` and `kg_answer`: `mcp.max_response_chars` measured each record before its `documents` were filled in
   (up to 20 file names a graph record), so with a raised `mcp.max_top_k` or a lower cap a response's records ran 1.5
   to 2.9 times the cap; and a kept chunk's `entities` could name entity records the cap had dropped. The records are
@@ -973,6 +968,23 @@ Bugs present in 0.3.0.
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
   accepted: the `eval` extra requires it (`ragas>=0.4.4`), and the pip-audit job no longer accepts the advisory
   (`.github/pip-audit-accepted.txt` lists only diskcache PYSEC-2026-2447).
+- `run-prompt-tuning` wrote corpus-derived text into the tuned system prompts unfenced: the profile's sample sat in
+  plain quotes, the model's domain, language and persona answers could span lines, and the few-shot examples were
+  pasted bare, so a sampled document could add instructions to every later extraction and report. The sample and the
+  examples sit in tag blocks the prompts declare as data (their tags neutralised), and each answer is one short line
+  without `<`.
+- More prompts pasted corpus-derived text outside a data tag: the `intelligent` chunker's boundary prompt
+  (`text_chunking`) the document's numbered lines, the description summary prompt (`description_summarization`) the
+  name of the entity or relationship, and the pairwise judge (`pairwise_comparison`) and the answer-span extractor
+  (`answer_span_extraction`) the answers they read. Each value sits in a tag block the prompt declares as data, whose
+  tags the chain neutralises in it, and the `structured` planner's refusal, quoted back for a repair, can no longer
+  close its `<refusal>` block. Judge scores from before read the answers through the earlier prompts.
+- The `unstructured` extra requires `unstructured>=0.27.37` (locked at 0.27.37, from 0.24.1), the first release that
+  allows filelock 4, so the lockfile no longer overrides its filelock cap and a `pip install` gets the patched
+  filelock too (4.2.1 or later: GHSA-v4x8-3wr5-3wq8 and the other advisories 0.3.0's override fixed in the lock
+  only).
+- `--trusted-identity-header` (*Added*) refuses a request that holds the header more than once or with a comma, a
+  client's copy a proxy appended to, so a client cannot pass an identity of its own through a proxy that appends.
 
 ## [0.3.0] - 2026-11-14
 

@@ -47,7 +47,9 @@ a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 �
 평가기마다의 채점 방식(`ragas` 컨텍스트 상한, `graph_aware`의 답변·검색 커버리지,
 `retrieval`의 귀속과 파일 이름 매칭, `answer_match`의 구문 매칭, 채점하는 답 구간과
 정규화)은 [Evaluation output: Evaluator details](../reference/evaluation-output.md#evaluator-details)(영문)에
-있습니다.
+있습니다. `retrieval`의 인용 지표(`citation_precision`, `citation_recall`)는 인용을 파일로
+판정합니다. 참조 파일을 가리키는 인용은 인용한 단락이 그 인용이 붙은 주장을 뒷받침하는지와
+상관없이 셉니다. 따라서 이 지표는 뒷받침(support)이 아니라 관련성(relevance)을 잽니다.
 
 ## 평가 데이터 형식
 

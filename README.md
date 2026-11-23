@@ -64,7 +64,7 @@ for the Acme warehouse robots.
 EOF
 ```
 
-**4. Build the knowledge graph:**
+**4. Build the knowledge graph** (on a slow CPU-only machine a model call can pass the local preset's 300 s limit and fail instead of finishing late: raise `UKR__PROVIDERS__LLM__TIMEOUT_SECONDS`, or lower `UKR__PROCESSING__MAX_CONCURRENCY` to the requests Ollama serves at once, [Local mode](./docs/guides/local-mode.md#differences-from-aws-mode)):
 
 ```bash
 UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-ingestion --backend local --source-directory ./sample-corpus

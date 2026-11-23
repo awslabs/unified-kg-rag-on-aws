@@ -73,7 +73,11 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   each request and each ingestion call alike: raise it for a slow server
   instead of lowering `max_output_tokens`. A call past it is abandoned and
   sends no further request, and its item is retried once it ended, never
-  beside it. Token counts and so context budgets are estimates. A
+  beside it. The limit counts a call's wait in the server's queue too: the
+  preset sends up to `processing.max_concurrency` (20) ingestion calls at
+  once, and Ollama serves `OLLAMA_NUM_PARALLEL` of them at a time and queues
+  the rest, so on a slow server lower `processing.max_concurrency` to that
+  number or raise the limit. Token counts and so context budgets are estimates. A
   server that refuses a call (HTTP 4xx) or stays unreachable fails the query
   with the client's error instead of answering "could not find".
 - **Reasoning models.** A leading `<think>` (or `<thinking>`, `<reasoning>`)

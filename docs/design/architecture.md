@@ -257,8 +257,9 @@ states each filter's answer once and runs it on all four store families.
 - **Seed sources**: `@register_seed_source("kind")`
   (`adapters/seed_sources/registry.py`): the loader each
   `processing.seed_graphs[].kind` selects (§4.5).
-- **Evaluators**: one lazy-import branch per `EvaluatorType` in
-  `EvaluationManager._resolve_evaluator_class`.
+- **Evaluators**: one branch per `EvaluatorType` in
+  `EvaluationManager._resolve_evaluator_class` (only `ragas`, which needs the
+  `eval` extra, is imported in its branch).
 
 ### 2.5 Dependency Rule Verification and Public API
 

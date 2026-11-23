@@ -21,6 +21,12 @@ a line a conflict resolution joined unwrapped, an extra the install instructions
 *Fixed*, *Changed*, *Deprecated* or *Removed* entry (a change a 0.3.0 user
 compares with what they run) that names a config key 0.3.0 did not have: a
 feature no release had belongs in its *Added* entry.
+
+A merge that kept an entry's continuation lines after the other side removed
+the line they hang from leaves them as an entry with no bullet (after a blank
+line or a heading) or joined to the entry above, where the tail starts a
+line in lowercase after a full stop; one that put a subsection's lead line
+below the bullets merged in above it leaves the lead under the last of them.
 """
 
 from __future__ import annotations
@@ -118,7 +124,9 @@ def _repeated_passages(section: str) -> list[tuple[int, int, str]]:
 def _entries(section: str) -> list[list[tuple[int, str]]]:
     """The section's entries: each bullet or numbered step at the margin
     with its continuation lines, as ``(line number, line)``."""
-    entries: list[list[tuple[int, str]]] = []
+    # An empty entry to start from: a continuation the section opens with,
+    # or a heading, is an entry with no bullet too.
+    entries: list[list[tuple[int, str]]] = [[]]
     for number, line in enumerate(section.splitlines(), 1):
         if re.match(r"(- |\d+\. )", line):
             entries.append([(number, line)])
@@ -160,6 +168,59 @@ def _repeated_fragments(section: str) -> list[tuple[int, int, str]]:
                 if i - seen >= size and (words[i][2] or not at_line_start):
                     repeats.append((words[seen][1], words[i][1], " ".join(key)))
     return sorted(set(repeats))
+
+
+def _headless_entries(section: str) -> list[int]:
+    """The first line of each entry that starts with no bullet or step: a
+    continuation, after a blank line or a heading, whose head a merge
+    dropped."""
+    return [
+        entry[0][0]
+        for entry in _entries(section)
+        if not re.match(r"(- |\d+\. )", entry[0][1])
+    ]
+
+
+def _joined_tails(section: str) -> list[int]:
+    """Lines of an entry that end a sentence where the entry's next line
+    starts with a lowercase word: no sentence starts so, so the next line is
+    the tail of another entry a merge joined to this one (its head dropped),
+    or a sentence restarted where a merge kept two hunks. A name cased so
+    (``nDCG``) and a nested bullet start fresh."""
+    found = []
+    for entry in _entries(section):
+        for (number, line), (_, after) in zip(entry, entry[1:], strict=False):
+            if re.match(r"\s+(- |\d+\. )", after):
+                continue
+            word = after.split()[0]
+            if (
+                re.search(r"\.\)?$", line.rstrip())
+                and word[0].isalpha()
+                and word.islower()
+            ):
+                found.append(number)
+    return found
+
+
+def _late_leads(section: str) -> list[int]:
+    """Lines of prose at the margin below a subsection's first bullet that
+    are no group label (a line after a blank line, right above a bullet):
+    a subsection's lead line that a merge left under the bullets merged in
+    above it."""
+    lines = section.splitlines()
+    found = []
+    below_a_bullet = False
+    for index, line in enumerate(lines):
+        if line.startswith("#"):
+            below_a_bullet = False
+        elif re.match(r"(- |\d+\. )", line):
+            below_a_bullet = True
+        elif below_a_bullet and line.strip() and not line.startswith((" ", "|", "[")):
+            before = lines[index - 1]
+            after = lines[index + 1] if index + 1 < len(lines) else ""
+            if before.strip() or not re.match(r"(- |\d+\. )", after):
+                found.append(index + 1)
+    return found
 
 
 def _stem(word: str) -> str:
@@ -378,6 +439,18 @@ def test_no_passage_is_repeated() -> None:
 def test_no_fragment_is_repeated_within_an_entry() -> None:
     repeats = _repeated_fragments(SECTION)
     assert not repeats, repeats[:3]
+
+
+def test_no_entry_lost_its_head() -> None:
+    assert _headless_entries(SECTION) == []
+
+
+def test_no_entry_holds_another_s_tail() -> None:
+    assert _joined_tails(SECTION) == []
+
+
+def test_every_lead_line_precedes_its_subsection_s_bullets() -> None:
+    assert _late_leads(SECTION) == []
 
 
 def test_no_two_entries_contradict() -> None:
@@ -599,6 +672,48 @@ def test_the_contradiction_scan() -> None:
     assert _contradictions(no_longer + agrees) == []
     # Other subsections are other documents.
     assert _contradictions(no_longer + "### Fixed\n" + exports) == []
+
+
+def test_the_headless_entry_scan() -> None:
+    # A continuation after a blank line: its bullet line is gone.
+    assert _headless_entries("- a.\n\n  orphan tail.\n- b.\n") == [3]
+    # After a heading too.
+    assert _headless_entries("### Fixed\n  orphan tail.\n") == [2]
+    assert _headless_entries("- a\n  wraps.\n\n1. step\n   wraps.\n") == []
+
+
+def test_the_joined_tail_scan() -> None:
+    joined = "- One entry ends here.\n  of another entry whose head a merge dropped.\n"
+    assert _joined_tails(joined) == [1]
+    assert _joined_tails("- It ends (here).\n  uvicorn's line restarts.\n") == [1]
+    assert _joined_tails("- It ends.\n  nDCG starts a sentence.\n") == []
+    # A sentence that starts a line, a wrapped sentence and a nested bullet.
+    assert (
+        _joined_tails("- One ends.\n  `run-rag` starts one. Another\n  wraps.\n") == []
+    )
+    assert _joined_tails("- A list:\n  - a nested bullet.\n  - another\n") == []
+    # Entries are apart from each other.
+    assert _joined_tails("- One ends.\n- another starts.\n") == []
+
+
+def test_the_late_lead_scan() -> None:
+    late = "### Fixed\n\n- a.\n- b.\nBugs present in 0.3.0.\n\n- c.\n"
+    assert _late_leads(late) == [5]
+    # A lead above the bullets, and a group label between them, are in place.
+    assert _late_leads("### Fixed\nBugs present in 0.3.0.\n\n- a.\n") == []
+    assert _late_leads("### Fixed\n- a.\n\nQueries.\n- b.\n") == []
+    # A group label not followed by its bullets is a stray lead too.
+    assert _late_leads("### Fixed\n- a.\n\nQueries.\n\n- b.\n") == [4]
+    # A heading starts a subsection over; link references are no prose.
+    assert _late_leads("### A\n- a.\n### B\nLead.\n- b.\n\n[B]: x\n") == []
+
+
+def test_the_merge_scans_pass_the_last_release() -> None:
+    # The last release's section, reviewed as released, holds none of them.
+    released = changelog.section(_TEXT, RELEASE)
+    assert _headless_entries(released) == []
+    assert _joined_tails(released) == []
+    assert _late_leads(released) == []
 
 
 def test_the_line_length_scan() -> None:
