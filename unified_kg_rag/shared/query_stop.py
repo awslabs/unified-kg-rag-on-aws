@@ -20,8 +20,13 @@ held (between attempts).
 A host that reads a query's result for a client (an MCP tool call, whose
 client may leave) runs it as its reader (:func:`await_as_reader`): the
 host's cancellation is then its reader's stop, as for a streamed query,
-not a cancelled query's (a process stopping, ``Ctrl-C``), and the spans it
-ends say so (no error status).
+and the spans it ends say so (no error status).
+
+A process a signal stops (a CLI's ``Ctrl-C`` or ``SIGTERM``, a server's
+shutdown) is not its queries' reader stopping: its signal path marks it
+(:func:`mark_process_stopping`) before it cancels anything, and a reader
+then sets no stop (:func:`stop_as_reader`), so its queries end cancelled,
+with their error status.
 
 The reader's stop is bound for the whole query (:func:`query_stop_scope`);
 each deadline window binds a :class:`FollowingStop` of it (or a stop of its
@@ -189,6 +194,38 @@ def _wake(waiter: asyncio.Future[None]) -> None:
 _QUERY_STOP: contextvars.ContextVar[QueryStop | None] = contextvars.ContextVar(
     "kg_rag_query_stop", default=None
 )
+
+
+# Set once a signal stops the process (mark_process_stopping), before it
+# cancels anything: from then on a cancelled reader is the process
+# stopping, not its reader leaving.
+_PROCESS_STOPPING = threading.Event()
+
+
+def mark_process_stopping(stopping: bool = True) -> None:
+    """Mark the process stopping by a signal (a CLI's ``Ctrl-C`` or
+    ``SIGTERM``, a server's shutdown), before the signal cancels the
+    queries in flight; ``stopping=False`` clears the mark (a CLI's next run
+    in the same process)."""
+    if stopping:
+        _PROCESS_STOPPING.set()
+    else:
+        _PROCESS_STOPPING.clear()
+
+
+def process_stopping() -> bool:
+    """Whether a signal stops the process (:func:`mark_process_stopping`)."""
+    return _PROCESS_STOPPING.is_set()
+
+
+def stop_as_reader(stop: QueryStop) -> None:
+    """Set ``stop`` as its query's reader stopping (``StopCause.READER``:
+    the query ends with no failure) before the reader cancels the query,
+    unless a signal stops the process (:func:`process_stopping`): the
+    query is then cancelled with no stop set, as a process stopping cancels
+    it, and ends with its error status."""
+    if not process_stopping():
+        stop.set(StopCause.READER)
 
 
 @contextmanager
@@ -403,7 +440,8 @@ async def await_as_reader(
     ends as a stopped reader's (no failure, in its records and its spans),
     as a streamed query whose reader stops (``aquery_events``); cancelled
     past ``until`` (a host's backstop for its deadline), ``work`` is
-    cancelled with no stop set, a timed-out query's. The cancellation is
+    cancelled with no stop set, a timed-out query's, and so it is while a
+    signal stops the process (:func:`stop_as_reader`). The cancellation is
     re-raised once ``work`` ended (:func:`wait_ended`)."""
     stop = QueryStop()
     context = contextvars.copy_context()
@@ -413,7 +451,7 @@ async def await_as_reader(
         await asyncio.wait({task})
     except asyncio.CancelledError:
         if until is None or time.monotonic() < until:
-            stop.set(StopCause.READER)
+            stop_as_reader(stop)
         task.cancel()
         await wait_ended(task)
         raise

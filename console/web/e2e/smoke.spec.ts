@@ -247,6 +247,24 @@ test("a source's passage links are 24 px targets", async ({ page, baseURL }) => 
   expect(violations).toEqual([]);
 });
 
+// The composer's "Search strategy" and "Options" toggles were 20 px high
+// and passed axe's target-size only on their spacing: 24 px targets in
+// every locale, at the narrowest width, before and after an answer.
+test("the composer's option toggles are 24 px targets", async ({ page, baseURL }) => {
+  const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+  await page.setViewportSize({ width: 390, height: 900 });
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  for (const locale of ["en", "de", "fr", "ru", "es", "it", "pt", "ko", "ja", "zh"]) {
+    await page.addInitScript((code) => window.localStorage.setItem("ukr-console-locale", code), locale);
+    await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+    const toggles = page.locator(".composer-options summary");
+    await expect(toggles.first()).toBeVisible();
+    const boxes = await toggles.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect()).map(({ width, height }) => ({ width, height })));
+    expect(boxes.length, locale).toBeGreaterThan(1);
+    expect(boxes.filter(({ width, height }) => width < 24 || height < 24), `${locale} ${JSON.stringify(boxes)}`).toEqual([]);
+  }
+});
+
 // Regression (arch E14): the Graph page's Analysis tables (schema
 // conformance, evidence) cut off their last column in the side panel at
 // 1440 and 1920 px in English and German. Every table there fits its panel.

@@ -918,6 +918,18 @@ Bugs present in 0.3.0.
   differ by a seat between kinds from a search at the smaller `top_k` (trimmed to 10, a cut of 20 kept 6 chunks, 2
   entities, 1 relationship, 1 report; a search at `top_k` 10 returns 5, 2, 2, 1). The search output names its score
   groups' counts before its cut (`metadata.cut_group_counts`), and the cap apportions on them.
+- A server stopped by a signal ended its in-flight queries as stopped readers: `Ctrl-C` or `SIGTERM` to
+  `run-mcp-server` over stdio left a `kg_answer` or `kg_search` call's `kg_rag.query` span and the retrieval or model
+  span in flight with no error status, marked `kg_rag.stopped`, as a client that left (and so would a console question
+  its server's shutdown cancelled), while `run-rag`'s keep `ERROR`. A signal now marks the process stopping before it
+  cancels anything, and a reader sets its stop only while the process is not stopping: such queries keep `ERROR`
+  (`CancelledError`). A client's cancel, its disconnect or a closed stdin, and the console's Stop, stay a reader's
+  stop. In `run-rag --interactive`, `Ctrl-C` on one question (the session goes on) ended its spans `ERROR`: it is now
+  that question's reader stop, as the console's Stop (no error status, marked stopped); a `SIGTERM` stays `ERROR`. The
+  [telemetry reference](docs/reference/telemetry.md#spans-of-a-stopped-query) has a table of every stop, and gives
+  `kg_rag.mcp.tool`'s parent as the MCP SDK's `tools/call` span under a global tracer provider (it said root).
+- The console composer's "Search strategy" and "Options" toggles were 20 px high, under WCAG 2.2's 24 px target size
+  (axe passed them only on their spacing): each is a 24 px target now.
 
 ## [0.3.0] - 2026-11-14
 

@@ -1241,7 +1241,12 @@ details > summary::marker {
 .composer-options > details:not([open]) {
   flex: 0 0 auto;
 }
+/* The composer's "Search strategy" and "Options" toggles: a 24 px target
+   at least, as the passage links (WCAG 2.2 2.5.8; the label alone was
+   20 px high and passed only on its spacing). */
 .composer-options summary {
+  min-height: 24px;
+  line-height: 24px;
   font-size: var(--text-sm);
   color: var(--graphite);
 }

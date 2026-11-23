@@ -85,7 +85,7 @@ from unified_kg_rag.shared.exceptions import (
     shows_error_text,
 )
 from unified_kg_rag.shared.logging import log_error, log_failure
-from unified_kg_rag.shared.query_stop import QueryStop, StopCause, query_stop_scope
+from unified_kg_rag.shared.query_stop import QueryStop, query_stop_scope, stop_as_reader
 from unified_kg_rag.shared.usage import usage_scope
 
 logger = get_logger(__name__)
@@ -586,7 +586,8 @@ class AskService:
                 yield event
         finally:
             if not task.done():
-                stop.set(StopCause.READER)
+                # Its reader left (unless a signal stops the server).
+                stop_as_reader(stop)
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
