@@ -285,9 +285,14 @@ a backend on): importing any module of the application (the CLIs and the
 composition root aside), evaluation, the search strategies, the retrieval
 kernel or the ingestion adapters loads no vendor binding, port
 implementation, gremlin-python or opensearch-py.
-`tests/unit/test_domain_purity.py` checks the third-party side: no module
-of the domain, the ports or the shared kernel loads an infrastructure
-package, even transitively.
+The backends are the vendor and store packages plus every module that
+implements an indexer port, found in the source, so a new indexer is
+covered without a list entry. On the third-party side, every layer but the
+adapters and the composition roots imports only the third-party packages
+listed for it (any import, lazy ones too), so a store, model or server SDK
+above the adapters fails the test, and `tests/unit/test_domain_purity.py`
+checks that no module of the domain, the ports or the shared kernel loads an
+infrastructure package, even transitively.
 
 **Public API.** Callers outside the package import from `unified_kg_rag`,
 whose `__all__` is the supported surface: the names for using the framework

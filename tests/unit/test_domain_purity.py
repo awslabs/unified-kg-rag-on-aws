@@ -8,26 +8,32 @@ either (the domain imports ``shared``; the ports are written in terms of the
 domain models). Two checks enforce it, for each of ``domain/``, ``ports/``
 and ``shared/``:
 
-* a static scan of every file's own imports (catches function-local
-  imports too), and
+* a static scan of every file's own imports (function-local and
+  type-only ones too): ``test_layering.py``'s per-layer allowlist of
+  third-party packages (``_THIRD_PARTY``), which this module checks names
+  none of the forbidden packages below, and
 * a runtime check that imports every module of the layer in a clean
   interpreter and asserts no forbidden package was loaded *transitively*
   (e.g. through an eager re-export).
 
-There are no carve-outs: LangChain documents are converted to the domain
-``Document`` in ``adapters.ingestion.document_converter``. Which package
-layers each layer may import is ``test_layering.py``'s concern.
+LangChain documents are converted to the domain ``Document`` in
+``adapters.ingestion.document_converter``. The one third-party package of a
+pure layer outside its models and algorithms is langsmith, which
+``shared.logging`` imports only when called (so the runtime check holds).
+Which package layers each layer may import is ``test_layering.py``'s
+concern.
 """
 
 from __future__ import annotations
 
-import ast
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from tests.unit.test_layering import _THIRD_PARTY
 
 pytestmark = pytest.mark.unit
 
@@ -59,28 +65,15 @@ _FORBIDDEN_LOADED = (
 )
 
 
-def _imported_modules(py_file: Path) -> set[str]:
-    tree = ast.parse(py_file.read_text(encoding="utf-8"))
-    mods: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            mods.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            mods.add(node.module)
-    return mods
-
-
 @pytest.mark.parametrize("layer", _PURE_LAYERS)
 def test_layer_has_no_infra_imports(layer: str) -> None:
-    root = _PACKAGE_ROOT / layer
-    violations: list[str] = []
-    for py_file in sorted(root.rglob("*.py")):
-        rel = py_file.relative_to(root).as_posix()
-        for mod in _imported_modules(py_file):
-            match = next((p for p in _FORBIDDEN_PREFIXES if mod.startswith(p)), None)
-            if match:
-                violations.append(f"{rel} imports '{mod}' (forbidden: {match})")
-    assert not violations, f"{layer} purity violated:\n" + "\n".join(violations)
+    # The static scan is test_layering's allowlist: the layer passes it
+    # (test_each_layer_imports_only_its_third_party_packages), so it is
+    # enough that the allowlist names no forbidden package.
+    allowed = _THIRD_PARTY[layer]
+    assert not {
+        package for package in allowed if package.startswith(_FORBIDDEN_PREFIXES)
+    }, f"{layer} may import a forbidden package"
 
 
 def _module_names(root: Path) -> list[str]:
