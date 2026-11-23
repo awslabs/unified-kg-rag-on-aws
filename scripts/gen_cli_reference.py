@@ -167,7 +167,9 @@ def _flag(action: argparse.Action) -> str:
         return f"`{action.metavar or action.dest}`"
     names = ", ".join(f"`{name}`" for name in action.option_strings)
     if action.nargs != 0 and action.metavar:
-        names += f" `{action.metavar}`"
+        # A value the flag may go without (``nargs="?"``) is shown optional.
+        value = f"[{action.metavar}]" if action.nargs == "?" else action.metavar
+        names += f" `{value}`"
     return names
 
 
