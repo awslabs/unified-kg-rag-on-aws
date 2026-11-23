@@ -409,6 +409,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `mcp.max_top_k` ids, each record's text cut to `mcp.max_text_chars`; the namespace and filters apply as in
   `kg_search`, and an id that names no chunk they pass is listed in `missing`. It is in `mcp.tools` by default, and
   the server's instructions name it ([MCP server](docs/guides/mcp.md#reading-the-chunks-a-record-cites)).
+- MCP `kg_search` and `kg_answer` return the call's `cost_usd` and `unpriced_models`, as `run-rag`, the console and
+  `RAGOutput.metadata` state them (`null` when a model called has no price in `models.prices`): they returned only
+  `usage`, so an agent host that budgets per call priced the tokens itself.
 
 ### Changed
 

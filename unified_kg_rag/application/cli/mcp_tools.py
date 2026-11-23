@@ -294,6 +294,16 @@ class SearchToolResult(_Records, _Outcome):
         default_factory=list, description="The guardrail's interventions"
     )
     rerank: str | None = Field(default=None, description="The rerank status")
+    cost_usd: float | None = Field(
+        default=None,
+        description="The call's USD by the server's models.prices, as "
+        "RAGOutput.metadata states it: null when a model it called has no "
+        "price there (named in unpriced_models)",
+    )
+    unpriced_models: list[str] = Field(
+        default_factory=list,
+        description="The models the cost could not price",
+    )
     query_id: str | None = Field(
         default=None, description="The id the server's log lines of the call carry"
     )
@@ -1100,6 +1110,9 @@ class KnowledgeGraphTools:
             "guardrail": list(metadata.get("guardrail") or []),
             "rerank": (str(rerank.get("status")) if isinstance(rerank, dict) else None),
             "usage": dict(metadata.get("usage") or {}),
+            # As the chain priced it (run-rag and the console state the same).
+            "cost_usd": metadata.get("cost_usd"),
+            "unpriced_models": list(metadata.get("unpriced_models") or []),
             "query_id": metadata.get("query_id"),
             "trace_id": metadata.get("trace_id"),
         }
