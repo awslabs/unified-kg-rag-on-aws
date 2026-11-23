@@ -3309,3 +3309,32 @@ def test_every_query_surface_s_metrics_help_names_every_query_metric() -> None:
     assert len(rows) == 3
     for row in rows:
         assert [n for n in names if n not in row] == [], row
+
+
+def test_a_run_starts_with_the_process_stop_mark_cleared() -> None:
+    # R6D-2: a run starts unmarked even when a mark was left set before it
+    # (a server's signal stop outside any CLI run, an earlier run's mark not
+    # cleared): a reader that stops inside it is then a reader's stop (the
+    # query ends UNSET and stopped), not the process stopping (ERROR).
+    from unified_kg_rag.shared.query_stop import (
+        QueryStop,
+        StopCause,
+        mark_process_stopping,
+        process_stopping,
+        stop_as_reader,
+    )
+
+    stop = QueryStop()
+
+    @exits_on_sigterm
+    def main() -> int:
+        stop_as_reader(stop)
+        return 0
+
+    mark_process_stopping()
+    try:
+        assert main() == 0
+    finally:
+        mark_process_stopping(False)
+    assert stop.is_set() and stop.cause is StopCause.READER
+    assert not process_stopping()

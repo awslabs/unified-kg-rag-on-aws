@@ -751,6 +751,8 @@ def test_a_run_with_no_change_reads_the_suffixes_from_the_diff(mocker) -> None:
     [
         (False, DocumentDelta(unchanged=["d"]), 2),
         (False, DocumentDelta(deleted=["d"]), 2),
+        # A run that edits every stored document (R6A-2).
+        (False, DocumentDelta(changed=["d"]), 2),
         (True, DocumentDelta(unchanged=["d"]), 0),
         # A first build keeps nothing stored.
         (False, DocumentDelta(new=["d"]), 0),
