@@ -44,6 +44,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
 )
 from unified_kg_rag.adapters.aws.bedrock_throttles import count_requests
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.llm.chain_factory import PromptCacheMarker
 from unified_kg_rag.adapters.llm.langchain import with_callback
 from unified_kg_rag.adapters.llm.reachability import is_unreachable_error
 from unified_kg_rag.adapters.llm.retry import call_with_transient_retry
@@ -947,6 +948,16 @@ class BedrockLanguageModelFactory(
     def query_prompt_cache_ttl(self) -> str:
         """The cache-checkpoint TTL ``setup_chain`` asks for on query chains."""
         return self.config.aws.bedrock.query_prompt_cache_ttl
+
+    @staticmethod
+    def prompt_cache_marker(llm: Any) -> PromptCacheMarker:
+        """The prompt-cache marker ``setup_chain`` puts on a system prompt of
+        ``llm``: Converse (``ChatBedrockConverse``, every inference profile)
+        takes a native ``cachePoint`` block, the InvokeModel body
+        (``ChatBedrock``) an Anthropic ``cache_control`` key."""
+        return (
+            "cache_point" if isinstance(llm, ChatBedrockConverse) else "cache_control"
+        )
 
     def get_model_info(self, model_id: str) -> LanguageModelInfo:
         """Capability record for any model id (see get_language_model_info)."""

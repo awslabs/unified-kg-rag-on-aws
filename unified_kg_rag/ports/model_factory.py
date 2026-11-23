@@ -374,7 +374,11 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     ``query_prompt_cache_ttl`` (a str, e.g. ``"1h"``) is the prompt-cache
     TTL ``setup_chain`` asks for on query chains, for models whose record
     sets ``supports_1h_cache_ttl``; without it the provider's default TTL
-    (5 minutes) applies. ``request_timeout_seconds(purpose) -> float`` is
+    (5 minutes) applies. ``prompt_cache_marker(llm) -> "cache_point" |
+    "cache_control"`` is the prompt-cache checkpoint a model record that
+    ``supports_prompt_caching`` gets on its system prompt (the Bedrock
+    factory: Converse's ``cachePoint`` block or InvokeModel's
+    ``cache_control`` key); without it no checkpoint is marked. ``request_timeout_seconds(purpose) -> float`` is
     its client's timeout of one request of a model built for ``purpose``; an
     ingestion item's call timeout is its ``INGESTION`` value
     (``adapters.llm.retry.call_timeout_for``), so a call is abandoned no

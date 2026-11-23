@@ -142,3 +142,61 @@ def test_cache_path_renders_escaped_braces_as_single_braces(
 
     assert _system_text(system) == 'Use English. Reply as {"key": "value"}.'
     _assert_marker(system, marker)
+
+
+# --- who picks the marker -----------------------------------------------------
+
+
+class _CachingRecord:
+    supports_prompt_caching = True
+    min_cache_tokens = 0
+
+
+def test_the_factory_picks_the_marker_and_none_without_its_hook() -> None:
+    from langchain_aws import ChatBedrock, ChatBedrockConverse
+
+    from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+    from unified_kg_rag.adapters.llm.chain_factory import _prompt_cache_marker
+
+    resolved = prompts_pkg.GraphRefinementPrompt.resolve()
+    converse = ChatBedrockConverse.model_construct()
+    invoke = ChatBedrock.model_construct()
+    marker = BedrockLanguageModelFactory.prompt_cache_marker
+    assert marker(converse) == "cache_point"
+    assert marker(invoke) == "cache_control"
+
+    class Hooked:
+        prompt_cache_marker = staticmethod(marker)
+
+    assert _prompt_cache_marker(Hooked(), converse, _CachingRecord(), resolved) == (
+        "cache_point"
+    )
+    # A factory of another provider whose record claims caching names no
+    # marker of its own, so the kernel guesses no Bedrock block for it.
+    assert _prompt_cache_marker(object(), invoke, _CachingRecord(), resolved) is None
+
+
+def test_the_provider_neutral_kernel_imports_no_provider_sdk() -> None:
+    import ast
+    from pathlib import Path
+
+    import unified_kg_rag.adapters.llm as kernel
+
+    sdks = {
+        "langchain_aws",
+        "boto3",
+        "botocore",
+        "langchain_ollama",
+        "langchain_openai",
+    }
+    found = []
+    for py_file in Path(kernel.__file__).parent.rglob("*.py"):
+        for node in ast.walk(ast.parse(py_file.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                names = [node.module or ""]
+            else:
+                continue
+            found += [f"{py_file.name}: {n}" for n in names if n.split(".")[0] in sdks]
+    assert not found, found

@@ -23,7 +23,7 @@ from collections.abc import (
     Iterator,
 )
 from contextlib import AbstractContextManager, aclosing
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from langchain_classic.output_parsers import OutputFixingParser
 from langchain_core.exceptions import OutputParserException
@@ -98,13 +98,14 @@ _CACHE_POINT_BLOCK: dict[str, Any] = {"cachePoint": {"type": "default"}}
 
 
 def _prompt_cache_marker(
-    llm: Any, model_info: Any, resolved: ResolvedPrompt
+    factory: Any, llm: Any, model_info: Any, resolved: ResolvedPrompt
 ) -> PromptCacheMarker | None:
     """Which cache marker the system prompt gets, or None for no caching.
 
-    Converse (``ChatBedrockConverse``, every inference profile) takes a native
-    ``cachePoint`` block; the InvokeModel body (``ChatBedrock``) takes an
-    Anthropic ``cache_control`` key. A system prompt shorter than the model's
+    The factory names the marker its model takes (its optional
+    ``prompt_cache_marker(llm)`` hook: the Bedrock factory's Converse
+    ``cachePoint`` block or InvokeModel ``cache_control`` key); a factory
+    without the hook gets none. A system prompt shorter than the model's
     minimum checkpoint size would be accepted but not cached, so it gets none.
     """
     if not (model_info and model_info.supports_prompt_caching):
@@ -112,13 +113,8 @@ def _prompt_cache_marker(
     minimum = getattr(model_info, "min_cache_tokens", 0)
     if estimate_token_count(resolved.system_prompt_template) < minimum:
         return None
-    # Only Bedrock records support prompt caching, so this import only runs
-    # for a Bedrock model: provider-neutral callers never load langchain-aws.
-    from langchain_aws import ChatBedrockConverse
-
-    if isinstance(llm, ChatBedrockConverse):
-        return "cache_point"
-    return "cache_control"
+    marker_of = getattr(factory, "prompt_cache_marker", None)
+    return None if marker_of is None else cast(PromptCacheMarker, marker_of(llm))
 
 
 # The TTL a cache checkpoint gets when none is asked for: Bedrock's default,
@@ -1073,7 +1069,7 @@ def setup_chain(
                 resolved,
                 system_prompt_template=resolved.system_prompt_template + system_suffix,
             )
-        cache_marker = _prompt_cache_marker(llm, model_info, resolved)
+        cache_marker = _prompt_cache_marker(factory, llm, model_info, resolved)
         prompt = _build_chat_prompt(
             resolved,
             cache_marker,
