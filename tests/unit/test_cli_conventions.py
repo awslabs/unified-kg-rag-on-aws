@@ -1407,6 +1407,8 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
         "retried": 0,
         "unchanged": 0,
         "deleted": 2,
+        # No document_loading among the stages it ran: a resumed delta.
+        "reused": True,
     }
 
 
@@ -1469,6 +1471,7 @@ def test_ingestion_json_result_counts_failed_files_and_the_delta() -> None:
         "retried": 1,
         "unchanged": 3,
         "deleted": 1,
+        "reused": True,
     }
 
 

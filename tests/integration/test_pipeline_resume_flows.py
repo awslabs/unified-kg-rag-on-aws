@@ -716,6 +716,37 @@ def test_a_stage_that_crashed_then_succeeds_commits_its_documents(
     assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}
 
 
+def _delta(harness: _Harness, capsys: pytest.CaptureFixture[str], pid: str) -> Any:
+    capsys.readouterr()
+    assert harness.run("--pipeline-id", pid, "--output-format", "json") == 0
+    return json.loads(capsys.readouterr().out)["delta"]
+
+
+def test_a_rerun_of_a_finished_pipeline_id_says_its_delta_is_reused(
+    harness: _Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Final review D-1: a finished pipeline id run again resumes it and
+    # indexes its delta again (documented); its JSON delta read as a new
+    # diff of the corpus ("new": 2 for nothing new). It says it is reused.
+    first = _delta(harness, capsys, "p1")
+    assert first == {
+        "new": 2,
+        "changed": 0,
+        "retried": 0,
+        "unchanged": 0,
+        "deleted": 0,
+        "reused": False,
+    }
+    assert _delta(harness, capsys, "p1") == {**first, "reused": True}
+    # A new pipeline id diffs the corpus: nothing new.
+    assert _delta(harness, capsys, "p2") == {
+        **first,
+        "new": 0,
+        "unchanged": 2,
+        "reused": False,
+    }
+
+
 def test_a_failed_run_says_which_stage_failed(
     harness: _Harness,
     monkeypatch: pytest.MonkeyPatch,

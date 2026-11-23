@@ -1052,6 +1052,11 @@ Bugs present in 0.3.0.
   before it ran (an MCP call that timed out waiting for a call slot), while one that timed out in the chain recorded
   `0.0`, and `null` is documented as "a model without a price". Such a record now has `cost_usd` `0.0` and a usage of
   0 (its query metrics emit `query_cost_usd` 0 too).
+- `run-ingestion --output-format json`: a run that resumed its pipeline id (a finished id run again, as the console
+  demo and the console's Ingest page do) reported the delta of the run that loaded the documents as if it were a new
+  diff (`"new": 8` for an unchanged corpus). The `delta` now says so (`"reused": true`); the resume itself is
+  unchanged. The console guide said such a re-run "finds nothing new": it resumes, calls no model and indexes the
+  documents again.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
