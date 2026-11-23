@@ -62,7 +62,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
-        start_time = time.time()
+        start_time = time.monotonic()
         rerank = self._new_rerank_trace()
         logger.info(
             "Simple search started - query: %s ('%s')",
@@ -78,7 +78,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
                 results=[],
                 total_results=0,
                 search_strategy="simple_search",
-                processing_time=time.time() - start_time,
+                processing_time=time.monotonic() - start_time,
                 metadata={"rerank": rerank.summary(), "sources": {}},
             )
 
@@ -94,7 +94,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             fusion="min_max",
         )
 
-        processing_time = time.time() - start_time
+        processing_time = time.monotonic() - start_time
 
         logger.info(
             "Search completed - retrieved: %s results in %.3fs",

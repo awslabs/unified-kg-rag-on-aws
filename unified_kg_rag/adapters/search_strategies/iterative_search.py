@@ -231,7 +231,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
-        start_time = time.time()
+        start_time = time.monotonic()
         logger.info(
             "Iterative search started - base: '%s', query: %s",
             self.base_strategy.value,
@@ -262,7 +262,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             )
             usage = meter.snapshot()
 
-        processing_time = time.time() - start_time
+        processing_time = time.monotonic() - start_time
         logger.info(
             "Iterative search completed: %s follow-up rounds (%s), %s model "
             "calls, %s results in %.3fs",

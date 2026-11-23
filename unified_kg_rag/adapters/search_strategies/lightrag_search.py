@@ -271,7 +271,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
-        start_time = time.time()
+        start_time = time.monotonic()
         rerank = self._new_rerank_trace()
         mode = self._mode(query)
         logger.info(
@@ -357,7 +357,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             rerank_only_types=rerank_only_types,
         )
 
-        processing_time = time.time() - start_time
+        processing_time = time.monotonic() - start_time
 
         logger.info(
             "LightRAG search completed - %d results in %.3fs",

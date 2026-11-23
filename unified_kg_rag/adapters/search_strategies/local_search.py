@@ -71,7 +71,7 @@ class LocalSearchStrategy(PPRRankingMixin):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
-        start_time = time.time()
+        start_time = time.monotonic()
         rerank = self._new_rerank_trace()
         logger.info(
             "Local search started - query: %s ('%s') with %s focus entities",
@@ -162,7 +162,7 @@ class LocalSearchStrategy(PPRRankingMixin):
         # points and DRIFT's answers written from it do.
         final_results = await self._cite_report_findings(query, final_results)
 
-        processing_time = time.time() - start_time
+        processing_time = time.monotonic() - start_time
 
         logger.info(
             "Search completed - retrieved: %s results in %.3fs",

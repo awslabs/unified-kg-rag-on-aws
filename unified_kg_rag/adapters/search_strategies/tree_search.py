@@ -99,7 +99,7 @@ class TreeSearchStrategy(BaseSearchStrategy):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
-        start = time.time()
+        start = time.monotonic()
         rerank = self._new_rerank_trace()
         tree = self.config.search.tree_search
         logger.info("Tree search started - query: %s", text_digest(query.query))
@@ -149,14 +149,14 @@ class TreeSearchStrategy(BaseSearchStrategy):
             "Tree search completed - %d results (%d summaries) in %.3fs",
             len(results),
             metadata["summaries"],
-            time.time() - start,
+            time.monotonic() - start,
         )
         return SearchResult(
             query=query,
             results=results,
             total_results=len(results),
             search_strategy="tree_search",
-            processing_time=time.time() - start,
+            processing_time=time.monotonic() - start,
             metadata=metadata,
         )
 
