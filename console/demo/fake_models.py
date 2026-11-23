@@ -237,6 +237,10 @@ def _marked_sentences(text: str) -> list[tuple[str, int | None]]:
     return marked
 
 
+# The openings of a line of markup, not a sentence of the text.
+_MARKUP = ("<", "#", "|", "-", "[", "{", "**")
+
+
 def best_sentences(
     question: str, text: str, limit: int
 ) -> list[tuple[str, int | None]]:
@@ -246,7 +250,7 @@ def best_sentences(
     wanted = set(tokens(question))
     scored = []
     for position, (sentence, marker) in enumerate(_marked_sentences(text)):
-        if sentence.startswith(("<", "#", "|", "-", "[", "{", "**")):
+        if sentence.startswith(_MARKUP):
             continue
         overlap = len(wanted & set(tokens(sentence)))
         if overlap:
@@ -259,6 +263,16 @@ def best_sentences(
             seen.add(sentence)
             unique.append((sentence, marker))
     return unique
+
+
+def _unrelated_sentence(question: str, text: str) -> str | None:
+    """The first sentence of ``text`` that shares no token with
+    ``question`` (lines of markup skipped, as :func:`best_sentences` skips
+    them), ``None`` when every one shares some."""
+    for sentence, _ in _marked_sentences(text):
+        if not sentence.startswith(_MARKUP) and not _overlap(question, sentence):
+            return sentence
+    return None
 
 
 def _overlap(question: str, text: str) -> int:
@@ -482,6 +496,17 @@ def respond(system: str, human: str) -> tuple[str, bool]:
             }
             for i, (s, _) in enumerate(best_sentences(question, reports, 3))
         ]
+        unrelated = _unrelated_sentence(question, reports)
+        if unrelated is not None:
+            # A point that does not bear on the question, scored 0 as the
+            # map prompt asks: map_relevance_threshold (0) drops it.
+            points.append(
+                {
+                    "description": unrelated,
+                    "score": 0,
+                    "report_ids": _map_report(reports, unrelated),
+                }
+            )
         return json.dumps({"points": points}), False
     if "DRIFT search primer" in system:
         step = drift_step(
