@@ -893,10 +893,13 @@ Bugs present in 0.3.0.
   word of it; a run of two or more letters keeps the start rule (東京 for 東京都).
 - On a custom vector store that leaves `VectorIndexer.read_text_unit_attributes` at its port's default (`{}`), a
   removal and the report refresh wrote every kept or refreshed community report with no `document_ids` and no
-  `filters`, so each attribute filter excluded it and its lineage was lost from the store, and the extraction-record
-  collection deleted the records live text units still name. The default now reads as "cannot tell" (one WARNING names
-  the store): the reports keep their stored documents and filters, the records are kept, and a stripped entity keeps
-  its stored description, as before. `docs/guides/extend.md` names the method.
+  `filters`, so each attribute filter excluded it and its lineage was lost from the store. The default now reads as
+  "cannot tell": a kept report's `text_unit_ids` are narrowed to the units left, its stored documents and filters are
+  kept, and a stripped entity keeps its stored description, as before. On such a store the documents and filters of
+  community reports, entities and relationships therefore stay as the last full build wrote them (a filter on a
+  removed or renamed file keeps matching them, a report does not gain an added file) and the removed text units'
+  extraction records are never collected (their keys are in those units' attributes); a WARNING names the store on
+  every incremental run, one that changes nothing included. `docs/guides/extend.md` names the method.
 - A sync `GraphRAGChain.close()` (or `OpenSearchClient.close()`) called from a coroutine left the OpenSearch async
   client's aiohttp session and every keep-alive socket open (7 of 7 after three searches inside `asyncio.run`), with
   "Unclosed client session" warnings: the awaited close it scheduled on the caller's loop was cancelled by

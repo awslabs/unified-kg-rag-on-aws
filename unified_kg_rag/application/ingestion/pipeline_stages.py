@@ -177,6 +177,8 @@ from unified_kg_rag.ports.indexer import (
     GraphIndexer,
     IndexingStats,
     keeps_build_records,
+    reads_text_unit_attributes,
+    warn_unreadable_unit_attributes,
 )
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -3013,6 +3015,15 @@ class IndexingStage(_RegistryStage):
 
         if context.incremental_delta is not None and not self.config.indexing.reset:
             warn_about_unapplied_retired_scopes(self.config, context)
+            run_delta = context.incremental_delta
+            vector_indexer = self.indexing_manager.vector_indexer
+            if (run_delta.changed or run_delta.unchanged or run_delta.deleted) and not (
+                reads_text_unit_attributes(vector_indexer)
+            ):
+                # Every run over stored documents, one that changes nothing
+                # included: what the store keeps stale lasts until a full
+                # build.
+                warn_unreadable_unit_attributes(vector_indexer, again=True)
             # Applied once the stage completes: a failed removal fails it.
             documents_deleted = len(context.incremental_delta.deleted)
             indexing_results, drift = self._index_incremental(
