@@ -797,6 +797,21 @@ class TestEndToEndDetection:
         )
         assert members == [["a"], ["b"], ["c"]]
 
+    def test_zero_weight_singletons_still_merge_to_min_community_size(self) -> None:
+        # B-2: the zero-weight branch returned before the small-leaf merge,
+        # so a 5-entity chain of strength-0 relationships gave 5 one-entity
+        # communities (5 report calls) where min_community_size is 3.
+        g = nx.Graph()
+        for a, b in [("a", "b"), ("b", "c"), ("c", "d"), ("d", "e")]:
+            g.add_edge(a, b, weight=0.0)
+        cd = _detector(min_community_size=3)
+
+        cd(g)
+
+        level0 = [c.nodes for c in cd.all_communities.values() if c.level == 0]
+        assert set().union(*level0) == set(g.nodes())
+        assert min(len(nodes) for nodes in level0) >= 3
+
     def test_zero_weight_edges_next_to_weighted_ones_partition(self) -> None:
         g = _two_triangle_graph()
         g.add_edge("n9", "n8", weight=0.0)

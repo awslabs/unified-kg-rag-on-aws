@@ -992,6 +992,10 @@ Bugs present in 0.3.0.
   carries none, as before. The interactive page's edge tooltip names each by type and description, and the Graph
   page lists each in the Entity panel and counts each in its statistics, while still drawing the pair as one line.
   An export written before is read as it was.
+- A graph whose every edge weighs 0 (relationships of strength 0, as an incremental run over one such document
+  clusters) gave one community, and one report call, per entity: its singletons skipped the merge of communities
+  under `graph.community_detection.min_community_size`. They merge as Leiden's small leaves do (a 5-entity chain: one
+  community, not 5).
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
