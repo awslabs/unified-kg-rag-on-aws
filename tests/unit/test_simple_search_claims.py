@@ -18,6 +18,7 @@ import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.domain.models import (
     Config,
+    IndexArtifact,
     Methodology,
     RetrievalResult,
     RetrieverRole,
@@ -25,7 +26,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SectionType,
 )
-from unified_kg_rag.domain.retrieval.index_prefixes import all_index_prefixes
+from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
 
 pytestmark = pytest.mark.unit
 
@@ -50,6 +51,16 @@ class FakeRetriever:
                 retriever_type=SectionType.TEXT,
             )
         ]
+
+
+def _every_document_prefix(config: Config) -> list[str]:
+    """Every document index prefix, in sweep order (the summary tree's is
+    read by tree search alone)."""
+    return [
+        prefix
+        for prefix, artifact in index_artifacts(config).items()
+        if artifact is not IndexArtifact.SUMMARY_TREE
+    ]
 
 
 def _swept(retriever: FakeRetriever) -> list[str]:
@@ -98,7 +109,7 @@ async def test_claims_included_in_sweep_when_enabled(config: Config) -> None:
 
     await strategy.asearch(SearchQuery(query="q"))
 
-    assert _swept(os_r) == all_index_prefixes(config)
+    assert _swept(os_r) == _every_document_prefix(config)
 
 
 async def test_claims_excluded_when_no_claim_was_extracted(config: Config) -> None:
@@ -118,7 +129,7 @@ async def test_claims_excluded_when_no_claim_was_extracted(config: Config) -> No
     await strategy.asearch(SearchQuery(query="q"))
     os_r.calls.clear()
     await strategy.asearch(SearchQuery(query="q"))
-    assert _swept(os_r) == all_index_prefixes(config)
+    assert _swept(os_r) == _every_document_prefix(config)
     assert len(os_r.asked) == 2
 
 

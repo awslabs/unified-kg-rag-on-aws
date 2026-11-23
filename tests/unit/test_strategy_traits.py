@@ -24,9 +24,11 @@ def test_every_strategy_has_traits() -> None:
 
 
 def test_every_routable_strategy_has_a_router_guide() -> None:
-    routable = {s for s, t in STRATEGY_TRAITS.items() if t.auto_routable}
+    routable = {s for s, t in STRATEGY_TRAITS.items() if t.not_routable_reason is None}
     assert routable <= set(STRATEGY_ROUTING_GUIDE)
-    assert {s for s in SearchStrategy if not STRATEGY_TRAITS[s].auto_routable} == {
+    assert {
+        s for s in SearchStrategy if STRATEGY_TRAITS[s].not_routable_reason is not None
+    } == {
         SearchStrategy.AUTO,
     }
 
@@ -41,7 +43,7 @@ def test_the_routes_that_warn_are_left_out_of_the_default() -> None:
 
 def test_the_default_routable_strategies_are_allowed() -> None:
     for strategy in Config().search.auto_routable_strategies:
-        assert STRATEGY_TRAITS[strategy].auto_routable
+        assert STRATEGY_TRAITS[strategy].not_routable_reason is None
 
 
 def test_one_general_fallback_order() -> None:
