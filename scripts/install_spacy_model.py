@@ -40,7 +40,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 ATTEMPTS = 5
 TIMEOUT_SECONDS = 120
@@ -109,7 +109,10 @@ def _open(url: str, timeout: float) -> BinaryIO:
     if not url.startswith("https://"):
         raise InstallError(f"refusing to fetch {url!r}: not an https URL")
     # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected - https only, the URL unstructured pins
-    return urllib.request.urlopen(url, timeout=timeout)  # nosec B310  # noqa: S310
+    return cast(
+        BinaryIO,
+        urllib.request.urlopen(url, timeout=timeout),  # nosec B310  # noqa: S310
+    )
 
 
 def fetch_wheel(

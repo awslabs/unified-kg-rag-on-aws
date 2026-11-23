@@ -260,8 +260,8 @@ def _section(
         lines += [intro, ""]
     if rows:
         lines += [*TABLE_HEAD, *rows, ""]
-    for key, sub, current, info in children:
-        lines += _section(key, sub, current, info, long_defaults, uncompared)
+    for key, sub, current, child in children:
+        lines += _section(key, sub, current, child, long_defaults, uncompared)
     return lines
 
 

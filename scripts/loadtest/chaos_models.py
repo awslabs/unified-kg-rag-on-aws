@@ -185,7 +185,7 @@ def make_server(
     models = fake_models.FakeModels(dimensions, chunk_delay, 0.0, None)
     base: Any = fake_models.make_handler(models)
 
-    class Handler(base):  # type: ignore[misc, valid-type]
+    class Handler(base):
         def setup(self) -> None:
             super().setup()
             with chaos.lock:

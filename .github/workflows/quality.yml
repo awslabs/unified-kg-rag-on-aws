@@ -100,7 +100,7 @@ jobs:
         run: uv run isort --check-only unified_kg_rag tests iac scripts console/demo docker/s3_sync.py .github/scripts
 
       - name: mypy (type check)
-        run: uv run mypy unified_kg_rag
+        run: uv run mypy unified_kg_rag scripts
 
       - name: File hygiene hooks
         # The pre-commit hooks not covered by the steps above: end-of-file,

@@ -335,6 +335,10 @@ module = [
     "yaml.*",
     # [otel] extra only; the dev group installs the SDK but no exporter.
     "opentelemetry.exporter.*",
+    # scripts/install_spacy_model.py: the [unstructured] extra, and the
+    # wheel installer it brings.
+    "unstructured.*",
+    "installer.*",
 ]
 ignore_missing_imports = true
 
