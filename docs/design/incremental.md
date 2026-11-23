@@ -587,9 +587,16 @@ what stays flagged. The
 commit, once its writes succeeded, writes each again (`report_refresh`,
 `IncrementalIndexer._refresh_reports`) from what the stores then hold, as a
 full build's detector reads it: the stored entities whose level-0
-communities (`Entity.community_ids`) lie under the community (read through
-the stored reports' `child_community_ids`; the candidates are the entities
-citing a unit the report cites and those the removal stripped), their
+communities (`Entity.community_ids`) lie under the community (read down the
+stored hierarchy: a child's children are its stored report's
+`child_community_ids` or, for a child stored without a report, as a full
+build stores a seed-only community or one whose report failed and the
+refresh leaves an emptied one, its graph-store vertex's; a child with
+neither was deleted by a removal, holds no member and is no longer listed.
+A report is what a parent's roll-up reads, not what makes a child's members
+its own, as MS GraphRAG's parent context takes a child without a report by
+its members; the candidates are the entities citing a unit the report
+cites and those the removal stripped), their
 derived descriptions, the edges among them, the claims about them and their
 degrees over every stored edge, with the stored reports of the children not
 written again rolled up (an outdated one is not). The answer is kept in the
@@ -600,16 +607,20 @@ role for the indexing stage). A community left without a document-backed
 member loses its report. The graph store's community vertex is written
 again with the members the refresh read (their text units, size and names),
 whatever its report's outcome. A report the run cannot write again (the model
-failed, a read failed, a report below it is missing, or, with
+failed, a read failed, or, with
 `enable_sub_community_rollup`, one below it got no report this run: written
 without that child's roll-up, the parent would never be asked again once
 the child is) stays flagged and in
 the build record (`IndexBuildRecord.outdated_reports`, an `outdated_reports`
 rebuild reason with remedy `next_run`), and the next run, a run with
-nothing to index included, tries again. A property test checks that the
+nothing to index included, tries again; one with a community below it
+stored without a report on a graph backend that cannot read community
+vertices (`GraphIndexer.read_community_children` at its default) stays
+until `indexing.reset: true`. Property tests check that the
 model is asked with what a full build's detector packs for the same
-community over the surviving graph
-(`tests/property/test_report_refresh_properties.py`). Each delta's
+community over the surviving graph, over two- and three-level hierarchies
+with seed-only, report-less and deleted communities, and that no report is
+left flagged (`tests/property/test_report_refresh_properties.py`). Each delta's
 first-pass communities (depth 0) join every cut of the hierarchy, so global
 search's cut
 grows until a rebuild; the cap and the shallower-cut fallback (§6.1.1) bound

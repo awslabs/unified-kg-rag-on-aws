@@ -18,7 +18,14 @@ now hold them, as a full build's detector reads them: the stored entities
 whose level-0 communities (``Entity.community_ids``) lie under it, their
 descriptions as the commit derived them, the relationships among them, the
 claims about them, and their degrees over every stored edge (the order a
-report packs its members in, and its rank). A parent's roll-up reads its
+report packs its members in, and its rank). Its level-0 communities are
+read down the stored hierarchy, through each child's report or, for a child
+stored without one (a seed-only community, one whose report failed or was
+emptied), its graph-store vertex: a report is what a parent's roll-up
+reads, not what makes a child a member (MS GraphRAG's parent context takes
+a child without a report by its members). A child with neither was deleted
+by a removal (none of its text units is left): it holds no member, and the
+report written again no longer lists it. A parent's roll-up reads its
 children's stored reports beside those written again with it. The answer is
 kept in the extraction store by its input, as a full build's: a report whose
 input did not change (its removed text named no member) takes the stored
@@ -28,9 +35,10 @@ One model call per report at most, under the run's budget
 (``processing.max_run_*``). A community none of whose members remains, or
 only seed-graph members, has no report in a full build: its report is
 deleted. A report the run cannot write again (the model failed, the stores
-could not be read, a report below it is missing, or one below it got no
-report this run and it rolls its children up) stays flagged outdated and
-listed in the build record, and the next run tries again.
+could not be read, or one below it got no report this run and it rolls its
+children up) stays flagged outdated and listed in the build record, and the
+next run tries again; so does one with a community below it the graph store
+cannot read (a backend that cannot tell), until ``indexing.reset: true``.
 """
 
 from __future__ import annotations
@@ -101,9 +109,11 @@ class _Hierarchy(NamedTuple):
     # report below them.
     reports: dict[str, CommunityReport]
     # The outdated reports' communities with their level-0 communities;
-    # one whose hierarchy could not be read (a report below it is missing)
-    # is absent.
+    # one with a community below it the graph store cannot read is absent.
     leaves: dict[str, set[str]]
+    # The communities below them stored neither with a report nor as a
+    # graph vertex: deleted by a removal.
+    deleted: set[str]
 
 
 class ReportRefresh:
@@ -186,7 +196,8 @@ class ReportRefresh:
         if unread:
             logger.warning(
                 "%d outdated community reports of '%s' have a community below "
-                "them without a stored report: they stay outdated",
+                "them stored without a report that the graph store cannot read: "
+                "they stay outdated until indexing.reset: true writes them again",
                 len(unread),
                 suffix,
             )
@@ -218,7 +229,11 @@ class ReportRefresh:
             if not entity_ids or seed_only(units):
                 emptied.add(report.id)
                 continue
-            communities.append(self._community(report, entity_ids, units, graph))
+            communities.append(
+                self._community(
+                    report, entity_ids, units, graph, _children(report, hierarchy)
+                )
+            )
         results: dict[str, IndexingStats] = {}
         if emptied:
             # A full build has no report for such a community.
@@ -239,22 +254,44 @@ class ReportRefresh:
     def _hierarchy(
         self, suffix: str, outdated: Mapping[str, CommunityReport]
     ) -> _Hierarchy:
-        """The stored reports below the ``outdated`` ones (read level by
-        level through their ``child_community_ids``) and the level-0
-        communities of each outdated one."""
+        """The stored hierarchy below the ``outdated`` reports, read level
+        by level: each child's children are its stored report's
+        (``child_community_ids``) or, stored without a report, its graph
+        vertex's; and the level-0 communities of each outdated one."""
         vector = self._manager.vector_indexer
+        graph_store = self._manager.graph_indexer
         reports: dict[str, CommunityReport] = dict(outdated)
-        pending = {c for r in outdated.values() for c in r.child_community_ids}
-        missing: set[str] = set()
-        while pending - reports.keys() - missing:
-            wanted = sorted(pending - reports.keys() - missing)
+        children: dict[str, list[str]] = {
+            c: list(r.child_community_ids) for c, r in outdated.items()
+        }
+        deleted: set[str] = set()
+        # Stored without a report, and the graph store cannot tell.
+        unknown: set[str] = set()
+        pending = {c for below in children.values() for c in below}
+        while wanted := sorted(pending - children.keys() - unknown):
             read = vector.read_community_reports(
                 [community_report_id(c) for c in wanted], suffix
             )
             found = {r.community_id: r for r in read or []}
             reports.update(found)
-            missing |= set(wanted) - found.keys()
-            pending = {c for r in found.values() for c in r.child_community_ids}
+            children.update((c, list(r.child_community_ids)) for c, r in found.items())
+            reportless = [c for c in wanted if c not in found]
+            vertices = (
+                graph_store.read_community_children(reportless, suffix=suffix)
+                if reportless
+                else {}
+            )
+            if vertices is None:
+                unknown.update(reportless)
+                vertices = {}
+            children.update(vertices)
+            # Neither a report nor a vertex: a removal deleted it, with every
+            # community below it (their text units are its own), and its id
+            # from its members' community_ids. A level-0 id no member names.
+            gone = [c for c in reportless if c not in vertices and c not in unknown]
+            deleted.update(gone)
+            children.update((c, []) for c in gone)
+            pending = {c for w in wanted for c in children.get(w, ())}
 
         leaves: dict[str, set[str] | None] = {}
 
@@ -266,20 +303,19 @@ class ReportRefresh:
                 if current in leaves:
                     stack.pop()
                     continue
-                report = reports.get(current)
-                if report is None:
+                if current in unknown:
                     leaves[current] = None
                     stack.pop()
                     continue
-                children = [c for c in report.child_community_ids if c not in leaves]
-                if children:
-                    stack.extend(children)
+                under = [c for c in children[current] if c not in leaves]
+                if under:
+                    stack.extend(under)
                     continue
                 stack.pop()
-                if not report.child_community_ids:
+                if not children[current]:
                     leaves[current] = {current}
                     continue
-                parts = [leaves[c] for c in report.child_community_ids]
+                parts = [leaves[c] for c in children[current]]
                 leaves[current] = (
                     None
                     if any(part is None for part in parts)
@@ -288,7 +324,7 @@ class ReportRefresh:
             return leaves[community_id]
 
         known = {c: under for c in outdated if (under := below(c)) is not None}
-        return _Hierarchy(reports, known)
+        return _Hierarchy(reports, known, deleted)
 
     def _members(
         self, suffix: str, hierarchy: _Hierarchy, candidates: set[str]
@@ -347,9 +383,10 @@ class ReportRefresh:
         entity_ids: list[str],
         units: list[str],
         graph: nx.Graph,
+        children: list[str],
     ) -> Community:
         """The community of the stored ``report`` with its current
-        members, as the detector makes one."""
+        members and ``children``, as the detector makes one."""
         level = report.level or 0
         label = community_label(level, report.community_id)
         members = set(entity_ids)
@@ -365,7 +402,7 @@ class ReportRefresh:
             name=community_name(level, label),
             level=str(level),
             parent=report.parent_community_id or "",
-            children=list(report.child_community_ids),
+            children=children,
             entity_ids=entity_ids,
             relationship_ids=relationship_ids,
             text_unit_ids=units,
@@ -468,7 +505,7 @@ class ReportRefresh:
             report.depth = kept.depth
             report.min_cut_depth = kept.min_cut_depth
             report.parent_community_id = kept.parent_community_id
-            report.child_community_ids = list(kept.child_community_ids)
+            report.child_community_ids = _children(kept, hierarchy)
             if attributes is None:
                 # The store cannot read its text units' attributes: the
                 # report keeps the documents and filters stored with it,
@@ -519,6 +556,11 @@ class ReportRefresh:
             )
             return
         results[f"graph_refreshed_communities_{suffix}"] = stats
+
+
+def _children(report: CommunityReport, hierarchy: _Hierarchy) -> list[str]:
+    """The children of ``report``'s community that are still stored."""
+    return [c for c in report.child_community_ids if c not in hierarchy.deleted]
 
 
 def _level(community: Community) -> int:

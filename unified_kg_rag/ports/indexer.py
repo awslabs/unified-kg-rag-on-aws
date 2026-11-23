@@ -464,6 +464,21 @@ class GraphIndexer(BaseIndexer, SchemaAnnotationStore):
         """
         return None
 
+    def read_community_children(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]] | None:
+        """``{community id: its child community ids}`` of the community
+        vertices of ``suffix`` among ``ids`` (a leaf's: ``[]``); an id with
+        no stored vertex is absent.
+
+        The hierarchy of a community stored without a report (a seed-only
+        one, one whose report failed or was emptied): an outdated parent's
+        report written again reads its members through it. Default returns
+        ``None``: the backend cannot tell; adapters that override it raise
+        when the read fails.
+        """
+        return None
+
     def find_relationship_ids_citing(
         self, text_unit_ids: list[str], suffix: str | None = None
     ) -> dict[str, list[str]] | None:

@@ -138,6 +138,31 @@ _EDGES = [
 ]
 
 
+def _vertex(
+    community: str, units: list[str], level: int, children: list[str] = ()
+) -> Community:
+    """The graph store's vertex of ``community``, as the full build wrote it."""
+    label = community_label(level, community)
+    return Community(
+        id=community,
+        short_id=label,
+        name=community_name(level, label),
+        level=str(level),
+        parent="p" if level == 0 else "",
+        children=list(children),
+        text_unit_ids=units,
+    )
+
+
+# The vertices of c1, c2 and p, as the full build before the removal wrote
+# them: a community is stored whatever its report.
+_VERTICES = [
+    _vertex("c1", ["t1", "t2"], 0),
+    _vertex("c2", ["t2", "t3"], 0),
+    _vertex("p", ["t1", "t2", "t3"], 1, ["c1", "c2"]),
+]
+
+
 def _stores(
     config: Config,
     *,
@@ -148,6 +173,7 @@ def _stores(
     vector = vector_class(opensearch_config=config.indexing.opensearch)
     graph.upsert_entities([e.model_copy(deep=True) for e in _ENTITIES])
     graph.upsert_relationships([r.model_copy(deep=True) for r in _EDGES])
+    graph.upsert_communities([c.model_copy(deep=True) for c in _VERTICES])
     vector.upsert_text_units(
         [
             TextUnit(id=u, text=u, attributes={"document_id": f"doc-{u}"})
@@ -216,7 +242,10 @@ def test_outdated_reports_are_written_again_from_what_remains() -> None:
     assert p.text_unit_ids == ["t2", "t3"]
     assert p.attributes["entity_names"] == ["Acme", "Carrier", "Depot"]
     assert p.attributes["num_relationships"] == 2
-    assert ("default", "c2") not in vertices
+    assert p.children == ["c1", "c2"]
+    # c2 was not outdated: its vertex is as the full build wrote it.
+    assert vertices[("default", "c2")].text_unit_ids == ["t2", "t3"]
+    assert vertices[("default", "c2")].attributes is None
 
 
 def test_a_written_report_reads_what_a_full_build_would() -> None:
@@ -298,15 +327,149 @@ def test_a_member_stripped_of_the_reports_units_is_found_through_the_removal() -
     assert found.written == {report}
 
 
-def test_a_report_whose_hierarchy_is_unreadable_stays_outdated() -> None:
+def _full_build_inputs(
+    config: Config, communities: list[Community], sub_reports: dict[str, Any]
+) -> list[str]:
+    """The report inputs a full build's detector packs for ``communities``
+    over the surviving graph (``_ENTITIES``, ``_EDGES``)."""
+    full = _Reports()
+    providers = Providers(
+        config, boto_session=MagicMock(), llm_factory=ScriptedLLMFactory(full)
+    )
+    detector = CommunityDetector(config, show_progress=False, providers=providers)
+    detector.report_on(GraphBuilder(list(_ENTITIES), list(_EDGES)).build())
+    detector.generate_reports(communities, sub_reports=sub_reports)
+    return full.inputs
+
+
+def _parent(children: list[str]) -> Community:
+    label = community_label(1, "p")
+    return Community(
+        id="p",
+        short_id=label,
+        name=community_name(1, label),
+        level="1",
+        parent="",
+        children=children,
+        entity_ids=["acme", "carrier", "depot"],
+        relationship_ids=["acme-carrier", "carrier-depot"],
+        size=3,
+    )
+
+
+def test_a_child_stored_without_a_report_counts_through_its_members() -> None:
+    # B-1: c2 is stored without a report (a full build stores a seed-only
+    # community, or one whose report failed, so); p lists it, as
+    # attach_report_hierarchy lists every child. p was kept outdated for
+    # good ("a community below them without a stored report"). A full
+    # build packs p from all its members, a child without a report
+    # substituting nothing: so does the refresh.
     config = _config()
     graph, vector = _stores(config, child_report=False)
     model = _Reports()
     done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
-    # c2 has no stored report: p's members cannot be told, so p is kept.
+    assert done.written == _OUTDATED and not done.kept
+    reports = {r.community_id: r for r in vector.read_community_reports(_OUTDATED)}
+    assert reports["p"].summary == "Members: Acme, Carrier, Depot."
+    # c2 is still stored: p still lists it.
+    assert reports["p"].child_community_ids == ["c1", "c2"]
+    parent_input = model.inputs[-1]
+    assert parent_input in _full_build_inputs(config, [_parent(["c1", "c2"])], {})
+
+
+def test_a_reportless_child_reads_its_level0_communities_through_its_vertex() -> None:
+    # A child without a report that is not a level-0 community (a seed-only
+    # one over level-0 seed-only ones): its members name the communities
+    # below it, which only its graph vertex lists.
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.upsert_communities([_vertex("m", ["t2", "t3"], 1, ["c2"])])
+    vector.upsert_community_reports(
+        [_report("p", ["t1", "t2", "t3"], 2, children=["c1", "m"])]
+    )
+    done = _refresh(config, graph, vector, _Reports())("default", _OUTDATED, {"acme"})
+    assert done.written == _OUTDATED
+    (parent,) = vector.read_community_reports([community_report_id("p")])
+    assert parent.summary == "Members: Acme, Carrier, Depot."
+    assert parent.child_community_ids == ["c1", "m"]
+
+
+def test_a_child_the_graph_store_cannot_read_keeps_its_parent(caplog) -> None:
+    # A backend that cannot tell a community's children (the port's
+    # default): p's members cannot be told, so p is kept, and the warning
+    # names the remedy that writes it.
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.read_community_children = lambda ids, suffix=None: None
+    model = _Reports()
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
     assert done.written == {community_report_id("c1")}
     assert done.kept == {community_report_id("p")}
     assert len(model.inputs) == 1
+    (warning,) = [
+        r.getMessage() for r in caplog.records if "cannot read" in r.getMessage()
+    ]
+    assert "indexing.reset: true" in warning
+
+
+def test_a_child_the_removal_deleted_leaves_its_parent_written() -> None:
+    # B-1 (arch/final-B b7_stuck): a removal deleted c2 (none of its text
+    # units left: its report, its vertex, and its id from its members'
+    # community_ids). p, outdated, still listed it and was kept for good.
+    # c2 holds no member: p is written from c1's, and no longer lists it.
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.delete_by_id(["c2", "carrier", "depot", "carrier-depot", "acme-carrier"])
+    model = _Reports()
+    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
+    assert done.written == _OUTDATED and not done.kept
+    reports = {r.community_id: r for r in vector.read_community_reports(_OUTDATED)}
+    assert reports["p"].summary == "Members: Acme."
+    assert reports["p"].text_unit_ids == ["t2"]
+    assert reports["p"].child_community_ids == ["c1"]
+    vertex = graph.data["communities"][("default", "p")]
+    assert (vertex.children, vertex.text_unit_ids) == (["c1"], ["t2"])
+    # A later refresh of p reads no deleted child.
+    vector.mark_reports_outdated([community_report_id("p")], "default")
+    again = _refresh(config, graph, vector, _Reports())(
+        "default", {community_report_id("p")}
+    )
+    assert again.written == {community_report_id("p")}
+
+
+def test_a_seed_only_child_is_emptied_and_its_parent_written_again() -> None:
+    # G-2: c2's members are stated by a seed graph only. A full build has
+    # no report for such a community: its report is deleted (M27, the
+    # seed_only check at the emptying, survived every test). Its community
+    # stays, so a later refresh of p reads its members through its vertex,
+    # and writes p as a full build packs it (B-1's second producer).
+    config = _config()
+    graph, vector = _stores(config)
+    seed = "sg-1"
+    graph.upsert_entities(
+        [_entity("Carrier", [seed], ["c2"]), _entity("Depot", [seed], ["c2"])]
+    )
+    graph.upsert_relationships(
+        [_edge("carrier", "depot", [seed]), _edge("acme", "carrier", ["t2"])]
+    )
+    vector.upsert_text_units([TextUnit(id=seed, text="s", attributes={})])
+    c2 = community_report_id("c2")
+    model = _Reports()
+    outdated = {*_OUTDATED, c2}
+    first = _refresh(config, graph, vector, model)(
+        "default", outdated, {"acme", "carrier", "depot"}
+    )
+    assert first.deleted == {c2}
+    assert first.written == _OUTDATED
+    assert c2 not in vector.ids("community_reports")
+    assert ("default", "c2") in graph.data["communities"]
+    (parent,) = vector.read_community_reports([community_report_id("p")])
+    assert parent.summary == "Members: Acme, Carrier, Depot."
+    assert parent.child_community_ids == ["c1", "c2"]
+
+    p = community_report_id("p")
+    second = _refresh(config, graph, vector, _Reports())("default", {p}, {"acme"})
+    assert second.written == {p} and not second.kept
 
 
 def test_a_failed_answer_leaves_the_report_outdated() -> None:
@@ -498,15 +661,6 @@ def test_a_graph_that_cannot_find_what_units_state_keeps_them(caplog) -> None:
 
     _assert_kept_as_they_were(done, vector, model)
     assert any("cannot find what text units" in r.getMessage() for r in caplog.records)
-
-
-def test_a_report_missing_below_keeps_its_ancestors(caplog) -> None:
-    config = _config()
-    graph, vector = _stores(config, child_report=False)
-    model = _Reports()
-    done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
-    assert done.kept == {community_report_id("p")}
-    assert any("without a stored report" in r.getMessage() for r in caplog.records)
 
 
 def test_a_store_that_rejects_the_rewrite_keeps_the_reports() -> None:

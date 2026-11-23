@@ -593,7 +593,11 @@ Bugs present in 0.3.0.
   flagged `outdated` in the stores (a query reads it in the report's source metadata, and on a global key point drawn
   from it), listed in the build record (`outdated_reports`) and named by every reader of the record as an
   `outdated_reports` rebuild reason (remedy `next_run`; the console words it apart from re-clustering) whatever
-  `on_drift_recommendation` says, until a later run writes it. A note in the extraction store lists the flagged
+  `on_drift_recommendation` says, until a later run writes it. A parent whose community lists a child stored without
+  a report (one a removal deleted, a seed-only one, one whose report failed) is written again too, from its members
+  read down the stored hierarchy, a child without a report through its graph vertex
+  (`GraphIndexer.read_community_children`), as a full build packs it; a deleted child is no longer listed. A note in
+  the extraction store lists the flagged
   reports until the build record does: a run killed after the removal deleted the documents' registry records, before
   its refresh, left them flagged and listed nowhere, and the next run now writes them again (a run that writes no
   report again, after a write failure the run tolerates or under a profile without reports, lists them in its build

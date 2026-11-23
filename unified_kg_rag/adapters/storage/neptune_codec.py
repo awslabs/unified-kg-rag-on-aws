@@ -298,6 +298,12 @@ def entity_from_vertex(value_map: Mapping[Any, Any]) -> Entity | None:
     return Entity.model_validate(fields)
 
 
+def community_children(value_map: Mapping[Any, Any]) -> list[str]:
+    """The child community ids a community vertex ``valueMap()`` holds
+    (``[]`` for a leaf)."""
+    return _vertex_list(value_map.get("children")) or []
+
+
 def relationship_from_edge(
     value_map: Mapping[Any, Any], label: str, source_id: Any, target_id: Any
 ) -> Relationship | None:

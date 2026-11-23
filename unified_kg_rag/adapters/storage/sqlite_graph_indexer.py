@@ -31,6 +31,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     NAME_KEY_PROPERTY,
     census_row_from_edge,
     census_row_from_vertex,
+    community_children,
     community_properties,
     entity_from_vertex,
     entity_properties,
@@ -489,6 +490,19 @@ class SQLiteGraphIndexer(GraphIndexer):
             entity_from_vertex(maps[i]) for i in dict.fromkeys(ids) if i in maps
         )
         return [entity for entity in entities if entity is not None]
+
+    def read_community_children(
+        self, ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]] | None:
+        """The children of ``suffix``'s community vertices among ``ids``
+        (see the port)."""
+        if not ids:
+            return {}
+        with self.store.read("read community children") as connection:
+            maps = self.store.vertex_maps(
+                connection, self._community_label(suffix), ids
+            )
+        return {i: community_children(m) for i, m in maps.items()}
 
     def read_relationships(
         self, ids: list[str], suffix: str | None = None
