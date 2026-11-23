@@ -65,7 +65,6 @@ from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import Degradation
 from unified_kg_rag.domain.retrieval.kind_shares import (
-    CUT_GROUP_COUNTS,
     cut_by_kind,
     score_group,
 )
@@ -884,8 +883,9 @@ class KnowledgeGraphTools:
         share and its best-ranked records. The groups' scales differ, so a
         trim of the tail dropped the lowest scale first, every unreranked
         graph record below every reranked chunk. ``counts`` are the groups'
-        counts before the chain's cut (``CUT_GROUP_COUNTS``), so the kept
-        records are the cut a search to their number returns. Without
+        counts before the chain's cut (``SearchResult._cut_group_counts``),
+        so the kept records are the ones the search's own cut to their
+        number keeps. Without
         ``groups``, the kept records are a prefix. A larger cut keeps every
         record a smaller one kept, and a kept chunk names more entities in
         it, never fewer, so the largest that fits is found by bisection."""
@@ -1137,13 +1137,13 @@ class KnowledgeGraphTools:
             output = await self.chain.asearch(rag_input)
             outcome = self._checked(output)
             results = output.search_results.results
-            counts = output.metadata.get(CUT_GROUP_COUNTS)
+            counts = output.search_results._cut_group_counts
             records, omitted = await self._shaped(
                 str(rag_input.namespace),
                 [self._from_result(i, r) for i, r in enumerate(results, 1)],
                 rag_input.filters,
                 [score_group(r) for r in results],
-                counts if isinstance(counts, Mapping) else None,
+                counts,
             )
             return SearchToolResult(
                 namespace=str(rag_input.namespace),

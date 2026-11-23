@@ -261,11 +261,12 @@ def test_format_search_output_step_returns_a_search_output() -> None:
     assert out.processed_query.original_query == "q"
 
 
-def test_a_cut_search_output_names_its_groups_counts_before_the_cut() -> None:
+def test_a_cut_search_output_carries_its_groups_counts_before_the_cut() -> None:
     # R4B-4: a later cut of the returned results (the MCP response cap)
-    # apportions on these, so it equals a search cut to its size.
-    from unified_kg_rag.domain.retrieval.kind_shares import CUT_GROUP_COUNTS
-
+    # apportions on these, so it equals the search's own cut to its size.
+    # R5B-4: they rode in the output's metadata, so run-rag --mode search
+    # printed them (its panel, and twice in its JSON) with no contract;
+    # they are an internal carrier, never serialized.
     sr = _search_result()
     sr.results = [
         RetrievalResult(
@@ -286,14 +287,18 @@ def test_a_cut_search_output_names_its_groups_counts_before_the_cut() -> None:
     }
     out = GraphRAGChain._format_search_output_step(state)
     assert len(out.search_results.results) == 4
-    assert out.metadata[CUT_GROUP_COUNTS] == {"reranked": 6, "entity": 3}
-    assert list(out.metadata[CUT_GROUP_COUNTS]) == ["reranked", "entity"]
+    counts = out.search_results._cut_group_counts
+    assert counts == {"reranked": 6, "entity": 3}
+    assert list(counts) == ["reranked", "entity"]
+    dumped = out.model_dump_json()
+    assert "cut_group_counts" not in dumped
+    assert "cut_group_counts" not in out.metadata
 
     # Uncut, the results' own counts are the strategy's: none named.
     uncut = GraphRAGChain._format_search_output_step(
         {**state, "search_results": _search_result(), "top_k": 10}
     )
-    assert CUT_GROUP_COUNTS not in uncut.metadata
+    assert uncut.search_results._cut_group_counts is None
 
 
 # --- query processing off: the simple path --------------------------------

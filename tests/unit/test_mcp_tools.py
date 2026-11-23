@@ -163,6 +163,8 @@ class FakeChain:
         }
         self.closed = False
         self.unrun: list[tuple[dict[str, Any], Any, bool]] = []
+        # The score groups' counts before the search's cut (the chain's).
+        self.cut_group_counts: dict[str, int] | None = None
 
     def record_unrun_query(
         self, query: Any, error: Any, *, started: float, search: bool = False
@@ -176,8 +178,10 @@ class FakeChain:
 
     async def asearch(self, rag_input: RAGInput) -> SearchOutput:
         self.inputs.append(rag_input)
+        search_results = _search_result(self.results)
+        search_results._cut_group_counts = self.cut_group_counts
         return SearchOutput(
-            search_results=_search_result(self.results),
+            search_results=search_results,
             processed_query=self._processed(rag_input),
             metadata=dict(self.metadata),
         )
@@ -605,20 +609,17 @@ def _ranked_mix(counts: dict[str, int]) -> list[RetrievalResult]:
     return results
 
 
-async def test_a_trimmed_search_is_the_cut_a_smaller_search_returns() -> None:
+async def test_a_trimmed_search_is_the_searchs_own_cut_at_that_size() -> None:
     # R4B-4: the trim apportioned the seats of the chain's cut again, not
     # the strategy's counts, so trimmed to 10 the search's cut of 20 kept
-    # {reranked 6, entity 2, relationship 1, community 1}, while a search
-    # at top_k 10 returns {5, 2, 2, 1} (probes/recut_example.txt).
-    from unified_kg_rag.domain.retrieval.kind_shares import (
-        CUT_GROUP_COUNTS,
-        cut_by_kind,
-        score_group,
-    )
+    # {reranked 6, entity 2, relationship 1, community 1}, while the
+    # search's own cut to 10 keeps {5, 2, 2, 1} (probes/recut_example.txt).
+    from unified_kg_rag.domain.retrieval.kind_shares import cut_by_kind, score_group
 
     counts = {"reranked": 40, "entity": 12, "relationship": 12, "community": 1}
     strategy = _ranked_mix(counts)
-    chain = FakeChain(**{CUT_GROUP_COUNTS: dict(counts)})
+    chain = FakeChain()
+    chain.cut_group_counts = dict(counts)
     chain.results = cut_by_kind(strategy, 20, score_group)
     full = (await _tools(chain).search("q", top_k=20)).records
     assert len(full) == 20

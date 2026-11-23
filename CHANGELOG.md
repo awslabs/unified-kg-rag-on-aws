@@ -930,6 +930,9 @@ Bugs present in 0.3.0.
   `kg_rag.mcp.tool`'s parent as the MCP SDK's `tools/call` span under a global tracer provider (it said root).
 - The console composer's "Search strategy" and "Options" toggles were 20 px high, under WCAG 2.2's 24 px target size
   (axe passed them only on their spacing): each is a 24 px target now.
+  entities, 1 relationship, 1 report; the search's own cut to 10 keeps 5, 2, 2, 1). The search carries its score
+  groups' counts before its cut internally (never serialized, so not in `run-rag --mode search` output), and the cap
+  apportions on them.
 - MCP `kg_neighbors` and `kg_get_entity` still measured their records against `mcp.max_response_chars` before their
   `documents` were filled in, and `kg_neighbors` left its start `entity` out of the budget, so a hub entity's
   neighbourhood ran 3.94 times the cap at the defaults (20 documents of 200-character file names a record). Both now
