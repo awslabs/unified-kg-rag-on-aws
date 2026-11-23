@@ -893,7 +893,8 @@ Bugs present in 0.3.0.
   entity: 金 grounded 金正恩, 이 grounded 이순신, な the placeholder なし (10 of 16 shapes in a probe, none kept before
   #870), as a run of one letter starts every name that begins with it. Such a run now holds a focus only as a whole
   word of it; a run of two or more letters keeps the start rule (東京 for 東京都). A letter counts with its combining
-  marks (Thai ก็, two code points, is one letter). A placeholder of several words one of which is a stored name ("N/A"
+  marks (Thai ก็, two code points, is one letter), and a Thai or Lao syllable with SARA AM (ดำ, น้ำ) is one letter, as
+  a grapheme cluster groups it. A placeholder of several words one of which is a stored name ("N/A"
   with a stored "A", 정보 없음 with 정보, Thai ไม่มี with ไม่) is still kept, as the design page says.
 - On a custom vector store that leaves `VectorIndexer.read_text_unit_attributes` at its port's default (`{}`), a
   removal and the report refresh wrote every kept or refreshed community report with no `document_ids` and no
