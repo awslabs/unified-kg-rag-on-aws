@@ -319,26 +319,27 @@ def partition_tree(
     # (strength-0 relationships, clamped by ``edge_weight``; an incremental
     # delta clusters only the new document's subgraph) graspologic_native
     # panics with a ``BaseException`` that ends the run and every resume.
-    # Such a graph has no structure to partition, like an edgeless one.
+    # Such a graph has no structure to partition, like an edgeless one: each
+    # node is a community of its own, and those under min_community_size
+    # still merge into a linked neighbour below, as Leiden's small leaves do.
     if graph.size(weight="weight") == 0:
         logger.warning(
             "Graph has no weighted edges. Treating each node as a separate "
             "community."
         )
-        return [ClusterNode({node}) for node in sorted(graph.nodes(), key=str)]
-
-    resolution = config.resolution
-    communities = leiden_communities(graph, resolution, config)
-
-    # Every leaf is bounded by max_cluster_size: in entities at level 0, in
-    # child communities above (a node of a cluster graph is a whole
-    # community), so a leaf report and a parent's roll-up pack a bounded
-    # number of entities or child report summaries. Only entity communities
-    # are held to min_community_size: merging cluster-graph nodes would fold
-    # a level into the one below it.
-    roots = split_large_communities(
-        communities, graph, resolution, config.max_cluster_size, config
-    )
+        roots = [ClusterNode({node}) for node in sorted(graph.nodes(), key=str)]
+    else:
+        resolution = config.resolution
+        communities = leiden_communities(graph, resolution, config)
+        # Every leaf is bounded by max_cluster_size: in entities at level 0,
+        # in child communities above (a node of a cluster graph is a whole
+        # community), so a leaf report and a parent's roll-up pack a bounded
+        # number of entities or child report summaries.
+        roots = split_large_communities(
+            communities, graph, resolution, config.max_cluster_size, config
+        )
+    # Only entity communities are held to min_community_size: merging
+    # cluster-graph nodes would fold a level into the one below it.
     if entity_level and config.min_community_size > 1:
         roots = _merge_small_leaves(roots, graph, config)
     return sorted(roots, key=lambda root: community_sort_key(root.members))

@@ -502,6 +502,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         pass it or not on their own, not by covering the configured cut's
         (document filters pass a report through any member's documents, so
         they still do).
+
+        A ``community_depth`` no hierarchy built with the configured
+        ``graph.community_detection.max_levels`` reaches (``max_levels`` or
+        more: "a large value = the leaves") steps down from the deepest
+        depth the stores hold (``_deepest_stored_depth``), whose cut holds
+        the same leaves, not through every empty depth one browse each.
         """
         depth = self.global_search_config.community_depth
         label = "Community report cut"
@@ -525,6 +531,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 query, cut_filter(depth), label
             )
             reports, used = first, depth
+            if not complete and step_down and depth >= self._hierarchy_levels:
+                used = await self._deepest_stored_depth(query, depth)
             while (
                 not complete
                 and step_down
@@ -557,6 +565,64 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             span.set_attributes({"kg_rag.reports": len(reports), "kg_rag.cut": used})
         logger.info("Global search cut at depth %s: %s reports", used, len(reports))
         return reports
+
+    @property
+    def _hierarchy_levels(self) -> int:
+        """The most levels a hierarchy built with the configured
+        ``max_levels`` holds: its depths are below it (a store built with
+        a larger one may hold deeper ones, which the bisection reads)."""
+        return self.config.graph.community_detection.max_levels
+
+    async def _deepest_stored_depth(self, query: SearchQuery, depth: int) -> int:
+        """The deepest report depth, at most ``depth``, the stores hold (0
+        when they hold none from 1 down): every cut from it to ``depth``
+        selects the same reports, its leaves (``cut_filter``). Bisected
+        over "a report at this depth or deeper" probes, one report each:
+        ``ceil(log2(depth + 1))`` requests where the step-down walked one
+        browse per depth (2000 of them for ``community_depth`` 2000). A
+        probe that failed tells nothing: ``depth``, the walk as before."""
+        low, high = 0, depth
+        while low < high:
+            middle = (low + high + 1) // 2
+            held = await self._holds_depth(query, middle)
+            if held is None:
+                return depth
+            if held:
+                low = middle
+            else:
+                high = middle - 1
+        return low
+
+    async def _holds_depth(self, query: SearchQuery, depth: int) -> bool | None:
+        """Whether the stores hold a report at ``depth`` or deeper, whatever
+        the caller's filters (they narrow a cut, not the hierarchy); ``None``
+        when the probe failed."""
+        retriever = self.document_retriever
+        if retriever is None:
+            return False
+        probe = SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=1,
+            retrieval_multiplier=1,
+            index_prefixes=[
+                self.config.indexing.opensearch.community_reports_index_prefix
+            ],
+            suffix=query.suffix,
+            filters={"depth": {"gte": depth}},
+        )
+        failures: list[Exception] = []
+        found = await self._safe_aretrieve(
+            retriever, probe, "Deepest community cut", failures
+        )
+        if failures:
+            return None
+        # Read off the hit, as _has_coarser_cut does.
+        return any(
+            (d := safe_float_parse((r.metadata or {}).get("depth"))) is not None
+            and d >= depth
+            for r in found
+        )
 
     async def _has_coarser_cut(self, query: SearchQuery, depth: int) -> bool:
         """Whether the stores hold a report at ``depth`` or above that a

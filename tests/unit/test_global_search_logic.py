@@ -325,6 +325,56 @@ async def test_a_cut_over_the_cap_gives_way_to_the_deepest_cut_that_fits() -> No
     assert all(not c.query for c in store.calls)
 
 
+async def test_a_depth_past_the_hierarchy_steps_down_from_the_deepest_one() -> None:
+    # B-3: community_depth 2000 ("a large value = the leaves") over a cap
+    # walked 1,998 empty depths, one browse each (25.9 s on a 450-document
+    # store), before the depth-1 cut that fits. The walk starts at the
+    # deepest stored depth (2), found in ceil(log2(2001)) = 11 probes.
+    store = _ReportStore(_documents())
+    strat = _strategy(store, max_reports_per_level=3, community_depth=2000)
+    result = await strat.asearch(SearchQuery(query="C1 C2 themes"))
+
+    assert _mapped(strat) == {"A", "B", "C"}
+    assert result.metadata["global_cut_depth"] == 1
+    browses = [c.filters for c in store.calls if "max_cut_depth" in c.filters]
+    assert [f["depth"] for f in browses] == [{"lte": 2000}, {"lte": 1}]
+    probes = [c.filters for c in store.calls if c.top_k == 1]
+    assert len(probes) == 11
+    assert all(set(f) == {"depth"} for f in probes)
+
+
+async def test_a_depth_the_hierarchy_can_reach_walks_without_probes() -> None:
+    # Under graph.community_detection.max_levels (5) the walk is as before:
+    # no probe at the default depth 2.
+    store = _ReportStore(_documents())
+    strat = _strategy(store, max_reports_per_level=3, community_depth=4)
+    result = await strat.asearch(SearchQuery(query="C1 C2 themes"))
+    assert result.metadata["global_cut_depth"] == 1
+    assert [c.filters["depth"] for c in store.calls] == [
+        {"lte": d} for d in (4, 3, 2, 1)
+    ]
+
+
+async def test_a_failed_depth_probe_walks_every_depth() -> None:
+    # A probe that failed tells nothing: the walk does not skip a depth
+    # that may hold the cut that fits.
+    class _FailingProbes(_ReportStore):
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            if query.top_k == 1 and set(query.filters or {}) == {"depth"}:
+                self.calls.append(query)
+                raise RuntimeError("probe failed")
+            return await super().aretrieve(query)
+
+    store = _FailingProbes(_documents())
+    strat = _strategy(
+        store, max_reports_per_level=3, community_depth=6, ignore_errors=True
+    )
+    result = await strat.asearch(SearchQuery(query="C1 C2 themes"))
+    assert result.metadata["global_cut_depth"] == 1
+    browses = [c.filters for c in store.calls if "max_cut_depth" in c.filters]
+    assert [f["depth"] for f in browses] == [{"lte": d} for d in range(6, 0, -1)]
+
+
 @pytest.mark.timeout(300)
 async def test_a_large_corpus_cut_over_the_cap_steps_to_a_coarser_level() -> None:
     # Regression (#828): on a 6,000-entity graph the depth-0 cut (the first

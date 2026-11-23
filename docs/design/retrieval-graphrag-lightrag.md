@@ -314,7 +314,14 @@ as upstream starts at level 0
   shallower cut that fits (`global_cut_depth`), covering the same entities in
   broader reports: past depth 0 into the coarser levels (a negative
   `global_cut_depth`), as long as the stores hold one (a one-report probe
-  per coarser step). MS GraphRAG has no cap and maps the whole cut; the
+  per coarser step). A `community_depth` no hierarchy built with the
+  configured `graph.community_detection.max_levels` reaches (that many or
+  more: "the leaves") starts the step-down at the deepest depth the stores
+  hold, whose cut holds the same leaves, found by bisection in about
+  log2(`community_depth`) one-report probes (a failed probe walks every
+  depth as before): the walk took one browse per empty depth, 25.9 s at
+  depth 2,000 on a 450-document store against 2.2 s at depth 2, both
+  mapping the same 75 reports. MS GraphRAG has no cap and maps the whole cut; the
   coarser levels are this hierarchy's own. The depth-0 cut outgrows the cap
   with the corpus: on planted graphs at the default settings it held 60,
   132 and 120 reports at 2,400, 6,000 and 9,000 entities, where the coarsest
@@ -406,6 +413,7 @@ The deliberate differences (a file is relative to the `graphrag/` package):
 |---|---|---|---|
 | Relationships grouped by source and target (`index/operations/extract_graph`) | typed, directed relationship ids | two relationship types between a pair stay two facts | design |
 | Leiden: one pass, `max_cluster_size` 10, one trial of one iteration, only the largest component (`use_lcc`); no level cap | the same first pass, communities over 20 split again, coarser levels above it, 3 trials with 2 extra iterations, small components skipped; `max_levels` (5) caps the first pass's splits from the top, so a deeper split tree loses its top and depth 0 is finer than upstream's level 0 | report size against corpus size; the best partition of 3 seeded runs | first pass: `test_community_hierarchy_quality.py`; the cap: §4.3; the rest unmeasured (§4.3) |
+| Every Leiden community kept, whatever its size (`index/operations/cluster_graph.py`, `create_communities.py`: no size floor) | a leaf community under `min_community_size` (3) entities merges into the neighbour it shares the most edge weight with, unless that would exceed `max_cluster_size`; so do the one-entity communities of a graph whose every edge weighs 0 | a one- or two-entity report restates its members at a report call each, and is a leaf in every deeper cut | design; unmeasured on answers (§4.3) |
 | A reversed pair keeps the last row's weight (`index/operations/cluster_graph.py`) | every relationship between a pair adds its weight | the pair's total strength | unmeasured |
 | Each entity hands the report context one relationship, its first (`graph_context/context_builder.py`); entities without one are left out (`sort_context.py`) | every relationship among the community's entities, in `sort_context`'s order; the unlinked entities last | a report describes the community's relationships | recorded answers: upstream's reports saw 217 of the 380 relationships of 30 communities |
 | Report context 8,000 tokens with communities of at most 10 | 4,000 tokens, communities of at most 20 | cost | unmeasured |
