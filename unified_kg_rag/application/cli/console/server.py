@@ -584,8 +584,11 @@ def create_app(
             )
             if not carried or not _same_token(carried, options.token):
                 if request.url.path.startswith("/api/"):
+                    # Whether a token came is the caller's own knowledge:
+                    # saying so tells nothing of the token.
+                    wrong = "wrong" if carried else "missing"
                     return _error(
-                        401, "unauthorized", "the console's access token is missing"
+                        401, "unauthorized", f"the console's access token is {wrong}"
                     )
                 return HTMLResponse(_UNAUTHORIZED_PAGE, status_code=401)
         if request.url.path.startswith("/api/") and request.method not in (

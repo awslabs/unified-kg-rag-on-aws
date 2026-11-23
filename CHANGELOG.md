@@ -1075,6 +1075,8 @@ Bugs present in 0.3.0.
   the task's `stopTimeout` was killed with no span and no audit record. It now cuts the calls still running after
   60 s, the console's limit (one named constant for both servers): their queries end `ERROR`, recorded `stopped`. The
   MCP guide says to set the ECS container's `stopTimeout` to 120 s.
+- The console answered an API request that carried a wrong access token "the console's access token is missing", as
+  one that carried none; it says "wrong" for it now (both stay `401 unauthorized`).
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
