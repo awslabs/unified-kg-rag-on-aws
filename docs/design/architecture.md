@@ -299,8 +299,11 @@ whose `__all__` is the supported surface: the names for using the framework
 (`Config`, `get_config`, `DataIngestionPipeline`, `GraphRAGChain`, `RAGInput`
 / `RAGOutput` / `SearchOutput`, `EvaluationManager`, ...) and for extending it
 (the ports, `Providers` / `build_providers`, the registries, and every type
-their signatures name, so a plugin needs no internal path). Other module
-paths are internal; only a change to the exported names, configuration keys,
+their signatures name, so a plugin needs no internal path; the one
+exception is the usage handler an LLM factory attaches to its models,
+`UsageCallbackHandler` and `with_callback`, which a plugin imports from their
+module paths: [Extension Guide](../guides/extend.md#usage-handler-import)).
+Other module paths are internal; only a change to the exported names, configuration keys,
 CLI flags and exit codes, or stored formats is breaking. Names resolve on
 first access (`import unified_kg_rag` loads nothing), and
 `tests/unit/test_public_api.py` pins the list and checks that closure (a

@@ -1315,10 +1315,11 @@ The user-level rule: [Incremental indexing: Concurrent runs](./guides/incrementa
 With the registry, one run writes an index namespace at a time: it takes the
 namespace's write lease before its first stage and renews it every sixth of
 `indexing.lease_seconds` (default 600 s). A second run stops before it reads
-the stores or writes anything:
+the stores or writes anything, exiting 1 (`error_type` `NamespaceLeaseError`
+in its `--output-format json` status):
 
 ```text
-NamespaceLeaseError: Index namespace '<namespace>' is being written by
+Error: Index namespace '<namespace>' is being written by
 <host>:<pid>:<start>:<ns>:<id> (its lease runs until <time> unless renewed) ...
 ```
 
@@ -1332,7 +1333,8 @@ does not lock the namespace for `lease_seconds`. With every store embedded
 run's first write does not wait for late writes either: a process that is gone
 has none in flight. DynamoDB waits for the expiry. A run whose
 renewals keep failing, or whose lease was taken, stops before its next write
-with `NamespaceLeaseError: This run lost the write lease ...`: re-run once the
+with `Error: This run lost the write lease ...` (`error_type`
+`NamespaceLeaseError`): re-run once the
 other run ended.
 
 - **Fencing.** Every stage start, checkpoint upload, registry write, indexing

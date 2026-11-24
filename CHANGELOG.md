@@ -95,6 +95,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step 2; `-c opensearch_korean_analyzer=cjk` keeps the old analyzer).
 - With `processing.deduplicate` on, an incremental run deletes the near-copies 0.3.0 indexed beside their originals
   and indexes the template documents 0.3.0 dropped as copies (*Fixed*; *Upgrading* step 6).
+- A custom language-model factory whose models cache prompts keeps a prompt-cache checkpoint on its system prompts
+  only if it defines `prompt_cache_marker(llm)` (*Changed*; *Upgrading* step 18).
+- `run-visualization` without `--output-directory` writes its pages to `visualization_outputs/<namespace>/`, not
+  `visualization_outputs/` (*Changed*; *Upgrading* step 19).
+- `run-console` exits 130 when Ctrl-C (SIGINT) stops it, a background launch included, where it exited 0 (*Fixed*;
+  *Upgrading* step 21).
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
@@ -167,11 +173,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     the examples inside a `<domain_examples>` block the prompt declares as data, each profile answer one short line
     without `<`. A changed `graph_extraction_system` extracts every document again on the next run (model calls); a
     changed `community_report_system` is a rebuild reason (`answer_settings`) until the next full build.
-17. A `run-eval` result a development build of `main` saved with `answer_scoring.answer_contains_reads: first_line`
-    cannot be compared with a run of now, which records `first_line_v2` (*Fixed*): its first line stopped at a
-    lead-in line and ran on into a support line opening with a citation marker, so its `answer_contains`, and its
-    `exact_match` and `token_f1` under a `first_line` or `extracted` `answer_span`, read other text. Score its saved
-    answers again: `run-eval --from-results <its results> --rescore`.
+17. From a `main` checkout: a `run-eval` result a development build of `main` saved with
+    `answer_scoring.answer_contains_reads: first_line` cannot be compared with a run of now, which records
+    `first_line_v2` (*Fixed*): its first line stopped at a lead-in line and ran on into a support line opening with a
+    citation marker, so its `answer_contains`, and its `exact_match` and `token_f1` under a `first_line` or
+    `extracted` `answer_span`, read other text. Score its saved answers again:
+    `run-eval --from-results <its results> --rescore`.
 18. A custom language-model factory whose model records set `supports_prompt_caching` puts no prompt-cache checkpoint
     on its system prompts unless it defines `prompt_cache_marker(llm)` (`"cache_point"` or `"cache_control"`): the
     choice moved from the provider-neutral chain builder into the Bedrock factory. Define it, as
@@ -183,6 +190,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     or the profile's), not `aws.region_name`, now runs in `aws.region_name` (*Fixed*). If its table or bucket is in
     the other region, set `aws.region_name` to that region, or move the table; a registry left behind reads every
     document as new.
+21. A script or supervisor that stops `run-console` with Ctrl-C (SIGINT) and reads its exit code gets 130 now, not 0
+    (*Breaking changes*): read 130 as the stop it asked for, as for `run-mcp-server`
+    ([Exit codes](docs/reference/exit-codes-and-json.md#exit-codes)).
 
 ### Added
 
@@ -360,7 +370,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `run-eval` manifest's `retrieval_config_sha256`), the strategy, the ids it rests on and cites, its models, usage,
   `cost_usd` and outcome, the search type, `top_k` and filter keys (never the values) in force, with the question and
   the answer as SHA-256 digests, never their text (for verification, not anonymization: a guessed question can be
-  confirmed) (`QueryAuditRecord`, `record_version` 2; [fields](docs/reference/telemetry.md#audit-record)).
+  confirmed) (`QueryAuditRecord`, `record_version` 2; [fields](docs/reference/telemetry.md#audit-record)). A query
+  that sent no model call (refused, or ended before it ran) records `cost_usd` `0.0` and a usage of 0, and its query
+  metrics `query_cost_usd` 0.
   `logging.library_levels: {unified_kg_rag.audit: WARNING}` turns it off.
 - A query's spend and evidence in its trace and metrics: `metadata["cost_usd"]` (with `metadata["unpriced_models"]`,
   which names an unpriced embedding model too, left out of the USD)
@@ -1055,10 +1067,6 @@ Bugs present in 0.3.0.
 - `run-console` exits 130 when Ctrl-C stops it, as `run-mcp-server` and the exit-code table say; the exit-code
   reference said 0. A Ctrl-C the process inherited ignored (a background launch) still stopped it but exited 0: it
   exits 130 too.
-- A query audit record's `cost_usd` was `null` for a query that sent no model call because it was refused or ended
-  before it ran (an MCP call that timed out waiting for a call slot), while one that timed out in the chain recorded
-  `0.0`, and `null` is documented as "a model without a price". Such a record now has `cost_usd` `0.0` and a usage of
-  0 (its query metrics emit `query_cost_usd` 0 too).
 - `run-ingestion --output-format json`: a run that resumed its pipeline id (a finished id run again, as the console
   demo and the console's Ingest page do) reported the delta of the run that loaded the documents as if it were a new
   diff (`"new": 8` for an unchanged corpus). The `delta` now says so (`"reused": true`); the resume itself is
