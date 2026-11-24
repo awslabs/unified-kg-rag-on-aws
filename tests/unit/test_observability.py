@@ -3269,6 +3269,90 @@ async def test_a_reader_stop_sets_no_stop_while_the_process_stops() -> None:
     assert stop.is_set() and stop.cause is StopCause.READER
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(300)
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="tgkill is Linux")
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
+def test_an_idle_stdio_server_takes_a_signal_another_thread_received(
+    tmp_path: Path, signum: int
+) -> None:
+    # r8base-1: CPython runs a signal's Python handler on the main thread
+    # when it next runs Python code, so a stop the kernel delivered to
+    # another thread (a kill may land on any of the process's threads)
+    # left an idle stdio server blocked in its selector with the handler
+    # pending: it never exited while its client stayed silent. The loop
+    # now wakes at the signal, whichever thread took it.
+    import ctypes
+
+    pytest.importorskip("mcp")
+    libc = ctypes.CDLL(None, use_errno=True)
+    if not hasattr(libc, "tgkill"):
+        pytest.skip("glibc without tgkill")
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "0"},
+        },
+    }
+    repository = Path(__file__).resolve().parents[2]
+
+    def start(out: Path) -> subprocess.Popen[str]:
+        out.mkdir()
+        process = subprocess.Popen(
+            [sys.executable, "-c", _STDIO_SERVER, str(out), "model"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=repository,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(repository),
+                "OTEL_BSP_SCHEDULE_DELAY": "600000",
+            },
+        )
+        assert process.stdin is not None and process.stdout is not None
+        process.stdin.write(json.dumps(initialize) + "\n")
+        process.stdin.flush()
+        assert json.loads(process.stdout.readline())["id"] == 1
+        return process
+
+    def others(process: subprocess.Popen[str]) -> list[int]:
+        tasks = sorted(int(t) for t in os.listdir(f"/proc/{process.pid}/task"))
+        return [t for t in tasks if t != process.pid]
+
+    # Each thread the idle server runs besides the main one (the stdin
+    # reader, the stop watchdog, the span exporter, ...), one server each.
+    first = start(tmp_path / "count")
+    count = len(others(first))
+    first.kill()
+    first.wait()
+    assert first.stdin is not None
+    first.stdin.close()
+    assert count > 0
+    for index in range(count):
+        process = start(tmp_path / str(index))
+        try:
+            thread = others(process)[index]
+            assert libc.tgkill(process.pid, thread, signum) == 0
+            # stdin stays open; nothing else would wake the server.
+            try:
+                code = process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                code = None
+        finally:
+            if process.poll() is None:
+                process.kill()
+            assert process.stdin is not None
+            process.stdin.close()
+            stderr = process.stderr.read() if process.stderr else ""
+        assert code == 128 + signum, (index, stderr[-2000:])
+
+
 @pytest.mark.parametrize("where", ["retrieve", "model"])
 async def test_a_query_past_its_deadline_keeps_its_error_spans(
     tracing: Tracing, where: str

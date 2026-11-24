@@ -45,6 +45,7 @@ import logging
 import multiprocessing
 import os
 import signal
+import socket
 import sys
 import threading
 import time
@@ -591,9 +592,69 @@ def served_exit_code(server: Any) -> int:
 async def stoppable(main: Awaitable[_R]) -> _R:
     """Await ``main`` as the task a SIGTERM or Ctrl-C cancels: a CLI wraps
     the coroutine it runs (``asyncio.run(stoppable(...))``) under
-    :func:`exits_on_sigterm`."""
+    :func:`exits_on_sigterm`.
+
+    While it runs, a stop signal wakes the loop (:func:`_signals_wake_loop`),
+    so an idle loop takes it wherever the kernel delivered it."""
     _stop["task"] = asyncio.current_task()
-    return await main
+    with _signals_wake_loop():
+        return await main
+
+
+@contextlib.contextmanager
+def _signals_wake_loop() -> Iterator[None]:
+    """Make a signal wake the running loop while the block runs.
+
+    CPython runs a signal's Python handler (:func:`exits_on_sigterm`'s) on
+    the main thread, the next time it runs Python code. A signal the kernel
+    delivers to another thread (a ``kill`` targets the process, so any of
+    its threads may take it), or one that lands just before the loop blocks
+    in its selector, leaves an idle loop (a stdio server waiting on a
+    silent client) blocked with the handler pending: the stop never ran.
+    The signal's C handler also writes to the wakeup descriptor
+    (``signal.set_wakeup_fd``), from whichever thread took it; one the loop
+    watches wakes it, and the handler then runs as it would have on the
+    main thread. Where the process already has a wakeup descriptor (a loop
+    with ``add_signal_handler`` handlers), or off the main thread, it
+    changes nothing."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    loop = asyncio.get_running_loop()
+    receive, send = socket.socketpair()
+    try:
+        receive.setblocking(False)
+        send.setblocking(False)
+        previous = signal.set_wakeup_fd(send.fileno(), warn_on_full_buffer=False)
+        if previous != -1:
+            signal.set_wakeup_fd(previous)  # a wakeup someone else reads
+            yield
+            return
+        try:
+            loop.add_reader(receive.fileno(), _drain, receive)
+        except NotImplementedError:  # a loop without readers (Windows)
+            signal.set_wakeup_fd(-1)
+            yield
+            return
+        try:
+            yield
+        finally:
+            loop.remove_reader(receive.fileno())
+            current = signal.set_wakeup_fd(-1)
+            if current != send.fileno():
+                # Replaced while it ran (add_signal_handler): keep theirs.
+                signal.set_wakeup_fd(current)
+    finally:
+        receive.close()
+        send.close()
+
+
+def _drain(receive: socket.socket) -> None:
+    """Read the signal numbers the wakeup wrote (the handler, run once the
+    loop woke, is what acts on them)."""
+    with contextlib.suppress(OSError):
+        while receive.recv(4096):
+            pass
 
 
 class TurnInterrupted(Exception):
