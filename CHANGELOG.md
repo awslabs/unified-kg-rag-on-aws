@@ -172,7 +172,7 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     lead-in line and ran on into a support line opening with a citation marker, so its `answer_contains`, and its
     `exact_match` and `token_f1` under a `first_line` or `extracted` `answer_span`, read other text. Score its saved
     answers again: `run-eval --from-results <its results> --rescore`.
-17. A custom language-model factory whose model records set `supports_prompt_caching` puts no prompt-cache checkpoint
+18. A custom language-model factory whose model records set `supports_prompt_caching` puts no prompt-cache checkpoint
     on its system prompts unless it defines `prompt_cache_marker(llm)` (`"cache_point"` or `"cache_control"`): the
     choice moved from the provider-neutral chain builder into the Bedrock factory. Define it, as
     `BedrockLanguageModelFactory.prompt_cache_marker` does, to keep the checkpoint.
