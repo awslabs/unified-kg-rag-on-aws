@@ -569,7 +569,7 @@ pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 - Orchestrator arguments (`retriever_builders=`, `doc_status=`,
   `vector_indexer=` / `graph_indexer=`, `GraphRAGChain(model_factory=...)`)
   are shorthand for a bundle built with them; passing one together with
-  `providers=` raises `ValueError`.
+  `providers=` raises `InvalidArgumentError` (a `ValueError`).
 - Anything not supplied is built lazily by the configured kind's builder (the
   model factories at most once per bundle); a component built without a bundle
   builds a default one. There is deliberately no DI container: the bundle
