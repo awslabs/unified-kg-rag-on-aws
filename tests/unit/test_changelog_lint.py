@@ -25,8 +25,12 @@ feature no release had belongs in its *Added* entry.
 A merge that kept an entry's continuation lines after the other side removed
 the line they hang from leaves them as an entry with no bullet (after a blank
 line or a heading) or joined to the entry above, where the tail starts a
-line in lowercase after a full stop; one that put a subsection's lead line
-below the bullets merged in above it leaves the lead under the last of them.
+line in lowercase or with a parenthesis after a full stop, or closes a
+parenthesis its new entry never opened; one that put a subsection's lead
+line below the bullets merged in above it leaves the lead under the last of
+them. A renumber of the *Upgrading* steps after a rebase can leave a "step
+N" reference on another step that exists: the entry and the step it names
+share a code span no other step holds.
 """
 
 from __future__ import annotations
@@ -95,6 +99,47 @@ def _step_references(section: str) -> list[int]:
         for n in match.groups()
         if n
     ]
+
+
+def _code_spans(text: str) -> set[str]:
+    return set(re.findall(r"`([^`]+)`", " ".join(text.split())))
+
+
+def _misdirected_step_references(section: str) -> list[tuple[int, str]]:
+    """``(line, reference)`` of each "step N" or "steps N-M" an entry outside
+    *Upgrading* names whose step (or steps) shares no code span with the
+    entry that no other step holds. The step a *Breaking changes* or *Fixed*
+    entry points at carries out what the entry changed, so both name it
+    (the CDK entry and its step name `cjk_script_split`); a reference a
+    renumber left pointing at another step shares none. A step naming
+    another step only orders them, so steps are not checked."""
+    lines = section.splitlines()
+    start = lines.index("### Upgrading") + 1 if "### Upgrading" in lines else 0
+    end = next(
+        (i for i in range(start, len(lines)) if lines[i].startswith("#")), len(lines)
+    )
+    steps = {
+        int(match.group(1)): _code_spans(" ".join(line for _, line in entry))
+        for entry in _entries("\n".join(lines[start:end]))
+        if (match := re.match(r"(\d+)\. ", entry[0][1]))
+    }
+    found = []
+    for entry in _entries(section):
+        if start < entry[0][0] <= end and re.match(r"\d+\. ", entry[0][1]):
+            continue  # a step
+        text = " ".join(line.strip() for _, line in entry)
+        for match in re.finditer(r"\bsteps?\s+(\d+)(?:\s*-\s*(\d+))?", text, re.I):
+            first = int(match.group(1))
+            named = set(range(first, int(match.group(2) or first) + 1))
+            if not named <= set(steps):
+                continue  # past the last step: test_every_step_reference_names_a_step
+            held = set().union(*(steps[n] for n in named))
+            elsewhere = set().union(
+                *(spans for n, spans in steps.items() if n not in named)
+            )
+            if not (_code_spans(text) & held) - elsewhere:
+                found.append((entry[0][0], match.group()))
+    return found
 
 
 def _repeated_passages(section: str) -> list[tuple[int, int, str]]:
@@ -183,22 +228,47 @@ def _headless_entries(section: str) -> list[int]:
 
 def _joined_tails(section: str) -> list[int]:
     """Lines of an entry that end a sentence where the entry's next line
-    starts with a lowercase word: no sentence starts so, so the next line is
-    the tail of another entry a merge joined to this one (its head dropped),
-    or a sentence restarted where a merge kept two hunks. A name cased so
-    (``nDCG``) and a nested bullet start fresh."""
+    starts with a lowercase word or an opening parenthesis: no sentence
+    starts so, so the next line is the tail of another entry a merge joined
+    to this one (its head dropped), or a sentence restarted where a merge
+    kept two hunks. A name cased so (``nDCG``) and a nested bullet start
+    fresh."""
     found = []
     for entry in _entries(section):
         for (number, line), (_, after) in zip(entry, entry[1:], strict=False):
             if re.match(r"\s+(- |\d+\. )", after):
                 continue
             word = after.split()[0]
-            if (
-                re.search(r"\.\)?$", line.rstrip())
-                and word[0].isalpha()
-                and word.islower()
+            if re.search(r"\.\)?$", line.rstrip()) and (
+                (word[0].isalpha() and word.islower()) or word[0] == "("
             ):
                 found.append(number)
+    return found
+
+
+def _unclosed_parentheses(section: str) -> list[int]:
+    """The line of each entry where a parenthesis closes that the entry
+    never opened, or its last line when one it opened stays open (outside
+    code spans, which may wrap): the entry lost the line holding the other
+    half, or holds the tail of another entry whose head a merge dropped. A
+    tail that starts a well-formed clause (a capital or a backticked name)
+    is told apart this way only when it carries such a parenthesis: a
+    sentence a writer started on a fresh line inside an entry looks the
+    same, and the last release holds several."""
+    found = []
+    for entry in _entries(section):
+        text = "\n".join(line for _, line in entry)
+        prose = re.sub(r"`[^`]*`", lambda span: "\n" * span.group().count("\n"), text)
+        depth, fault = 0, None
+        for offset, line in enumerate(prose.split("\n")):
+            for char in line:
+                depth += {"(": 1, ")": -1}.get(char, 0)
+                if depth < 0 and fault is None:
+                    fault = entry[0][0] + offset
+        if fault is None and depth:
+            fault = entry[-1][0]
+        if fault is not None:
+            found.append(fault)
     return found
 
 
@@ -431,6 +501,10 @@ def test_every_step_reference_names_a_step() -> None:
     assert [n for n in references if not 1 <= n <= last] == []
 
 
+def test_every_step_reference_names_its_own_step() -> None:
+    assert _misdirected_step_references(SECTION) == []
+
+
 def test_no_passage_is_repeated() -> None:
     repeats = _repeated_passages(SECTION)
     assert not repeats, repeats[:3]
@@ -447,6 +521,10 @@ def test_no_entry_lost_its_head() -> None:
 
 def test_no_entry_holds_another_s_tail() -> None:
     assert _joined_tails(SECTION) == []
+
+
+def test_every_entry_closes_its_parentheses() -> None:
+    assert _unclosed_parentheses(SECTION) == []
 
 
 def test_every_lead_line_precedes_its_subsection_s_bullets() -> None:
@@ -686,6 +764,8 @@ def test_the_joined_tail_scan() -> None:
     joined = "- One entry ends here.\n  of another entry whose head a merge dropped.\n"
     assert _joined_tails(joined) == [1]
     assert _joined_tails("- It ends (here).\n  uvicorn's line restarts.\n") == [1]
+    # No sentence opens a parenthesis either.
+    assert _joined_tails("- One ends.\n  (`x` is refused) and more.\n") == [1]
     assert _joined_tails("- It ends.\n  nDCG starts a sentence.\n") == []
     # A sentence that starts a line, a wrapped sentence and a nested bullet.
     assert (
@@ -694,6 +774,42 @@ def test_the_joined_tail_scan() -> None:
     assert _joined_tails("- A list:\n  - a nested bullet.\n  - another\n") == []
     # Entries are apart from each other.
     assert _joined_tails("- One ends.\n- another starts.\n") == []
+
+
+def test_the_unclosed_parenthesis_scan() -> None:
+    # A tail whose head (and its open parenthesis) a merge dropped.
+    joined = "- One ends.\n  `Name` is refused), as the other entry said.\n"
+    assert _unclosed_parentheses(joined) == [2]
+    # An entry that lost the line closing one.
+    assert _unclosed_parentheses("- One (opens\n  and goes on.\n- Two.\n") == [2]
+    # Balanced, nested, wrapped, or inside a code span (which may wrap).
+    assert _unclosed_parentheses("- One (a (b)\n  c) ends.\n") == []
+    assert _unclosed_parentheses("- `f(` x `\n  )` ends.\n- `g)` too.\n") == []
+
+
+def test_the_misdirected_step_reference_scan() -> None:
+    section = (
+        "### Breaking changes\n"
+        "- `cjk_script_split` maps `ko` (*Upgrading* step 2).\n"
+        "- A range: `a_key` and `b_key` (steps 1-2).\n"
+        "### Upgrading\n"
+        "1. Set `a_key` and `indexing.reset: true`.\n"
+        "2. Rebuild `cjk_script_split` with `indexing.reset: true`; then step 1.\n"
+        "3. Past it: `other`.\n"
+    )
+    assert _misdirected_step_references(section) == []
+    # A renumber that left the reference on another step; a name every
+    # step holds is no subject.
+    moved = section.replace("step 2)", "step 1)")
+    assert _misdirected_step_references(moved) == [(2, "step 1")]
+    shared = moved.replace("maps `ko`", "maps `ko`, `indexing.reset: true`")
+    assert _misdirected_step_references(shared) == [(2, "step 1")]
+    # A range that no longer holds its subject; a step past the last is
+    # the range check's.
+    assert _misdirected_step_references(section.replace("steps 1-2", "steps 2-3")) == [
+        (3, "steps 2-3")
+    ]
+    assert _misdirected_step_references(section.replace("step 2)", "step 9)")) == []
 
 
 def test_the_late_lead_scan() -> None:
@@ -714,6 +830,8 @@ def test_the_merge_scans_pass_the_last_release() -> None:
     assert _headless_entries(released) == []
     assert _joined_tails(released) == []
     assert _late_leads(released) == []
+    assert _unclosed_parentheses(released) == []
+    assert _misdirected_step_references(released) == []
 
 
 def test_the_line_length_scan() -> None:
