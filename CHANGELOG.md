@@ -478,6 +478,8 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   notes of a removal and a commit (`pending-strip`, `pending-commit`, `pending-writes`, `stripped-summaries`,
   `outdated-reports`, `removed-records`) live in that store, so a run stopped mid-removal or mid-commit cannot resume
   them.
+- `run-ingestion`'s sample-entities table and `run-rag`'s source snippets mark a cut text with "…", as the console
+  does, not "..."; every CLI and console cut goes through one helper.
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0

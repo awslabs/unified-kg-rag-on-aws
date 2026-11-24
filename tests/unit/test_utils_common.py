@@ -301,6 +301,28 @@ class TestDefaultMaxWorkers:
         assert default_max_workers() == 1
 
 
+def test_clip_marks_a_cut_with_one_ellipsis_within_the_limit() -> None:
+    from unified_kg_rag.shared.utils import clip
+
+    assert clip("Vendor", 6) == "Vendor"
+    assert clip("Vendor ships", 6) == "Vendo…"
+    assert len(clip("x" * 500, 160)) == 160
+
+
+def test_the_cli_and_console_cuts_end_in_the_same_mark() -> None:
+    from unified_kg_rag.application.cli import display, run_rag_chain
+    from unified_kg_rag.application.cli.console import evaluations, graph_api
+
+    long = "word " * 20_000
+    cuts = [
+        display._truncate_text(long, 150),
+        run_rag_chain._snippet(long),
+        graph_api._text(long),
+        evaluations._text(long),
+    ]
+    assert all(cut.endswith("…") and not cut.endswith("...") for cut in cuts)
+
+
 def test_first_names_lists_the_first_ones_and_counts_the_rest() -> None:
     from unified_kg_rag.shared.utils import NAMES_SHOWN, first_names
 

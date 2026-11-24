@@ -146,6 +146,13 @@ def first_names(
     return shown + (f" and {len(listed) - limit} more" if len(listed) > limit else "")
 
 
+def clip(text: str, limit: int) -> str:
+    """``text`` cut to at most ``limit`` characters, the last an ellipsis
+    ("…") when it was cut: the one mark a CLI or console page puts on a
+    shortened text."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def interleave(lists: Iterable[Iterable[_T]]) -> list[_T]:
     """The items of several ranked lists in one: their first items, then
     their second ones, and so on (what an equal-weight rank fusion of the

@@ -21,7 +21,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     Relationship,
 )
-from unified_kg_rag.shared.utils import first_names
+from unified_kg_rag.shared.utils import clip, first_names
 
 # Past any line a panel or table of a run holds: the width they are
 # measured within on no terminal (``_CliConsole``).
@@ -281,7 +281,7 @@ def display_sample_entities(entities: list[Entity] | None, limit: int = 10) -> N
 def _truncate_text(text: str | None, max_length: int) -> str:
     if not text:
         return ""
-    return text[: max_length - 3] + "..." if len(text) > max_length else text
+    return clip(text, max_length)
 
 
 def display_sample_relationships(
