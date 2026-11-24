@@ -297,8 +297,10 @@ class SearchToolResult(_Records, _Outcome):
     cost_usd: float | None = Field(
         default=None,
         description="The call's USD by the server's models.prices, as "
-        "RAGOutput.metadata states it: null when a model it called has no "
-        "price there (named in unpriced_models)",
+        "RAGOutput.metadata states it: null when a language model or reranker "
+        "it called has no price there; an embedding model without a price is "
+        "left out of the cost, which stays a number (both named in "
+        "unpriced_models)",
     )
     unpriced_models: list[str] = Field(
         default_factory=list,

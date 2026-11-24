@@ -728,7 +728,8 @@ class RAGOutput(BaseModel):
     ``input_tokens``, ``output_tokens``, ``cache_hits``, and the same
     ``by_role`` and ``by_model``; ``domain.models.LLMUsage``), and
     ``metadata["cost_usd"]`` their USD by ``models.prices`` (``None`` when a
-    model called has no price there, named in
+    language model or reranker called has no price there; an embedding
+    model without one is left out of the cost; both named in
     ``metadata["unpriced_models"]``). With a guardrail
     configured, ``metadata["guardrail"]`` lists its interventions (source,
     action, policies), and ``metadata["blocked"]`` is ``True`` when it

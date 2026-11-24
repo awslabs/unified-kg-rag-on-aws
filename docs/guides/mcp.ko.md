@@ -223,12 +223,13 @@ extra가 없고, 스택의 질의 태스크는 서비스, 포트, 로드 밸런�
 - **에이전트 옆에서 실행.** 저장소에 닿는 컴퓨터(로컬 모드나 VPC 안의 호스트)에서
   `uv sync --inexact --extra mcp`로 설치하고, 같은 컴퓨터의 에이전트에는 stdio로 연결합니다.
 
-**태스크 중지.** ECS는 `SIGTERM`을 한 번 보내고, 컨테이너의 `stopTimeout`(기본 30초, 최대
-120초)이 지나면 컨테이너를 강제 종료합니다. 신호를 받은 서버는 새 호출을 받지 않고 처리 중인
-호출을 60초 동안 기다린 뒤 끊습니다. 끊긴 호출의 질의는 `ERROR`로 끝나고 `stopped`로
+**태스크 중지.** ECS는 `SIGTERM`을 한 번 보내고, 컨테이너의 `stopTimeout`(기본 30초. Fargate는
+최대 120초이고, EC2 시작 유형에서 `stopTimeout`을 지정하지 않으면 컨테이너 에이전트의
+`ECS_CONTAINER_STOP_TIMEOUT` 값을 씁니다)이 지나면 컨테이너를 강제 종료합니다. 신호를 받은
+서버는 새 호출을 받지 않고 처리 중인 호출을 60초 동안 기다린 뒤 끊습니다. 끊긴 호출의 질의는 `ERROR`로 끝나고 `stopped`로
 기록됩니다([중지된 질의의 스팬](../reference/telemetry.md#spans-of-a-stopped-query)(영문)).
-컨테이너의 `stopTimeout`을 120초로 설정해 남은 시간에 스팬을 내보내게 하세요. 기본값 30초에서는
-처리 중인 호출이 스팬과 감사 레코드 없이 강제 종료됩니다. 호출은
+컨테이너의 `stopTimeout`을 120초(Fargate의 최댓값)로 설정해 남은 시간에 스팬을 내보내게
+하세요. 기본값 30초에서는 처리 중인 호출이 스팬과 감사 레코드 없이 강제 종료됩니다. 호출은
 `search.query_timeout_seconds`(기본 180초)까지 실행될 수 있어 60초보다 깁니다. 배포 중에도
 호출이 끝나야 한다면 이 값을 60초 아래로 두세요.
 
@@ -256,7 +257,10 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
   호출할 수 있으니 `mcp.tools`와 `mcp.strategies`로 범위를 제한하세요. `kg_search`와
   `kg_answer`는 `usage`(역할·모델별 모델 호출 수와 토큰)와 `cost_usd`를 돌려줍니다.
   `cost_usd`는 서버의 `models.prices`로 계산한 USD 비용으로 `run-rag`가 보여 주는 값과 같고,
-  호출한 모델의 가격이 없으면 `null`이며 그 모델은 `unpriced_models`에 나옵니다.
+  호출한 언어 모델이나 재순위화 모델(reranker)의 가격이 없으면 `null`입니다.
+  `embedding_per_million_tokens`가 없는 임베딩 모델은 비용 계산에서 빠지고 `cost_usd`는 숫자로
+  남습니다. 두 경우 모두 그 모델이 `unpriced_models`에 나옵니다
+  ([감사 레코드](../reference/telemetry.md#audit-record)(영문)).
 - **텔레메트리.** [관측성](./observability.md)(영문)을 켜면 호출마다
   `kg_rag.mcp.tool` 스팬이 생깁니다. 인자는 `observability.capture_content`를 켰을 때만
   `redact_patterns`를 적용한 뒤 기록합니다. 로그에는 질의 텍스트가 아니라 요약값(digest)만

@@ -255,14 +255,15 @@ To serve agents from AWS:
   agent on the same machine.
 
 **Stopping the task.** ECS sends one `SIGTERM` and kills the container at
-its `stopTimeout` (30 s by default, 120 s at most). On the signal the
-server takes no new call and lets the calls in flight run for 60 s, then
-cuts them: a cut call's query ends `ERROR`, recorded `stopped`
+its `stopTimeout` (30 s by default; Fargate allows at most 120 s, and on
+the EC2 launch type an unset `stopTimeout` takes the container agent's
+`ECS_CONTAINER_STOP_TIMEOUT`). On the signal the server takes no new call
+and lets the calls in flight run for 60 s, then cuts them: a cut call's query ends `ERROR`, recorded `stopped`
 ([Spans of a stopped query](../reference/telemetry.md#spans-of-a-stopped-query)).
-Set the container's `stopTimeout` to 120 s, which leaves the rest for the
-spans to flush; at the default 30 s a call still running is killed with no
-span and no audit record. A call may run for `search.query_timeout_seconds`
-(180 s by default), longer than the 60 s: keep it under 60 s where calls
+Set the container's `stopTimeout` to 120 s (Fargate's maximum), which
+leaves the rest for the spans to flush; at the default 30 s a call still
+running is killed with no span and no audit record. A call may run for
+`search.query_timeout_seconds` (180 s by default), longer than the 60 s: keep it under 60 s where calls
 must finish across a deploy.
 
 Neither AgentCore nor an ECS service running the server is verified on AWS
@@ -291,8 +292,11 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
   agent may call tools many times per task: restrict `mcp.tools` and
   `mcp.strategies` to bound it. `kg_search` and `kg_answer` return `usage`
   (model calls and tokens, by role and model) and `cost_usd`, its USD by the
-  server's `models.prices` as `run-rag` states it (`null` when a model
-  called has no price there, named in `unpriced_models`).
+  server's `models.prices` as `run-rag` states it: `null` when a language
+  model or reranker it called has no price there, while an embedding model
+  without `embedding_per_million_tokens` is left out of the cost, which
+  stays a number. Both are named in `unpriced_models`
+  ([audit record](../reference/telemetry.md#audit-record)).
 - **Telemetry.** With [observability](./observability.md) on, each call is
   a `kg_rag.mcp.tool` span; its arguments are recorded only with
   `observability.capture_content`, after `redact_patterns`. Logs carry a
