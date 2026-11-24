@@ -298,10 +298,25 @@ def entity_from_vertex(value_map: Mapping[Any, Any]) -> Entity | None:
     return Entity.model_validate(fields)
 
 
-def community_children(value_map: Mapping[Any, Any]) -> list[str]:
-    """The child community ids a community vertex ``valueMap()`` holds
-    (``[]`` for a leaf)."""
-    return _vertex_list(value_map.get("children")) or []
+def community_from_vertex(value_map: Mapping[Any, Any]) -> Community | None:
+    """Rebuild a community from a vertex ``valueMap()`` (the inverse of
+    :func:`community_properties`; the vertex holds no member or
+    relationship ids); None without id, name or level."""
+    community_id = _single(value_map.get("id"))
+    name, level = _single(value_map.get("name")), _single(value_map.get("level"))
+    if community_id is None or name is None or level is None:
+        return None
+    return Community(
+        id=str(community_id),
+        name=str(name),
+        level=str(level),
+        parent=str(_single(value_map.get("parent")) or ""),
+        children=_vertex_list(value_map.get("children")) or [],
+        text_unit_ids=_vertex_list(value_map.get("text_unit_ids")),
+        size=_single(value_map.get("size")),
+        period=_single(value_map.get("period")),
+        attributes=_attributes(value_map),
+    )
 
 
 def relationship_from_edge(

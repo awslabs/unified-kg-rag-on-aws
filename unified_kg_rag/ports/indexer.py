@@ -464,6 +464,24 @@ class GraphIndexer(BaseIndexer, SchemaAnnotationStore):
         """
         return None
 
+    def read_communities(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[Community] | None:
+        """The community vertices of ``suffix`` among ``ids``, in ``ids``
+        order, as written (level, parent, children, text units, size, name,
+        attributes; a vertex holds no ``entity_ids`` or
+        ``relationship_ids``); an id with no stored vertex is absent.
+
+        A removal finds a community stored without a report (a seed-only
+        one, one whose report failed or was emptied) by its text units: its
+        vertex is written again from its current members, as a refreshed
+        report's is, and an outdated parent's report written again reads
+        its members down its children (:meth:`read_community_children`).
+        Default returns ``None``: the backend cannot tell; adapters that
+        override it raise when the read fails.
+        """
+        return None
+
     def read_community_children(
         self, ids: list[str], suffix: str | None = None
     ) -> dict[str, list[str]] | None:
@@ -473,11 +491,14 @@ class GraphIndexer(BaseIndexer, SchemaAnnotationStore):
 
         The hierarchy of a community stored without a report (a seed-only
         one, one whose report failed or was emptied): an outdated parent's
-        report written again reads its members through it. Default returns
-        ``None``: the backend cannot tell; adapters that override it raise
-        when the read fails.
+        report written again reads its members through it. Default: read
+        through :meth:`read_communities` (``None`` when the backend cannot
+        tell).
         """
-        return None
+        communities = self.read_communities(ids, suffix)
+        if communities is None:
+            return None
+        return {c.id: list(c.children) for c in communities}
 
     def find_relationship_ids_citing(
         self, text_unit_ids: list[str], suffix: str | None = None

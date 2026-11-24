@@ -543,7 +543,8 @@ def test_a_parent_a_backend_cannot_read_below_says_only_a_reset_writes_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # r8diff-2: a custom graph backend that cannot read community vertices
-    # (GraphIndexer.read_community_children at the port's default) keeps P
+    # (GraphIndexer.read_communities and read_community_children at the
+    # port's defaults; the latter reads through the former) keeps P
     # outdated until a reset (the maintainer's B-1 decision). Every surface
     # names that remedy: one WARNING (not also "the next run writes them
     # again"), the build record's reset_only_reports, and the rebuild
@@ -554,6 +555,7 @@ def test_a_parent_a_backend_cannot_read_below_says_only_a_reset_writes_it(
         backend = type(graph)
     finally:
         graph.close()
+    monkeypatch.setattr(backend, "read_communities", GraphIndexer.read_communities)
     monkeypatch.setattr(
         backend, "read_community_children", GraphIndexer.read_community_children
     )
@@ -580,3 +582,83 @@ def test_a_parent_a_backend_cannot_read_below_says_only_a_reset_writes_it(
         assert reason.kind is RebuildReasonKind.OUTDATED_REPORTS
         assert reason.remedy is RebuildRemedy.RESET
         assert "no incremental run writes it" in reason.detail
+
+
+def _community_vertices(providers: Any, ids: list[str]) -> dict[str, Any]:
+    graph = providers.build_graph_indexer()
+    try:
+        communities = graph.read_communities(ids, suffix="default")
+    finally:
+        graph.close()
+    assert communities is not None
+    return {c.id: c for c in communities}
+
+
+@pytest.mark.timeout(600)
+def test_a_seed_only_community_edited_in_one_shard_keeps_no_removed_unit(
+    tmp_path: Path, store_harness: StoreHarness, caplog: pytest.LogCaptureFixture
+) -> None:
+    # r8diff-6: the seed graph's triangle S is a community of its own,
+    # stored without a report. Editing Sequoia's description re-keys the
+    # units of its shard only (Spruce and Sumac are in another): S keeps
+    # the units of the shard left, and its vertex kept the re-keyed ones
+    # too, which nothing stores any more. Its vertex is written again
+    # from its members, as a refreshed report's is.
+    a = _GROUPS["A"]
+    seeded = _SEEDED
+
+    def seed(sequoia: str) -> list[dict[str, str]]:
+        nodes = [
+            {"kind": "node", "id": f"n-{n.lower()}", "name": n, "type": "ORGANIZATION"}
+            for n in (*seeded, a[0])
+        ]
+        nodes[0]["description"] = sequoia
+        pairs = [
+            (seeded[0], seeded[1]),
+            (seeded[1], seeded[2]),
+            (seeded[2], seeded[0]),
+            (seeded[0], a[0]),
+        ]
+        return nodes + [
+            {
+                "kind": "edge",
+                "source": f"n-{x.lower()}",
+                "target": f"n-{y.lower()}",
+                "type": "WORKS_WITH",
+            }
+            for x, y in pairs
+        ]
+
+    files = {"a.txt": _triangle("A"), "b.txt": _triangle("B")}
+    config, providers, source = _forest(
+        tmp_path, store_harness, files, seed("A tall tree.")
+    )
+    reports = {r["community_id"] for r in _reports(config, providers).values()}
+    graph = providers.build_graph_indexer()
+    try:
+        units = _unit_ids(config, providers)
+        stored = graph.find_ids_citing(
+            sorted(units), suffix="default", communities=True
+        )
+    finally:
+        graph.close()
+    (community,) = [
+        c
+        for c, cited in stored.items()
+        if c not in reports and all(u.startswith("sg-") for u in cited)
+    ]
+
+    (tmp_path / "seed" / "trees.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in seed("A taller tree.")),
+        encoding="utf-8",
+    )
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        second = e2e._ingest(config, providers, source, tmp_path / "run2")
+    assert second.status is PipelineStageStatus.COMPLETED, e2e._errors(second)
+    left = _unit_ids(config, providers)
+    dead = units - left
+    _assert_current(config, providers, caplog, dead)
+    (vertex,) = _community_vertices(providers, [community]).values()
+    assert set(vertex.text_unit_ids or []) <= left
+    assert vertex.size == len(seeded)

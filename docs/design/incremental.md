@@ -606,7 +606,12 @@ costs no call; otherwise one call per report, in the indexing stage's usage
 role for the indexing stage). A community left without a document-backed
 member loses its report. The graph store's community vertex is written
 again with the members the refresh read (their text units, size and names),
-whatever its report's outcome. A report the run cannot write again (the model
+whatever its report's outcome, and so is the vertex of a community the
+removal keeps citing a removed text unit with no outdated report (a
+seed-only one, whose seed shard changed, or one whose report failed or was
+emptied: listed in the `outdated-reports` note too, read through
+`GraphIndexer.read_communities`, kept as stored on a backend that leaves it
+at its default); one with no member left is deleted. A report the run cannot write again (the model
 failed, a read failed, or, with
 `enable_sub_community_rollup`, one below it got no report this run: written
 without that child's roll-up, the parent would never be asked again once
@@ -616,14 +621,15 @@ rebuild reason with remedy `next_run`), and the next run, a run with
 nothing to index included, tries again; one the stores cannot tell how to
 write again (a community below it stored without a report on a graph
 backend that cannot read community vertices,
-`GraphIndexer.read_community_children` at its default, or a backend
-without the other reads the refresh needs) stays until `indexing.reset:
-true`, listed in `IndexBuildRecord.reset_only_reports` (an
-`outdated_reports` reason with remedy `reset`). Property tests check that the
+`GraphIndexer.read_communities` and `read_community_children` at their
+defaults, or a backend without the other reads the refresh needs) stays
+until `indexing.reset: true`, listed in `IndexBuildRecord.reset_only_reports`
+(an `outdated_reports` reason with remedy `reset`). Property tests check that the
 model is asked with what a full build's detector packs for the same
 community over the surviving graph, over two- and three-level hierarchies
-with seed-only, report-less and deleted communities, and that no report is
-left flagged (`tests/property/test_report_refresh_properties.py`). Each delta's
+with seed-only, report-less and deleted communities, that no report is
+left flagged and that every community vertex citing a removed unit holds
+its surviving members' units (`tests/property/test_report_refresh_properties.py`). Each delta's
 first-pass communities (depth 0) join every cut of the hierarchy, so global
 search's cut
 grows until a rebuild; the cap and the shallower-cut fallback (§6.1.1) bound

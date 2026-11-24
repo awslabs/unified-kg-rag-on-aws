@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import as_completed
 from functools import partial
-from typing import Any
+from typing import Any, NamedTuple
 
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
@@ -131,6 +131,15 @@ def _edges_of_written_entities(
     return [r for r in relationships if id(r) not in held_ids], stats
 
 
+class OutdatedNote(NamedTuple):
+    """A suffix's stored outdated-report note (see
+    :meth:`IndexingManager.note_outdated_reports`)."""
+
+    report_ids: set[str]
+    candidates: set[str]
+    community_ids: set[str]
+
+
 class IndexingManager:
     """Coordinates writes across the vector and graph stores.
 
@@ -247,6 +256,11 @@ class IndexingManager:
         # indexing.reset: true writes (RefreshedReports.reset_only): the
         # build record's reset_only_reports.
         self.reset_only_reports: dict[str, set[str]] = {}
+        # By suffix, the stored communities a removal kept that cite a
+        # removed text unit and have no outdated report (a seed-only one,
+        # one whose report failed or was emptied): the refresh writes their
+        # graph vertices again from their current members.
+        self.stale_communities: dict[str, set[str]] = {}
         # The suffixes whose outdated-report note this run read or wrote
         # (note_outdated_reports), deleted once a build record takes over.
         self._outdated_notes: set[str] = set()
@@ -1193,54 +1207,69 @@ class IndexingManager:
         self._noted_stripped_ids.clear()
 
     def note_outdated_reports(
-        self, suffix: str, report_ids: Collection[str], candidates: Collection[str]
+        self,
+        suffix: str,
+        report_ids: Collection[str],
+        candidates: Collection[str],
+        community_ids: Collection[str] = (),
     ) -> None:
         """Note the stored reports of ``suffix`` a removal flags outdated,
-        with the entities it strips (the refresh's member candidates), beside
-        those of a stored note (``OUTDATED_REPORTS``), before it flags them.
-        The removal deletes the removed documents' registry records before
-        the commit writes the reports again: a run killed in between leaves
+        with the entities it strips (the refresh's member candidates) and
+        the communities without an outdated report it leaves citing a
+        removed text unit (:attr:`stale_communities`), beside those of a
+        stored note (``OUTDATED_REPORTS``), before it flags them. The
+        removal deletes the removed documents' registry records before the
+        commit writes the reports again: a run killed in between leaves
         them listed here, for its successor's refresh. Raises when the write
         fails, before the removal writes anything."""
-        stored_ids, stored_candidates = self.read_outdated_note(suffix)
+        stored = self.read_outdated_note(suffix)
         self._write_note(
             OUTDATED_REPORTS,
             suffix,
             {
-                "report_ids": sorted(stored_ids | set(report_ids)),
-                "candidates": sorted(stored_candidates | set(candidates)),
+                "report_ids": sorted(stored.report_ids | set(report_ids)),
+                "candidates": sorted(stored.candidates | set(candidates)),
+                "community_ids": sorted(stored.community_ids | set(community_ids)),
             },
         )
         self._outdated_notes.add(suffix)
 
-    def read_outdated_note(self, suffix: str) -> tuple[set[str], set[str]]:
-        """The report ids and member candidates of the stored outdated-report
-        note of ``suffix`` (see :meth:`note_outdated_reports`). A failed read
-        raises."""
+    def read_outdated_note(self, suffix: str) -> OutdatedNote:
+        """The stored outdated-report note of ``suffix`` (see
+        :meth:`note_outdated_reports`; one written before it named
+        communities names none). A failed read raises."""
         note = self.vector_indexer.read_extraction_records(
             [OUTDATED_REPORTS], suffix=suffix
         ).get(OUTDATED_REPORTS)
         if note is not None:
             self._outdated_notes.add(suffix)
-        return note_ids(note, "report_ids"), note_ids(note, "candidates")
+        return OutdatedNote(
+            note_ids(note, "report_ids"),
+            note_ids(note, "candidates"),
+            note_ids(note, "community_ids"),
+        )
 
     def merge_outdated_note(self, suffix: str) -> set[str]:
         """Add the report ids of the stored outdated-report note of
         ``suffix`` to this run's :attr:`outdated_reports`, which the build
-        record lists, and return its member candidates. Every commit merges
-        it, whether it writes reports again or not: a note deleted unmerged
-        lists its reports nowhere. A failed read raises, and keeps the
-        note."""
+        record lists, and its communities to :attr:`stale_communities`, and
+        return its member candidates. Every commit merges it, whether it
+        writes reports again or not: a note deleted unmerged lists its
+        reports nowhere. A failed read raises, and keeps the note."""
         try:
-            ids, candidates = self.read_outdated_note(suffix)
+            note = self.read_outdated_note(suffix)
         except BaseException:
             self._outdated_notes.discard(suffix)
             raise
-        if ids:
+        if note.report_ids:
             self.outdated_reports[suffix] = (
-                self.outdated_reports.get(suffix, set()) | ids
+                self.outdated_reports.get(suffix, set()) | note.report_ids
             )
-        return candidates
+        if note.community_ids:
+            self.stale_communities[suffix] = (
+                self.stale_communities.get(suffix, set()) | note.community_ids
+            )
+        return note.candidates
 
     def keep_outdated_notes(self) -> None:
         """Keep the outdated-report notes this run read or wrote past its
@@ -1303,6 +1332,7 @@ class IndexingManager:
         self.stripped_entities.clear()
         self.refreshed_reports.clear()
         self.reset_only_reports.clear()
+        self.stale_communities.clear()
         self._outdated_notes.clear()
         self.deleted_communities.clear()
         self._removed_record_keys.clear()
@@ -1466,7 +1496,9 @@ class IndexingManager:
         deleted once none of the text units it cites is stored any more; a
         report citing others too is flagged outdated (``outdated_reports``)
         and written again from its community's remaining members by the
-        same run's commit (``ReportRefresh``), once its writes succeeded.
+        same run's commit (``ReportRefresh``), once its writes succeeded,
+        with the graph vertices of the communities kept with no outdated
+        report (``stale_communities``).
         The extraction-store keys the removed text units named are kept for
         :meth:`collect_extraction_records`.
 
