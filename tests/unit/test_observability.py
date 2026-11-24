@@ -3006,6 +3006,84 @@ def test_a_second_ctrl_c_cancels_a_draining_server_s_request(
     assert [r.outcome.value for r in records] == ["stopped"]
 
 
+def test_one_sigterm_cuts_an_http_mcp_call_at_the_graceful_shutdown_limit(
+    tracing: Tracing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # C-3: run-mcp-server over HTTP set no graceful-shutdown limit, so one
+    # SIGTERM (all ECS sends before its kill) drained a call to its end:
+    # one longer than the task's stopTimeout was killed with no span and
+    # no audit record. Past the limit the call is cut: its query ends
+    # ERROR, recorded stopped, and the server exits.
+    pytest.importorskip("uvicorn")
+    pytest.importorskip("httpx")
+    pytest.importorskip("mcp")
+    from unified_kg_rag.application.cli import run_mcp_server
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    from unified_kg_rag.application.retrieval import query_audit
+    from unified_kg_rag.shared.query_stop import mark_process_stopping
+
+    records: list[Any] = []
+    monkeypatch.setattr(query_audit, "audit_enabled", lambda: True)
+    monkeypatch.setattr(query_audit, "emit", records.append)
+    # The limit, short: the call is held 10 s, past this test's wait.
+    monkeypatch.setattr(run_mcp_server, "SERVER_GRACEFUL_SHUTDOWN_SECONDS", 0.5)
+    exporter = tracing()
+    held = _Held("model")
+    chain = held.chain()
+    port = _free_port()
+    exited_after: list[float] = []
+
+    async def run() -> None:
+        serving = asyncio.create_task(
+            run_mcp_server.serve_http(KnowledgeGraphTools(chain), "127.0.0.1", port)
+        )
+        asking = asyncio.create_task(_ask_after_start(port))
+        try:
+            await asyncio.wait_for(held.wait(), 30)
+            os.kill(os.getpid(), signal.SIGTERM)
+            start = asyncio.get_running_loop().time()
+            await asyncio.wait_for(asyncio.shield(serving), 5)
+            exited_after.append(asyncio.get_running_loop().time() - start)
+        finally:
+            serving.cancel()
+            await asyncio.gather(serving, asking, return_exceptions=True)
+            await chain.aclose()
+
+    # The SIGTERM uvicorn took is raised again once it served: not into
+    # the suite's process.
+    previous = signal.signal(signal.SIGTERM, lambda *_: None)
+    try:
+        asyncio.run(run())
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        mark_process_stopping(False)
+    assert exited_after[0] < 5
+    spans = exporter.get_finished_spans()
+    errors = {
+        s.name: _attrs(s).get("error.type")
+        for s in spans
+        if s.status.status_code == StatusCode.ERROR
+    }
+    assert errors.get("kg_rag.query") == "CancelledError", errors
+    assert errors.get(_Held.span["model"]) == "CancelledError", errors
+    assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)
+    assert [r.outcome.value for r in records] == ["stopped"]
+
+
+async def _ask_after_start(port: int) -> None:
+    """Ask the MCP server on ``port`` once it listens."""
+    for _ in range(200):
+        try:
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+        except OSError:
+            await asyncio.sleep(0.05)
+            continue
+        writer.close()
+        await writer.wait_closed()
+        break
+    await _ask_served("mcp", f"http://127.0.0.1:{port}")
+
+
 _STDIO_SERVER = textwrap.dedent("""
     import asyncio, json, os, sys
     from pathlib import Path

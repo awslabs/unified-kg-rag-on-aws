@@ -25,6 +25,7 @@ from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.config_args import add_config_arguments
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
+    SERVER_GRACEFUL_SHUTDOWN_SECONDS,
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
@@ -346,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
             log_level=(args.log_level or "WARNING").lower(),
             access_log=False,
             lifespan="on",
-            timeout_graceful_shutdown=60,
+            timeout_graceful_shutdown=SERVER_GRACEFUL_SHUTDOWN_SECONDS,
         )
     )
     server.run(sockets=[sock])

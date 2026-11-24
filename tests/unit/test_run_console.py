@@ -16,7 +16,10 @@ import pytest
 
 from tests.fixtures.console_demo import requires_console
 from unified_kg_rag.application.cli import run_console
-from unified_kg_rag.application.cli.conventions import host_without_port
+from unified_kg_rag.application.cli.conventions import (
+    SERVER_GRACEFUL_SHUTDOWN_SECONDS,
+    host_without_port,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -125,6 +128,7 @@ def test_it_binds_then_prints_where_it_serves(
         served["address"] = sockets[0].getsockname()
         served["app"] = self.config.app
         served["log_config"] = self.config.log_config
+        served["grace"] = self.config.timeout_graceful_shutdown
         sockets[0].close()
 
     monkeypatch.setattr(uvicorn.Server, "run", run)
@@ -155,6 +159,10 @@ def test_it_binds_then_prints_where_it_serves(
     # Uvicorn's records go through the logging setup's handlers and their
     # filter, not a log config of its own that prints a library's text.
     assert served["log_config"] is None
+    # A stop lets the requests in flight run for the servers' one limit
+    # (run-mcp-server's too), then cuts them: 60 s, inside the stack's
+    # 120 s StopTimeout.
+    assert served["grace"] == SERVER_GRACEFUL_SHUTDOWN_SECONDS == 60
 
 
 @requires_console

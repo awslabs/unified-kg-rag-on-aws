@@ -254,6 +254,17 @@ To serve agents from AWS:
   reaches the stores (local mode, or a host in the VPC), with stdio for an
   agent on the same machine.
 
+**Stopping the task.** ECS sends one `SIGTERM` and kills the container at
+its `stopTimeout` (30 s by default, 120 s at most). On the signal the
+server takes no new call and lets the calls in flight run for 60 s, then
+cuts them: a cut call's query ends `ERROR`, recorded `stopped`
+([Spans of a stopped query](../reference/telemetry.md#spans-of-a-stopped-query)).
+Set the container's `stopTimeout` to 120 s, which leaves the rest for the
+spans to flush; at the default 30 s a call still running is killed with no
+span and no audit record. A call may run for `search.query_timeout_seconds`
+(180 s by default), longer than the 60 s: keep it under 60 s where calls
+must finish across a deploy.
+
 Neither AgentCore nor an ECS service running the server is verified on AWS
 yet.
 

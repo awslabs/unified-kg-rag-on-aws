@@ -91,14 +91,15 @@ stop ends a query in flight:
 | Reader stop | An MCP client leaves a `kg_search` or `kg_answer` call before the call's deadline (a cancel notification, a disconnect, its stdin closed); the console's Stop, or its page closed; the reader of `GraphRAGChain.aquery_events` stops reading | No error status, `kg_rag.stopped: true` | `stopped` |
 | Interactive question stop | `Ctrl-C` on one question of `run-rag --interactive`; the session goes on | No error status, `kg_rag.stopped: true` | `stopped` |
 | Process signal | `Ctrl-C` or `SIGTERM` ending a CLI: `run-rag` (`--interactive` too: a `SIGTERM`), `run-eval`, `run-mcp-server` over stdio; a host cancelling `ainvoke` itself | `ERROR`, `error.type: CancelledError` | `stopped` |
-| Server shutdown | `Ctrl-C` or `SIGTERM` to `run-console` or to `run-mcp-server --transport streamable-http`: the server stops taking requests and lets those in flight finish | A query that finishes ends as it ends (answered); one the shutdown cancels (`run-console` past its 60 s graceful shutdown; either at a second `Ctrl-C`) `ERROR`, `error.type: CancelledError` | the query's own; `stopped` when cancelled |
+| Server shutdown | `Ctrl-C` or `SIGTERM` to `run-console` or to `run-mcp-server --transport streamable-http`: the server stops taking requests and lets those in flight finish | A query that finishes ends as it ends (answered); one the shutdown cancels (past the servers' 60 s graceful shutdown, or at a second `Ctrl-C`) `ERROR`, `error.type: CancelledError` | the query's own; `stopped` when cancelled |
 | Timeout | The query's deadline (`search.query_timeout_seconds`) or its answer stream's first-chunk window; an MCP client that leaves past the call's deadline | `ERROR`, `error.type: QueryTimeoutError` (`CancelledError` on a span the deadline cut off) | `failed`, `error_class` `timeout` |
 
 Once a signal stops the process, a reader that leaves during the stop (an
 MCP client, a console page) ends its query as the process stop does.
-`run-mcp-server` over streamable HTTP sets no limit to its graceful
-shutdown: a platform that stops it (ECS `stopTimeout`, 30 s by default)
-kills a longer call with no span and no audit record.
+A platform that kills a server inside its 60 s graceful shutdown (ECS
+`stopTimeout`, 30 s by default) kills a call still running with no span and
+no audit record: give it 120 s
+([MCP server: HTTP and remote deployment](../guides/mcp.md#http-and-remote-deployment)).
 
 ## Audit record
 
