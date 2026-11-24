@@ -179,7 +179,7 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 19. A script that reads `run-visualization`'s pages from `visualization_outputs/` without passing
     `--output-directory` finds them under `visualization_outputs/<namespace>/` (*Changed*); pass
     `--output-directory visualization_outputs` to keep the old place.
-18. A DynamoDB doc-status registry or an S3 stage-cache sync that ran in the environment's region (`AWS_DEFAULT_REGION`
+20. A DynamoDB doc-status registry or an S3 stage-cache sync that ran in the environment's region (`AWS_DEFAULT_REGION`
     or the profile's), not `aws.region_name`, now runs in `aws.region_name` (*Fixed*). If its table or bucket is in
     the other region, set `aws.region_name` to that region, or move the table; a registry left behind reads every
     document as new.
