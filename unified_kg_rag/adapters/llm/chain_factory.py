@@ -225,11 +225,19 @@ class DelimitedChatPromptTemplate(ChatPromptTemplate):
     delimiter_tags: frozenset[str] = frozenset()
 
     def _neutralised(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """``kwargs`` with the delimiter tags escaped in every value the
+        templates format as text: a string, and a list, tuple, set or dict,
+        which ``str.format`` renders as its ``str()`` (strings and all), so it
+        is escaped as that text. Numbers, booleans and ``None`` hold no tag."""
         return {
             key: (
                 neutralise_delimiters(value, self.delimiter_tags)
                 if isinstance(value, str)
-                else value
+                else (
+                    neutralise_delimiters(str(value), self.delimiter_tags)
+                    if isinstance(value, list | tuple | set | frozenset | dict)
+                    else value
+                )
             )
             for key, value in kwargs.items()
         }
