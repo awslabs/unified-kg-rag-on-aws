@@ -109,6 +109,7 @@ ALLOWED: dict[str, str] = {
         "application/cli/run_console.py:DEFAULT_PORT",
         "application/cli/run_console.py:MIN_TOKEN_LENGTH",
         "application/cli/run_mcp_server.py:DEFAULT_PORT",
+        "application/cli/mcp_server.py:SHUTDOWN_ERROR_CODE",
         "application/storage/visualization_export.py:EXPORT_HEAD_BYTES",
         "domain/ingestion/cache_keys.py:FINGERPRINT_LENGTH",
         "domain/ingestion/cache_keys.py:EXTRACTION_SETTINGS_VERSION",
