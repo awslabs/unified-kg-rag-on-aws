@@ -111,8 +111,10 @@ uv run --no-dev --extra console --extra local python console/demo/demo.py --mode
 다시 실행하면 코퍼스는 다시 쓰지만, 설정은 처음 쓴 파일을 설정 페이지에서
 저장한 내용(가격, 모델, 디렉터리)과 함께 그대로 두고 불러와지는지만 확인합니다.
 가짜 모델은 유지한 설정에 적힌 포트에서 띄웁니다. `--reset-config`는 데모 설정을
-다시 씁니다(`--models`를 바꿀 때도 이것을 씁니다). 수집은 새 문서가 없음을
-확인하고 끝납니다. `--prepare-only`는 콘솔을 시작하기 전에 멈추고, `--no-ingest`는
+다시 씁니다(`--models`를 바꿀 때도 이것을 씁니다). 수집은 데모의 파이프라인
+ID를 다시 실행하므로 그 실행을 재개합니다. 모델은 호출하지 않고 문서를 다시
+색인하며, JSON의 `delta`는 첫 실행의 것으로 `reused`가 붙습니다
+([JSON 출력](../reference/exit-codes-and-json.md), 영문). `--prepare-only`는 콘솔을 시작하기 전에 멈추고, `--no-ingest`는
 수집을 건너뜁니다.
 
 ## 원격 호스트에서 접속

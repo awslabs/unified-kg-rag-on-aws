@@ -2840,7 +2840,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             tag_query_failure(e, query_id)
             self._record_query(
-                started, input, search=search, query_id=query_id, error=e
+                started,
+                input,
+                search=search,
+                query_id=query_id,
+                error=e,
+                usage=_unspent(),
             )
             raise
         except asyncio.CancelledError:
@@ -2848,7 +2853,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # deadline): recorded as below, then the cancellation goes on.
             # No query span is open yet: its audit record and metrics name
             # the strategy, the host's span (an MCP tool call's) the cancel.
-            self._record_cancelled(started, input, deadline, search, query_id)
+            self._record_cancelled(
+                started, input, deadline, search, query_id, usage=_unspent()
+            )
             raise
         finally:
             reset_contextvars(**admission_tokens)
@@ -3074,7 +3081,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         the one path the chain records its own queries by (a query
         cancelled once it ran is recorded by the chain). ``error``: why it
         ended (a timeout: a failed query); ``None``: its caller left (a
-        stopped query, no usage). ``query``: its input's fields, by
+        stopped query). It sent no model call: its usage is 0, its
+        ``cost_usd`` 0.0 (``null`` means a model without a price).
+        ``query``: its input's fields, by
         ``RAGInput`` name (``query``, ``search_strategy``, ``search_type``,
         ``top_k``, ``filters``, ``namespace``, ``user_id``, ...);
         ``started``: the ``time.monotonic()`` the call began; ``search``: a
@@ -3086,6 +3095,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             search=search,
             query_id=self._query_id(),
             error=error,
+            usage=_unspent(),
             ran=None if error is not None else _stopped_strategy(fields),
             stopped=error is None,
         )
@@ -4731,6 +4741,13 @@ def stopped_strategy(
     except (TypeError, ValueError):
         return None
     return None if strategy is SearchStrategy.AUTO else strategy
+
+
+def _unspent() -> dict[str, Any]:
+    """The usage snapshot of a query that sent no model call (refused or
+    ended before it ran): every count 0, so its USD is 0.0, as a query that
+    ran and called nothing records, not ``null`` (a model without a price)."""
+    return UsageMeter().snapshot()
 
 
 def _stopped_strategy(query: RAGInput | Mapping[str, Any]) -> SearchStrategy | None:

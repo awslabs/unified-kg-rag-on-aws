@@ -146,7 +146,7 @@ an opaque id.
 | `question`, `answer` | `{length, sha256}` of the question asked and the answer returned (`null`: none) |
 | `evidence` | `sources` (how many the answer model was given, or a search returned) and their `source_ids`, then the context sections the answer cites (`[n]`) as `cited_source_ids`, `cited_text_unit_ids` and `cited_document_ids`; at most 50 ids each, `truncated` when one was cut; empty cited lists for a strategy whose citations are off (`search.citations.strategies`) |
 | `models`, `usage` | The model ids it sent requests to, and its usage (the `metadata["usage"]` counts below) |
-| `cost_usd`, `unpriced_models` | Its USD cost by `models.prices` and the models it could not price: `null` with a language model or reranker that has no price there; an embedding model without `embedding_per_million_tokens` is left out of the cost, which stays a number. Both are named in `unpriced_models` |
+| `cost_usd`, `unpriced_models` | Its USD cost by `models.prices` and the models it could not price: `null` with a language model or reranker that has no price there; an embedding model without `embedding_per_million_tokens` is left out of the cost, which stays a number. Both are named in `unpriced_models`. A query that sent no model call (refused, or ended before it ran: an MCP call that timed out or left waiting for a call slot) costs `0.0`, its `usage` all 0 |
 
 Nothing is built while the logger is off for INFO: a CLI writes the records
 at the default `logging.level` (`INFO`), `logging.library_levels:

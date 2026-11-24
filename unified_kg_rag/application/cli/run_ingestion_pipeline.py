@@ -1162,6 +1162,14 @@ class IngestionPipelineRunner:
                     "retried": len(set(delta.retried) & set(delta.changed)),
                     "unchanged": len(delta.unchanged),
                     "deleted": len(delta.deleted),
+                    # A resumed run (its pipeline id run again, a later
+                    # --enabled-stages window) runs no diff: the counts are
+                    # those of the run of its id that loaded the documents,
+                    # whose delta this one indexes (again).
+                    "reused": (
+                        PipelineStageType.DOCUMENT_LOADING.value
+                        not in self.pipeline.executed_stages
+                    ),
                 }
             ),
             # The model calls and tokens of the stages this run executed.

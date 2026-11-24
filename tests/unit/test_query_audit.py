@@ -306,6 +306,7 @@ async def test_a_refused_input_and_a_search_each_write_one_record(
     assert refused.outcome is AuditOutcome.REFUSED
     assert refused.error_class == "invalid_argument"
     assert refused.requested_strategy == "no-such" and refused.build is None
+    assert (refused.cost_usd, refused.unpriced_models) == (0.0, [])
     assert (search.mode, search.outcome) == ("search", AuditOutcome.ANSWERED)
     assert search.query_id == searched.metadata["query_id"]
     assert search.evidence is not None
@@ -331,6 +332,9 @@ async def test_a_query_a_host_gave_up_on_writes_one_record(audit: _Captured) -> 
     record = _one(audit)
     assert (record.outcome, record.error_class) == (AuditOutcome.FAILED, "timeout")
     assert record.namespace == "default" and record.question is None
+    # Final review D-8: a timeout in the slot queue paid nothing (0.0), as
+    # one in the chain records, not null (a model without a price).
+    assert (record.cost_usd, record.unpriced_models) == (0.0, [])
 
 
 async def test_a_cancelled_ainvoke_writes_one_stopped_record(
@@ -448,7 +452,12 @@ async def test_a_host_s_stopped_unrun_query_names_its_caller_and_strategy(
         assert record.outcome is AuditOutcome.STOPPED and record.error_class is None
         assert (record.user_id, record.top_k) == ("user-42", 3)
         assert record.filter_keys == ["n_tokens"] and record.strategy == "local"
-        assert record.usage is None and record.question is not None
+        assert record.question is not None
+        # Final review D-8: it sent no model call, so it paid 0.0, as a
+        # query that ran and called nothing; null is a model without a price.
+        assert record.usage is not None and record.usage.llm_calls == 0
+        assert (record.cost_usd, record.unpriced_models) == (0.0, [])
+        assert record.models == []
     assert (answer.mode, search.mode) == ("rag", "search")
     ((_namespace, metrics, properties),) = sink.emitted
     assert metrics["query_failed"] == 0.0 and properties["Strategy"] == "local"

@@ -176,6 +176,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     on its system prompts unless it defines `prompt_cache_marker(llm)` (`"cache_point"` or `"cache_control"`): the
     choice moved from the provider-neutral chain builder into the Bedrock factory. Define it, as
     `BedrockLanguageModelFactory.prompt_cache_marker` does, to keep the checkpoint.
+19. A script that reads `run-visualization`'s pages from `visualization_outputs/` without passing
+    `--output-directory` finds them under `visualization_outputs/<namespace>/` (*Changed*); pass
+    `--output-directory visualization_outputs` to keep the old place.
 
 ### Added
 
@@ -488,6 +491,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   chosen by the language-model factory's optional `prompt_cache_marker(llm)` hook, not by the provider-neutral chain
   builder, which imported langchain-aws to tell the two Bedrock clients apart. Bedrock prompts are marked as before;
   see Upgrading for a custom factory.
+- `run-visualization` without `--output-directory` writes to `visualization_outputs/<namespace>` (the namespace the
+  data names, else `--namespace`'s) instead of `visualization_outputs/`, where a second namespace's render replaced
+  the first's pages with no warning. A renderer also removes the pages it does not draw this time (the hierarchy and
+  community-size pages of data without communities), which an earlier render had left beside the new ones.
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0
@@ -1036,6 +1043,20 @@ Bugs present in 0.3.0.
   `--verify-metadata`. Each now shows its own message (the lease's holder and when it expires, the stage to run and
   the flag, the file, the keys), as `docs/operations.md` documents, and a held lease no longer prints the recovery
   suggestions that end in "Use --force-rebuild".
+- `run-rag --query Q --interactive` started the chat and never answered Q (exit 0 at stdin's end); the pair is
+  refused as a usage error (exit 2), as the help's "exactly one" says.
+- `run-console` exits 130 when Ctrl-C stops it, as `run-mcp-server` and the exit-code table say; the exit-code
+  reference said 0. A Ctrl-C the process inherited ignored (a background launch) still stopped it but exited 0: it
+  exits 130 too.
+- A query audit record's `cost_usd` was `null` for a query that sent no model call because it was refused or ended
+  before it ran (an MCP call that timed out waiting for a call slot), while one that timed out in the chain recorded
+  `0.0`, and `null` is documented as "a model without a price". Such a record now has `cost_usd` `0.0` and a usage of
+  0 (its query metrics emit `query_cost_usd` 0 too).
+- `run-ingestion --output-format json`: a run that resumed its pipeline id (a finished id run again, as the console
+  demo and the console's Ingest page do) reported the delta of the run that loaded the documents as if it were a new
+  diff (`"new": 8` for an unchanged corpus). The `delta` now says so (`"reused": true`); the resume itself is
+  unchanged. The console guide said such a re-run "finds nothing new": it resumes, calls no model and indexes the
+  documents again.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0

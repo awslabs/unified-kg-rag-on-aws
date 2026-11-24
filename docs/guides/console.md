@@ -116,7 +116,10 @@ the script again rewrites the corpus and keeps the config it wrote the first
 time, with whatever Settings saved into it (prices, models, directories),
 after checking it loads; with the fake models it serves them on the port
 the kept config names. `--reset-config` writes the demo's config again
-(also the way to switch `--models`). The ingestion finds nothing new. `--prepare-only` stops before starting the console;
+(also the way to switch `--models`). The ingestion runs the demo's pipeline
+id again, so it resumes that run: it calls no model and indexes the
+documents again, and its JSON `delta` is the first run's, marked `reused`
+([JSON output](../reference/exit-codes-and-json.md)). `--prepare-only` stops before starting the console;
 `--no-ingest` skips the ingestion.
 
 ## Reach it on a remote host

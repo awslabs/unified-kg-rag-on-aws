@@ -83,6 +83,12 @@ Ingestion itself renders nothing. Another renderer plugs in through
   by degree, with their degree, betweenness and PageRank) and
   `community_size_distribution.html` (level 0): each is one page with an
   SVG chart and a tooltip on every bar, which needs no script or network.
+  They go to `--output-directory`, by default
+  `visualization_outputs/<namespace>` (the namespace the data names, else
+  `--namespace`'s), so two namespaces' pages never replace each other's. A
+  renderer that runs removes each of its pages it does not draw this time
+  (the hierarchy page of data without communities), so the directory never
+  mixes its pages of an earlier render with this one's.
 - **Size.** The interactive graph keeps the top `interactive.max_nodes` nodes
   by degree (default 600; 2000 take about 15 s to lay out) and of the links
   between them at most `interactive.max_edges` (default 3000), each node's

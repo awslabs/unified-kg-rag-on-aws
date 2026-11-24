@@ -49,15 +49,21 @@ def _static_renderer() -> type[StaticRenderer]:
     return StaticRenderer
 
 
-def _render_file(path: Path, draw: Callable[[str], None]) -> list[Path]:
+def _render_file(
+    path: Path, draw: Callable[[str], None], *, drawn: bool = True
+) -> list[Path]:
     """Run ``draw(path)`` and report ``path`` only if it actually wrote it.
 
     The concrete renderers return early (writing nothing) for empty inputs. A
     previous run's file at ``path`` is removed first (it would be overwritten
-    anyway), so an existing file afterwards always reflects this render and
-    the output directory never mixes stale and fresh artifacts.
+    anyway), also when this render draws no such page (``drawn`` false: the
+    data has no communities, say), so an existing file afterwards always
+    reflects this render and the output directory never mixes stale and
+    fresh artifacts.
     """
     path.unlink(missing_ok=True)
+    if not drawn:
+        return []
     draw(str(path))
     if not path.is_file():
         logger.warning("Renderer produced no output for '%s'", path.name)
@@ -80,13 +86,13 @@ class InteractiveRendererAdapter(BaseRenderer):
             ),
         )
 
-        if context.community_hierarchy:
-            written += _render_file(
-                output_dir / "community_hierarchy.html",
-                lambda p: renderer.create_community_hierarchy(
-                    context.community_hierarchy, p
-                ),
-            )
+        written += _render_file(
+            output_dir / "community_hierarchy.html",
+            lambda p: renderer.create_community_hierarchy(
+                context.community_hierarchy, p
+            ),
+            drawn=bool(context.community_hierarchy),
+        )
 
         return written
 
@@ -107,18 +113,15 @@ class StaticRendererAdapter(BaseRenderer):
             lambda p: renderer.plot_degree_distribution(context.graph, p),
         )
 
-        if context.centrality:
-            written += _render_file(
-                output_dir / "centrality_comparison.html",
-                lambda p: renderer.plot_centrality_comparison(context.centrality, p),
-            )
-
-        if context.communities:
-            written += _render_file(
-                output_dir / "community_size_distribution.html",
-                lambda p: renderer.plot_community_size_distribution(
-                    context.communities, p
-                ),
-            )
+        written += _render_file(
+            output_dir / "centrality_comparison.html",
+            lambda p: renderer.plot_centrality_comparison(context.centrality, p),
+            drawn=bool(context.centrality),
+        )
+        written += _render_file(
+            output_dir / "community_size_distribution.html",
+            lambda p: renderer.plot_community_size_distribution(context.communities, p),
+            drawn=bool(context.communities),
+        )
 
         return written

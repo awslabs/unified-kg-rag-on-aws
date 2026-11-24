@@ -243,8 +243,8 @@ def _script(name: str) -> str:
 
 
 def ingest(workspace: Path, config_path: Path, source: Path) -> None:
-    """Ingest the corpus with run-ingestion (incremental: a re-run with the
-    same corpus finds nothing new)."""
+    """Ingest the corpus with run-ingestion under the pipeline id ``demo``
+    (incremental: a re-run resumes that run, with no model call)."""
     command = [
         _script("run-ingestion"),
         "--config-path",

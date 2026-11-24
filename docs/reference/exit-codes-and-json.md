@@ -85,8 +85,9 @@ for a failure, `130` and `143` for a signal. It has no `--output-format`:
 over stdio its stdout carries the MCP messages only
 ([MCP server](../guides/mcp.md)).
 
-`run-console` exits `0` when Ctrl-C stops it (the server finishes running
-requests first, up to 60 s), `143` on SIGTERM, `2` for a usage error (the
+`run-console` exits `130` when Ctrl-C stops it (the server finishes running
+requests first, up to 60 s; a second Ctrl-C cuts them short), `143` on
+SIGTERM, as `run-mcp-server` does, `2` for a usage error (the
 `console` extra missing, a non-loopback `--host` without `--allow-remote`,
 a `--source-directory` that is not a directory) and `1` when it cannot
 listen on the address. A config file that does not load is no error: the
@@ -196,8 +197,12 @@ document, printed while it serves, has no `exit_code`. The document holds:
     `unchanged` and `deleted` documents (an `indexing.reset` run counts every
     document new), or `null` with the registry off. `retried` counts the
     `changed` documents whose content did not change: recorded `FAILED`,
-    they are processed again. The documents a run
-    deletes are named in one INFO line (the first 20).
+    they are processed again. `reused` is `true` for a run that ran no
+    diff: one that resumed its pipeline id (a finished pipeline id run
+    again, a run after a stop, a later `--enabled-stages` window) reports the
+    delta of the run of that id that loaded the documents, and indexes it
+    again; a run under a new pipeline id diffs the corpus. The documents a
+    run deletes are named in one INFO line (the first 20).
 
   `--max-failure-rate RATE` (off by default) exits `1` when more than `RATE`
   of the corpus the run covered failed: `files_failed`, the documents

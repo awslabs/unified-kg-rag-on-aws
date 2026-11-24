@@ -431,6 +431,138 @@ class TestBuiltinAdaptersReportOnlyWrittenFiles:
         assert cli_module.main() == 1
 
 
+def _namespace_export(tmp_path: Path, namespace: str, *, communities: bool) -> Path:
+    """A one-edge export naming ``namespace`` (its first bytes, as ingestion
+    writes them), with or without a community."""
+    data: dict[str, object] = {
+        "namespace": namespace,
+        "nodes": [{"id": "e1"}, {"id": "e2"}],
+        "edges": [{"source": "e1", "target": "e2"}],
+        "layout": {"e1": [0.0, 0.0], "e2": [1.0, 1.0]},
+        "centrality": {"e1": {"node_id": "e1", "node_name": "A", "degree": 1.0}},
+    }
+    if communities:
+        data["communities"] = {
+            "hierarchy": [
+                {"community_id": "c0", "level": 0, "nodes": ["e1", "e2"], "size": 2}
+            ]
+        }
+    path = tmp_path / f"{namespace}-{communities}.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _render_main(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *flags: str,
+) -> dict[str, object]:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-visualization",
+            *flags,
+            "--renderers",
+            "static",
+            "--output-format",
+            "json",
+        ],
+    )
+    monkeypatch.setattr(cli_module, "load_cli_config", lambda _args: Config())
+    capsys.readouterr()
+    assert cli_module.main() == 0
+    return dict(json.loads(capsys.readouterr().out))
+
+
+class TestRenderDirectory:
+    def test_each_namespace_renders_into_its_own_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Final review D-6: two namespaces rendered without
+        # --output-directory wrote the same pages into visualization_outputs/,
+        # the second replacing the first's with no warning.
+        monkeypatch.chdir(tmp_path)
+        first = _render_main(
+            monkeypatch,
+            capsys,
+            "--data-path",
+            str(_namespace_export(tmp_path, "default", communities=True)),
+        )
+        second = _render_main(
+            monkeypatch,
+            capsys,
+            "--data-path",
+            str(_namespace_export(tmp_path, "third", communities=True)),
+        )
+        assert first["output_directory"] == str(Path("visualization_outputs/default"))
+        assert second["output_directory"] == str(Path("visualization_outputs/third"))
+        for out in (first, second):
+            files = [Path(str(f)) for f in out["files"]]  # type: ignore[attr-defined]
+            assert files and all(
+                f.parent == Path(str(out["output_directory"])) for f in files
+            )
+        # An export that names no namespace: --namespace's.
+        unnamed = tmp_path / "unnamed.json"
+        unnamed.write_text(
+            json.dumps({"nodes": [{"id": "a"}], "edges": []}), encoding="utf-8"
+        )
+        third = _render_main(
+            monkeypatch, capsys, "--data-path", str(unnamed), "--namespace", "fourth"
+        )
+        assert third["output_directory"] == str(Path("visualization_outputs/fourth"))
+
+    def test_a_namespace_that_is_no_safe_name_is_not_a_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # An export's first bytes are not trusted as a path part.
+        monkeypatch.chdir(tmp_path)
+        out = _render_main(
+            monkeypatch,
+            capsys,
+            "--data-path",
+            str(_namespace_export(tmp_path, "../up", communities=False)),
+        )
+        assert out["output_directory"] == str(Path("visualization_outputs/default"))
+
+    def test_a_render_leaves_no_page_of_an_earlier_one(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Final review D-6: a page the new data draws none of (no communities)
+        # was left from the earlier render, beside the new pages.
+        monkeypatch.chdir(tmp_path)
+        flags = ("--output-directory", str(tmp_path / "out"))
+        _render_main(
+            monkeypatch,
+            capsys,
+            "--data-path",
+            str(_namespace_export(tmp_path, "default", communities=True)),
+            *flags,
+        )
+        page = tmp_path / "out" / "community_size_distribution.html"
+        assert page.is_file()
+        out = _render_main(
+            monkeypatch,
+            capsys,
+            "--data-path",
+            str(_namespace_export(tmp_path, "default", communities=False)),
+            *flags,
+        )
+        assert not page.exists()
+        assert sorted(p.name for p in (tmp_path / "out").iterdir()) == sorted(
+            Path(str(f)).name for f in out["files"]  # type: ignore[attr-defined]
+        )
+
+
 def _without_module(
     monkeypatch: pytest.MonkeyPatch, package: str, *loaded: str
 ) -> None:
