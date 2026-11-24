@@ -340,6 +340,9 @@ class _StubFactory:
     def get_model_info(self, model_id: LanguageModelId) -> Any:
         return get_language_model_info(model_id)
 
+    # The Bedrock factory's marker choice (Converse or InvokeModel).
+    prompt_cache_marker = staticmethod(BedrockLanguageModelFactory.prompt_cache_marker)
+
 
 def _system_message(model_id: LanguageModelId) -> Any:
     chain = setup_chain(
