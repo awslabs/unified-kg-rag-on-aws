@@ -110,7 +110,9 @@ from unified_kg_rag.domain.models.schema import (
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
 from .ontology_model import (
+    RDFS_COMMENT,
     RDFS_LABEL,
+    SKOS_DEFINITION,
     SKOS_PREF_LABEL,
     OntologyModel,
     OntologyTerm,
@@ -124,7 +126,7 @@ _DESCRIPTIVE_NAMESPACES = (SKOS, DCTERMS, "http://purl.org/dc/elements/1.1/")
 # Domains and ranges that allow anything.
 _UNRESTRICTED = frozenset({OWL + "Thing", RDFS + "Resource"})
 # The default ``description_properties``, which an ontology need not use.
-_DEFAULT_DESCRIPTIONS = frozenset({SKOS + "definition", RDFS + "comment"})
+_DEFAULT_DESCRIPTIONS = frozenset({SKOS_DEFINITION, RDFS_COMMENT})
 
 
 class MappingOptions(BaseModel):

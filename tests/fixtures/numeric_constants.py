@@ -77,6 +77,8 @@ ALLOWED: dict[str, str] = {
     ),
     **_reason(
         UPSTREAM,
+        # datasketch's default permutation count, the LSH layouts' basis.
+        "domain/ingestion/base_resolver.py:NAME_MINHASH_PERMUTATIONS",
         "adapters/local/search_engine/bm25.py:K1",
         "adapters/local/search_engine/bm25.py:B",
         "adapters/search_strategies/drift_search.py:_FOLLOW_UPS_PER_ANSWER",
@@ -213,6 +215,8 @@ ALLOWED: dict[str, str] = {
     ),
     **_reason(
         CAP,
+        "adapters/search_strategies/structured_search.py:_REPAIR_ERRORS_SHOWN",
+        "adapters/search_strategies/structured_search.py:_REPAIR_FEEDBACK_CHARS",
         "application/cli/trusted_identity.py:MAX_IDENTITY_CHARS",
         "adapters/graph_query/sqlite.py:MAX_BRANCHES",
         "adapters/schema_sources/file.py:MAX_S3_BYTES",

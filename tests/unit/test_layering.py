@@ -25,6 +25,13 @@ The rules:
   the retrieval kernel and the ingestion adapters
   (``_BACKEND_FREE_ADAPTERS``) receive them too. Evaluation does not import
   the store adapters at all: it reaches the stores through the chain.
+* **Third-party packages by layer.** Above and below the adapters, a layer
+  imports only the third-party packages ``_THIRD_PARTY`` lists for it (any
+  import, lazy and type-only ones too); a store, model or server SDK is
+  bound in the adapters and the composition roots
+  (``third_party_violations``). The backends are whole vendor and store
+  packages plus every module implementing an indexer port, read from the
+  source (``_indexer_modules``), so a new indexer needs no list entry.
 * **Vendor packages are leaves.** ``adapters/aws`` and ``adapters/local``
   import, of the adapters, only each other and the vendor-neutral kernel
   (``adapters/llm``, ``adapters/observability``), which imports no other
@@ -107,17 +114,40 @@ _EVALUATION_REACHES = ("application.retrieval", "application.bootstrap")
 # Modules that build backends from config (composition roots).
 _COMPOSITION_ROOTS = ("application.bootstrap", "application.cli")
 
+# The indexer ports: a module defining a class on one of them is a store
+# binding (``_indexer_modules``), whatever its name.
+_INDEXER_PORTS = {"BaseIndexer", "GraphIndexer", "VectorIndexer"}
+
+
+def _indexer_modules(root: Path) -> tuple[str, ...]:
+    """The adapter modules that implement an indexer port, read from the
+    source: a new indexer module is a backend without being listed."""
+    found = []
+    for py_file in sorted((root / "adapters").rglob("*.py")):
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        if any(
+            isinstance(node, ast.ClassDef)
+            and any(
+                getattr(base, "id", getattr(base, "attr", None)) in _INDEXER_PORTS
+                for base in node.bases
+            )
+            for node in ast.walk(tree)
+        ):
+            found.append(_module_name(py_file, root))
+    return tuple(found)
+
+
 # Vendor bindings and port implementations: built by the composition roots
-# and the provider builders, injected everywhere else.
-_BACKENDS = (
+# and the provider builders, injected everywhere else. Whole packages (the
+# vendors, the store read side and query compilers, the doc-status and
+# guardrail implementations), and every indexer implementation.
+_BACKEND_PACKAGES = (
     "adapters.aws",
     "adapters.local",
     "adapters.doc_status",
     "adapters.guardrail",
     "adapters.retrievers",
-    "adapters.storage.neptune_indexer",
-    "adapters.storage.opensearch_indexer",
-    "adapters.storage.sqlite_graph_indexer",
+    "adapters.graph_query",
 )
 # Adapter packages that receive the backends as well.
 _BACKEND_FREE_ADAPTERS = (
@@ -218,6 +248,9 @@ def _module_name(py_file: Path, root: Path) -> str:
     if parts[-1] == "__init__":
         parts = parts[:-1]
     return ".".join(parts)
+
+
+_BACKENDS = (*_BACKEND_PACKAGES, *_indexer_modules(_PACKAGE_ROOT))
 
 
 def _resolve(node: ast.ImportFrom, module: str, is_package: bool) -> str:
@@ -459,8 +492,9 @@ def layer_of(module: str) -> int | None:
     return None if best is None else best[1]
 
 
-def _rule_broken(imp: Import) -> str | None:
-    """Why ``imp`` breaks a rule, or None."""
+def _rule_broken(imp: Import, backends: tuple[str, ...] = _BACKENDS) -> str | None:
+    """Why ``imp`` breaks a rule, or None (``backends``: the scanned tree's
+    ``_BACKENDS``)."""
     source, target = layer_of(imp.source), layer_of(imp.target)
     if source is None:
         return "module in no layer"
@@ -481,12 +515,12 @@ def _rule_broken(imp: Import) -> str | None:
     if target < source:
         return f"{importer} must not import {imported}"
     if (
-        _within(imp.target, _BACKENDS)
+        _within(imp.target, backends)
         and target != source
         and not _within(imp.source, _COMPOSITION_ROOTS)
     ):
         return "a backend; inject it (Providers)"
-    if _within(imp.source, _BACKEND_FREE_ADAPTERS) and _within(imp.target, _BACKENDS):
+    if _within(imp.source, _BACKEND_FREE_ADAPTERS) and _within(imp.target, backends):
         return "a backend; inject it (Providers)"
     if importer == "evaluation" and imported == "application":
         if not _within(imp.target, _EVALUATION_REACHES):
@@ -517,20 +551,162 @@ def _rule_broken(imp: Import) -> str | None:
 
 def violations(root: Path = _PACKAGE_ROOT) -> list[str]:
     """One line per import statement that breaks a rule."""
+    backends = _BACKENDS
+    if root != _PACKAGE_ROOT:  # a planted tree: its own indexers count too
+        backends = (*_BACKENDS, *_indexer_modules(root))
     found = [
         f"{imp}: {reason}"
         for imp in imports_with_packages(root)
         # The root facade itself re-exports every layer.
         if imp.source and (imp.source, imp.target) not in _ALLOWED
-        if (reason := _rule_broken(imp))
+        if (reason := _rule_broken(imp, backends))
     ]
     return list(dict.fromkeys(found))
+
+
+# The third-party packages (top level) a layer may import, every import
+# counted: lazy, under TYPE_CHECKING, and a dynamic import of a literal name.
+# The adapters and the composition roots bind the technology, so they have no
+# list; every other layer imports only these and the standard library. A
+# store, model or server SDK above the adapters (boto3, opensearchpy, httpx,
+# fastapi, ...) is a backend to inject, not an entry to add here.
+_THIRD_PARTY: dict[str, frozenset[str]] = {
+    "evaluation": frozenset({"langchain_core", "numpy", "pydantic"}),
+    "application": frozenset(
+        {
+            "dotenv",
+            "langchain_core",
+            "networkx",
+            "numpy",
+            "pydantic",
+            "structlog",
+            "typing_extensions",
+            "yaml",
+        }
+    ),
+    "ports": frozenset({"pydantic"}),
+    "domain": frozenset(
+        {
+            "charset_normalizer",
+            "datasketch",
+            "graspologic_native",
+            "networkx",
+            "numpy",
+            "pydantic",
+            "pydantic_core",
+            "typing_extensions",
+        }
+    ),
+    # langsmith: ``warn_if_langsmith_tracing`` imports it when called, to
+    # see whether tracing is on; importing the layer does not load it
+    # (test_domain_purity's runtime check).
+    "shared": frozenset({"langsmith", "pydantic", "structlog"}),
+}
+_NOT_THIRD_PARTY = {*sys.stdlib_module_names, "__future__", PACKAGE}
+
+
+def third_party_violations(root: Path = _PACKAGE_ROOT) -> list[str]:
+    """One line per import of a third-party package its layer does not list
+    in ``_THIRD_PARTY``."""
+    found = []
+    for py_file in sorted(root.rglob("*.py")):
+        module = _module_name(py_file, root)
+        layer = layer_of(module)
+        if layer is None or _within(module, _COMPOSITION_ROOTS):
+            continue
+        allowed = _THIRD_PARTY.get(LAYERS[layer][0])
+        if allowed is None:
+            continue
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        aliases = _call_aliases(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                names = [node.module or ""]
+            elif (
+                isinstance(node, ast.Call)
+                and _called_function(node.func, aliases) in _NAME_IMPORTING_CALLS
+                and (literal := _dynamic_target(node, aliases)) not in (None, _UNREAD)
+            ):
+                names = [literal]
+            else:
+                continue
+            for name in names:
+                top = name.partition(".")[0]
+                if top not in _NOT_THIRD_PARTY and top not in allowed:
+                    found.append(
+                        f"{module}:{node.lineno} imports {name}: "
+                        f"not a third-party package {LAYERS[layer][0]} imports "
+                        "(_THIRD_PARTY)"
+                    )
+    return found
 
 
 @pytest.mark.slow
 def test_imports_follow_the_layer_rules() -> None:
     found = violations()
     assert not found, "layer rule violated:\n" + "\n".join(found)
+
+
+def test_each_layer_imports_only_its_third_party_packages() -> None:
+    found = third_party_violations()
+    assert not found, "third-party import outside its layer:\n" + "\n".join(found)
+
+
+def test_every_listed_third_party_package_is_still_imported() -> None:
+    # A stale entry would let a later import of that package through unseen.
+    imported: dict[str, set[str]] = {}
+    for py_file in _PACKAGE_ROOT.rglob("*.py"):
+        module = _module_name(py_file, _PACKAGE_ROOT)
+        layer = layer_of(module)
+        if layer is None or _within(module, _COMPOSITION_ROOTS):
+            continue
+        for node in ast.walk(ast.parse(py_file.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                imported.setdefault(LAYERS[layer][0], set()).add(name.partition(".")[0])
+    for layer, allowed in _THIRD_PARTY.items():
+        assert allowed <= imported.get(layer, set()), (layer, allowed - imported[layer])
+
+
+@pytest.mark.parametrize(
+    ("source", "code", "flagged"),
+    [
+        # The planted imports the guards let through before.
+        ("application/x.py", "import boto3", True),
+        ("application/retrieval/x.py", "from fastapi import FastAPI", True),
+        ("evaluation/x.py", "def f():\n    import opensearchpy", True),
+        ("domain/x.py", "def f():\n    import httpx", True),
+        (
+            "domain/x.py",
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import lxml",
+            True,
+        ),
+        ("shared/x.py", "import importlib\nimportlib.import_module('requests')", True),
+        ("ports/x.py", "import tenacity", True),
+        # Listed for the layer, the standard library, the package itself.
+        ("domain/x.py", "import networkx\nimport json", False),
+        ("application/x.py", "from unified_kg_rag.domain import models", False),
+        # Layers that bind the technology have no list.
+        ("adapters/aws/x.py", "import boto3", False),
+        ("application/bootstrap.py", "import boto3", False),
+        ("application/cli/x.py", "import uvicorn", False),
+    ],
+)
+def test_the_third_party_rule_catches_its_violation(
+    tmp_path: Path, source: str, code: str, flagged: bool
+) -> None:
+    path = tmp_path / source
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{code}\n")
+    found = third_party_violations(tmp_path)
+    assert bool(found) is flagged, found
 
 
 def test_every_module_is_in_a_layer() -> None:
@@ -619,6 +795,20 @@ def test_the_scan_sees_lazy_type_only_and_relative_imports(tmp_path: Path) -> No
         ),
         ("adapters/ingestion/x.py", "unified_kg_rag.adapters.local.models", "backend"),
         ("adapters/providers.py", "unified_kg_rag.adapters.local.models", None),
+        # Port implementations outside the hand-kept packages.
+        (
+            "application/x.py",
+            "unified_kg_rag.adapters.storage.null_graph_indexer",
+            "a backend",
+        ),
+        (
+            "adapters/search_strategies/x.py",
+            "unified_kg_rag.adapters.storage.null_graph_indexer",
+            "a backend",
+        ),
+        ("application/x.py", "unified_kg_rag.adapters.graph_query.gremlin", "backend"),
+        ("application/x.py", "unified_kg_rag.adapters.graph_query.sqlite", "backend"),
+        ("application/x.py", "unified_kg_rag.adapters.storage.filter_schema", None),
     ],
 )
 def test_each_rule_catches_its_violation(
@@ -632,6 +822,29 @@ def test_each_rule_catches_its_violation(
         assert found == []
     else:
         assert len(found) == 1 and rule in found[0], found
+
+
+def test_a_new_indexer_module_is_a_backend(tmp_path: Path) -> None:
+    store = tmp_path / "adapters" / "storage" / "new_store.py"
+    store.parent.mkdir(parents=True)
+    store.write_text(
+        "from unified_kg_rag.ports import GraphIndexer\n"
+        "class NewStore(GraphIndexer):\n    pass\n"
+    )
+    user = tmp_path / "application" / "x.py"
+    user.parent.mkdir(parents=True)
+    user.write_text("from unified_kg_rag.adapters.storage.new_store import NewStore\n")
+    found = [v for v in violations(tmp_path) if v.startswith("application.x")]
+    assert len(found) == 1 and "a backend; inject it" in found[0], found
+
+
+def test_the_backends_hold_every_indexer_implementation() -> None:
+    assert {
+        "adapters.storage.neptune_indexer",
+        "adapters.storage.opensearch_indexer",
+        "adapters.storage.sqlite_graph_indexer",
+        "adapters.storage.null_graph_indexer",
+    } <= set(_BACKENDS)
 
 
 @pytest.mark.parametrize("backend", _BACKENDS)

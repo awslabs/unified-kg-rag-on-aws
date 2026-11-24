@@ -187,7 +187,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
-        start_time = time.time()
+        start_time = time.monotonic()
         rerank = self._new_rerank_trace()
         logger.info(
             "Drift search started - query: %s ('%s')",
@@ -318,7 +318,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         fused = self._with_findings_lineages(fused, lineages)
         results = await self._answers_items(answers, lineages) + fused
 
-        processing_time = time.time() - start_time
+        processing_time = time.monotonic() - start_time
         logger.info(
             "Drift search completed: %s primer reports, %s follow-up queries in %s "
             "rounds, %s LLM calls, %s results in %.3fs",

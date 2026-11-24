@@ -53,11 +53,6 @@ def index_artifact_of(config: Config, index_name: str) -> IndexArtifact | None:
     return None
 
 
-def all_index_prefixes(config: Config) -> list[str]:
-    """Every document index prefix, in sweep order."""
-    return [prefix for prefix, _ in _prefix_artifacts(config)]
-
-
 def configured_index_prefixes(config: Config) -> list[str]:
     """Index prefixes the configured pipeline actually builds.
 

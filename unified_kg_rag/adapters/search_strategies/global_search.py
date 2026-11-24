@@ -259,7 +259,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
-        start_time = time.time()
+        start_time = time.monotonic()
         rerank = self._new_rerank_trace()
         logger.info(
             "Global search started - query: %s ('%s')",
@@ -306,7 +306,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if results and self.global_search_config.text_unit_slots:
             results = results + await self._text_units(results, query, rerank)
 
-        processing_time = time.time() - start_time
+        processing_time = time.monotonic() - start_time
         logger.info(
             "Search completed - retrieved: %s results (%.3fs)",
             len(results),

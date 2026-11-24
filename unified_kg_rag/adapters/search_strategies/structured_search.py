@@ -76,6 +76,8 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.models.graph_query import (
+    MAX_ENTITIES,
+    MAX_STRING_CHARS,
     GraphProfile,
     GraphQueryPlan,
     GraphQueryRequest,
@@ -233,10 +235,18 @@ def _answers_graph_queries(retriever: object) -> bool:
     return isinstance(retriever, GraphQueryPort)
 
 
+# Bounds on what a refusal sends back to the planner in its repair call:
+# the first grammar errors of a broken plan, and the refusal's length (a
+# checker's reason can quote names the model chose). They only bound the
+# repair prompt; they are not tuned.
+_REPAIR_ERRORS_SHOWN = 10
+_REPAIR_FEEDBACK_CHARS = 1500
+
+
 def _validation_message(error: ValidationError) -> str:
     """A plan's grammar errors as ``field: reason`` lines."""
     lines = []
-    for item in error.errors()[:10]:
+    for item in error.errors()[:_REPAIR_ERRORS_SHOWN]:
         where = ".".join(str(part) for part in item.get("loc", ()))
         lines.append(f"{where or 'plan'}: {item.get('msg', 'invalid')}")
     return "\n".join(lines)
@@ -357,7 +367,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
         self.graph_query  # noqa: B018 - before any model call, fail on a store without the port
-        start = time.time()
+        start = time.monotonic()
         run = _Run(mode=self.settings.mode)
         rerank = self._new_rerank_trace()
         logger.info(
@@ -409,7 +419,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 )
             results = await self._fused(query, buckets, rerank)
             metadata["rerank"] = rerank.summary()
-        processing_time = time.time() - start
+        processing_time = time.monotonic() - start
         record = run.record()
         record["usage"] = usage
         metadata["structured"] = record
@@ -569,7 +579,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             # The checker's reason may quote names the model chose.
             logger.info("Structured search: plan refused (%s)", text_digest(error))
             logger.debug("Structured search: plan refused (%s)", error)
-            feedback = repair_feedback(error[:1500])
+            feedback = repair_feedback(error[:_REPAIR_FEEDBACK_CHARS])
         # The last answer decides: still no JSON is a degraded step, a plan
         # the checks refuse a designed fallback.
         if error == _UNREADABLE:
@@ -598,7 +608,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             # The names a broken plan lists still help the fallback.
             entities = parsed.get("entities")
             if isinstance(entities, list):
-                run.entities = [str(e)[:256] for e in entities[:10] if str(e).strip()]
+                run.entities = [
+                    str(e)[:MAX_STRING_CHARS]
+                    for e in entities[:MAX_ENTITIES]
+                    if str(e).strip()
+                ]
             return _validation_message(e)
         run.entities, run.keywords = list(plan.entities), list(plan.keywords)
         run.plan = plan.model_dump(mode="json", exclude_defaults=True)

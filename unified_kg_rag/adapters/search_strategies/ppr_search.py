@@ -72,7 +72,7 @@ class PPRSearchStrategy(PPRRankingMixin):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
-        start_time = time.time()
+        start_time = time.monotonic()
         rerank = self._new_rerank_trace()
         settings = self.config.search.ppr_search
         logger.info(
@@ -161,7 +161,7 @@ class PPRSearchStrategy(PPRRankingMixin):
             if buckets
             else []
         )
-        processing_time = time.time() - start_time
+        processing_time = time.monotonic() - start_time
         logger.info(
             "PPR search completed - %s results in %.3fs",
             len(final_results),

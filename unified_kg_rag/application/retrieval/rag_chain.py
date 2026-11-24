@@ -101,17 +101,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     OptimizedContext,
     TokenManager,
 )
-
-# Importing the package executes each strategy module's @register_strategy
-# decorator, populating the strategy registry used by _get_strategy_instance.
-from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
-    DriftSearchStrategy,
-    GlobalSearchStrategy,
-    IterativeSearchStrategy,
-    LightRAGSearchStrategy,
-    LocalSearchStrategy,
-    SimpleSearchStrategy,
-)
 from unified_kg_rag.application.bootstrap import (
     build_providers,
     build_query_guard,
@@ -1509,19 +1498,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         by ``models.roles.fixing``), built once per chain. Its fixing model
         is built on the first answer that does not parse."""
         key = ("json", prompt_class, answer_keys, schema, instructions)
-        cache = getattr(self, "_prompt_chains", None)
-        with getattr(self, "_cache_lock", None) or threading.RLock():
-            if cache is not None and (cached := cache.get(key)) is not None:
+        with self._cache_lock:
+            if (cached := self._prompt_chains.get(key)) is not None:
                 return cast(FixingJsonOutputParser, cached)
             parser = create_json_output_parser(
-                getattr(self, "factory", None),  # type: ignore[arg-type]
+                self.factory,
                 self.config.model_id(ModelRole.FIXING),
                 answer_keys=answer_keys,
                 schema=schema,
                 instructions=instructions,
             )
-            if cache is not None:
-                cache[key] = cast(Runnable[Any, Any], parser)
+            self._prompt_chains[key] = cast(Runnable[Any, Any], parser)
             return parser
 
     def _start_query_inputs(
@@ -3881,7 +3868,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         ``scope: joined``, so an intervention on the combination no single
         result draws is reported; its text is never used. ``plan_texts``
         receives the structured plan's texts and what the guardrail made of
-        each (``_screen_structured_metadata``).
+        each (``_screen_model_metadata``).
         """
         if not self._screen_outputs:
             return search_results

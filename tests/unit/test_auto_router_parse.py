@@ -14,6 +14,8 @@ defaults to LOCAL.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
@@ -38,6 +40,8 @@ async def parse(
     fixed: str = "still not JSON",
 ) -> SearchStrategy:
     chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = Config()
     chain.factory = ScriptedLLMFactory(lambda _system, _human: fixed)
     strategy, _ = await chain._routed_strategy(raw, routable)
@@ -86,6 +90,8 @@ async def test_a_decorated_name_needs_no_repair(raw: str) -> None:
         return '{"strategy": "global"}'
 
     chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = Config()
     chain.factory = ScriptedLLMFactory(fixer)
     strategy, named = await chain._routed_strategy(raw, DEFAULT)
@@ -145,6 +151,8 @@ async def test_router_failure_falls_back_to_a_routable_strategy() -> None:
     config = Config()
     config.search.auto_routable_strategies = [SearchStrategy.GLOBAL, SearchStrategy.MIX]
     chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = config
     chain.ignore_errors = True
 
@@ -166,6 +174,8 @@ async def test_one_routable_strategy_needs_no_router_call() -> None:
     config = Config()
     config.search.auto_routable_strategies = [SearchStrategy.GLOBAL]
     chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = config
     chain.ignore_errors = False
 
@@ -188,6 +198,8 @@ async def test_auto_never_routes_to_report_strategies_without_communities() -> N
     config = Config()
     config.graph.community_detection.enabled = False
     chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = config
     chain.ignore_errors = False
     offered: dict[str, object] = {}
@@ -220,6 +232,8 @@ async def test_auto_routes_among_the_namespace_methodologies() -> None:
         SearchStrategy.HYBRID,
     ]
     chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = config
     chain.ignore_errors = False
     offered: dict[str, object] = {}

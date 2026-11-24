@@ -610,7 +610,7 @@ class GraphExtractor(BaseProcessor):
         """Remove relationships whose endpoint the chunk dropped (as ``reason``,
         for the log); the caller counts the removed ones.
 
-        Without this, ``_materialize_relationship_endpoints`` would recreate the
+        Without this, ``cite_relationship_endpoints`` would recreate the
         dropped (ungrounded or low-confidence) entity as a description-less
         stub and undo the guard.
         """

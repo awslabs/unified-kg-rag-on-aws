@@ -212,7 +212,7 @@ class HybridScorer:
 
         The rerank step's outcome is recorded on ``rerank_trace`` when given.
         """
-        start_time = time.time()
+        start_time = time.monotonic()
         combined_results = (
             self._min_max_fusion(results_dict)
             if fusion == "min_max"
@@ -275,7 +275,7 @@ class HybridScorer:
         else:
             final_results = combined_results[:top_k]
 
-        processing_time = time.time() - start_time
+        processing_time = time.monotonic() - start_time
 
         logger.info(
             "Fusion completed: %s -> %s results in %.3fs",
@@ -587,7 +587,7 @@ class HybridScorer:
         required = self.config.search.reranking.required
 
         try:
-            start_time = time.time()
+            start_time = time.monotonic()
 
             # top_n is set on a per-call copy, never on the shared model:
             # strategies (and their scorer) are reused by concurrent queries and
@@ -667,7 +667,7 @@ class HybridScorer:
                         )
                         reranked_results.append(reranked_result)
 
-            processing_time = time.time() - start_time
+            processing_time = time.monotonic() - start_time
         except Exception as e:
             if required:
                 if isinstance(e, RerankModelError):

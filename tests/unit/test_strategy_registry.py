@@ -140,6 +140,30 @@ def test_strategy_spec_default_roles() -> None:
     }
 
 
+def test_the_chain_finds_every_strategy_without_importing_them() -> None:
+    # rag_chain names no strategy: its lookups (get_strategy_spec) import
+    # the built-in strategies, all of them, on first use.
+    script = (
+        "import sys\n"
+        "from unified_kg_rag.application.retrieval import rag_chain\n"
+        "from unified_kg_rag.domain.models import SearchStrategy\n"
+        "assert 'unified_kg_rag.adapters.search_strategies' not in sys.modules\n"
+        "for s in SearchStrategy:\n"
+        "    if s is not SearchStrategy.AUTO:\n"
+        "        print(rag_chain.get_strategy_spec(s).strategy_class.__name__)\n"
+    )
+    found = subprocess.run(  # nosec B603 - this interpreter, a fixed script
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+        env={**os.environ, "AWS_EC2_METADATA_DISABLED": "true"},
+    )
+    assert found.returncode == 0, found.stderr[-2000:]
+    assert len(found.stdout.split()) == len(SearchStrategy) - 1
+
+
 def test_a_lookup_in_a_fresh_process_finds_the_built_in_strategies() -> None:
     # The strategies register when their package is imported; an entry point
     # that imported none (run-describe) found no strategy at all.

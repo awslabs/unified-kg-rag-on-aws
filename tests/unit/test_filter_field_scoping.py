@@ -25,7 +25,7 @@ from unified_kg_rag.adapters.retrieval.base import scope_filters
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import (
-    UNDECLARED_MAPPED_FIELDS,
+    TEXT_UNIT_KIND_FIELD,
     IndexLimits,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
@@ -35,6 +35,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.retrieval import filter_validation
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+from unified_kg_rag.domain.ingestion.report_references import FINDINGS_RECORD_IDS_FIELD
 from unified_kg_rag.domain.models import (
     Claim,
     Config,
@@ -56,6 +57,21 @@ from unified_kg_rag.domain.retrieval.filters import (
 from unified_kg_rag.shared import InvalidFilterError
 
 pytestmark = pytest.mark.unit
+
+# Fields an index maps that are no filter key.
+UNDECLARED_MAPPED_FIELDS: dict[str, frozenset[str]] = {
+    "text_units": frozenset({TEXT_UNIT_KIND_FIELD}),
+    # Rendered in the relationship's context line, but no filter key (an
+    # entity type's: ``ITEM_FILTER_FIELDS``).
+    "relationships": frozenset({"type"}),
+    # The digest a summary is reused by.
+    "summary_nodes": frozenset({"input_key"}),
+    # Analyzed text without an exact copy: ``name`` is an entity's exact
+    # name, which leaves the reports unfiltered as ``type`` does. The ids a
+    # report's findings cite, by which a re-key finds the reports to
+    # repoint (repoint_report_findings), are no filter key either.
+    "community_reports": frozenset({"name", FINDINGS_RECORD_IDS_FIELD}),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -666,6 +682,8 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
         SearchStrategy.NAIVE: {"document": _retriever(config, _FakeOpenSearchClient())},
     }
     chain = object.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = config
     # Strategies that declare no index set: their retrievers' every index.
     chain._get_strategy_instance = lambda s: SimpleNamespace(  # type: ignore[method-assign]
@@ -751,11 +769,12 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
         IterativeSearchStrategy, both, base=strategies[base], base_strategy=base
     )
     chain = object.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = config
     chain._get_strategy_instance = strategies.__getitem__  # type: ignore[method-assign]
     # What a query's methodology check reads first (the namespace's build
     # record, through the document retriever; none here: the config's).
-    chain._cache_lock = threading.RLock()
     chain._held_artifacts = {}
     chain._present_namespaces = set()
     chain._get_retriever = lambda role: both[role.value]  # type: ignore[method-assign]

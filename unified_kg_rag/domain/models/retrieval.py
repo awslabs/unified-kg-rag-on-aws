@@ -128,10 +128,6 @@ class StrategyTraits:
     # Whether a query under a config (``Config``) reports sources.
     reports_sources: Callable[[Any], bool] = _always_reports_sources
 
-    @property
-    def auto_routable(self) -> bool:
-        return self.not_routable_reason is None
-
 
 STRATEGY_TRAITS: dict[SearchStrategy, StrategyTraits] = {
     SearchStrategy.AUTO: StrategyTraits(not_routable_reason="it is the router itself"),

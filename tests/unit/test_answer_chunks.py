@@ -556,6 +556,8 @@ async def test_router_reply_naming_its_strategy_counts_as_the_router() -> None:
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
     chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._cache_lock = threading.RLock()
+    chain._prompt_chains = {}
     chain.config = Config()
     chain.factory = ScriptedLLMFactory(lambda _system, _human: "no JSON")
     routable = (SearchStrategy.LOCAL, SearchStrategy.MIX)
