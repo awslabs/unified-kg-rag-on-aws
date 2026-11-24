@@ -176,7 +176,7 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     on its system prompts unless it defines `prompt_cache_marker(llm)` (`"cache_point"` or `"cache_control"`): the
     choice moved from the provider-neutral chain builder into the Bedrock factory. Define it, as
     `BedrockLanguageModelFactory.prompt_cache_marker` does, to keep the checkpoint.
-18. A script that reads `run-visualization`'s pages from `visualization_outputs/` without passing
+19. A script that reads `run-visualization`'s pages from `visualization_outputs/` without passing
     `--output-directory` finds them under `visualization_outputs/<namespace>/` (*Changed*); pass
     `--output-directory visualization_outputs` to keep the old place.
 
