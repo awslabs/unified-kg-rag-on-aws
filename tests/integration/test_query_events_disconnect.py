@@ -75,7 +75,10 @@ def _held_connections(port: int) -> int:
     import httpx
 
     held = 0
-    for client in [o for o in gc.get_objects() if isinstance(o, httpx.AsyncClient)]:
+    # By type, not isinstance: isinstance on a weak proxy whose object is
+    # gone (botocore, opensearch-py and tqdm leave some) raises.
+    clients = [o for o in gc.get_objects() if issubclass(type(o), httpx.AsyncClient)]
+    for client in clients:
         pool = getattr(client._transport, "_pool", None)
         if pool is not None and client.base_url.port == port:
             held += len(pool.connections)
@@ -157,6 +160,25 @@ class _AskReader:
 async def _answers(chain: GraphRAGChain) -> None:
     output = await asyncio.wait_for(chain.ainvoke(_input()), BACKSTOP)
     assert output.answer and not output.metadata.get("error")
+
+
+def test_held_connections_counts_past_a_dead_weak_proxy() -> None:
+    # r8base-2: a weak proxy whose object is gone, left alive by an earlier
+    # test (botocore, opensearch-py and tqdm make them), made isinstance in
+    # the scan raise ReferenceError, failing every later test that counts
+    # connections, in whichever order the suite ran.
+    import weakref
+
+    class _Gone:
+        pass
+
+    gone = _Gone()
+    proxies = [weakref.proxy(gone)]
+    del gone
+    gc.collect()
+    with pytest.raises(ReferenceError):
+        proxies[0].__class__  # noqa: B018  (dead: any use raises)
+    assert _held_connections(1) == 0
 
 
 async def test_a_cancelled_reader_releases_the_model_connection(

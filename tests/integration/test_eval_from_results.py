@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
 import io
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -63,17 +65,51 @@ class _Stop(BaseException):
     """Stands in for Ctrl-C part-way through a comparison."""
 
 
-def _cli(chain: Any, config: Any, providers: Any, argv: list[str]) -> dict[str, Any]:
+def _cli(
+    chain: Any,
+    config: Any,
+    providers: Any,
+    argv: list[str],
+    exception_handler: Callable[[Any, dict[str, Any]], object] | None = None,
+) -> dict[str, Any]:
     args = run_evaluation.CommandLineInterface().parser.parse_args(
         [*argv, "--output-format", "json"]
     )
+
+    async def run() -> int:
+        if exception_handler is not None:
+            asyncio.get_running_loop().set_exception_handler(exception_handler)
+        return await run_evaluation.EvaluationRunner(
+            args, chain, config, providers
+        ).run()
+
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        code = asyncio.run(
-            run_evaluation.EvaluationRunner(args, chain, config, providers).run()
-        )
+        code = asyncio.run(run())
     out = buffer.getvalue()
     return {"exit": code, **json.loads(out[out.find("{") :])}
+
+
+def _stopped_cli(
+    chain: Any, config: Any, providers: Any, argv: list[str]
+) -> list[BaseException | None]:
+    """:func:`_cli` for a run a :class:`_Stop` ends. The batch items' tasks
+    it ended are never awaited, and asyncio reports each as the garbage
+    collector takes it, in whichever test runs then (one that asserts no
+    ERROR log failed). Collected here, the exceptions they report are
+    returned."""
+    reported: list[BaseException | None] = []
+    with pytest.raises(_Stop):
+        _cli(
+            chain,
+            config,
+            providers,
+            argv,
+            lambda _loop, context: reported.append(context.get("exception")),
+        )
+    # The traceback pytest.raises held is gone: its tasks are garbage.
+    gc.collect()
+    return reported
 
 
 @pytest.mark.parametrize("extraction_cache", [True, False], ids=["cached", "cold"])
@@ -154,13 +190,13 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
             return await answer(inp, *args, **kwargs)
 
         object.__setattr__(chain, "ainvoke", _stop_in_naive)
-        with pytest.raises(_Stop):
-            _cli(
-                chain,
-                config,
-                providers,
-                [*strategies, "--output-directory", str(stopped)],
-            )
+        reported = _stopped_cli(
+            chain,
+            config,
+            providers,
+            [*strategies, "--output-directory", str(stopped)],
+        )
+        assert all(isinstance(e, _Stop) for e in reported), reported
         object.__setattr__(chain, "ainvoke", answer)
         assert not list(stopped.rglob("evaluation_results_naive_*"))
         # The missing strategy alone, into the same directory.

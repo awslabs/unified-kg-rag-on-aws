@@ -3361,11 +3361,25 @@ async def test_a_query_past_its_deadline_keeps_its_error_spans(
     # client (an MCP tool call) too: its query span and the in-flight span
     # are ERROR, none marked stopped.
     from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+    from unified_kg_rag.application.retrieval import rag_chain
+
+    class HeldUntilItsDeadline(_Held):
+        # The deadline passes once the query is held, not a fixed time
+        # after it started: under load (a cold process beside a busy suite)
+        # reaching the hold took longer than any short timeout, and the
+        # query timed out before its in-flight span began (r8base-3).
+        async def hold(self) -> None:
+            scope = rag_chain._DEADLINE_SCOPE.get()
+            assert scope is not None and scope._timeout is not None
+            scope._deadline.at = time.monotonic()
+            scope._reschedule(asyncio.get_running_loop().time())
+            await super().hold()
 
     exporter = tracing()
-    held = _Held(where)
+    held = HeldUntilItsDeadline(where)
     chain = held.chain()
-    chain.config.search.query_timeout_seconds = 0.1
+    # Never reached: the hold passes it.
+    chain.config.search.query_timeout_seconds = 60.0
     try:
         tools = KnowledgeGraphTools(chain)
         (outcome,) = await asyncio.gather(
