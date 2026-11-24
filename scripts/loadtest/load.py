@@ -231,12 +231,18 @@ async def ask(
     error answer of ``processing.ignore_errors``). ``stream``: asked through
     ``aquery_events`` (the console's path, with the answer stream's
     first-chunk window), its time to the first answer chunk recorded."""
-    from unified_kg_rag import AnswerChunk, QueryResult, RAGInput, classify_error
+    from unified_kg_rag import (
+        AnswerChunk,
+        QueryResult,
+        RAGInput,
+        SearchStrategy,
+        classify_error,
+    )
     from unified_kg_rag.application.presentation.answer_view import AnswerView
 
     rag_input = RAGInput(
         query=query,
-        search_strategy=strategy,
+        search_strategy=SearchStrategy(strategy),
         use_memory=conversation is not None,
         conversation_id=conversation,
     )

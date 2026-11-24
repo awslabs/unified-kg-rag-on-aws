@@ -486,9 +486,9 @@ def _check_section_refs(
                     continue
                 for ref in _SECTION_REF.findall(m.group(1)):
                     if sections.get(ref) != target:
-                        line = first + paragraph.count("\n", 0, m.start())
+                        at = first + paragraph.count("\n", 0, m.start())
                         report.failures.append(
-                            f"{rel}:{line}: links §{ref} to {target}, but its "
+                            f"{rel}:{at}: links §{ref} to {target}, but its "
                             f"text is in {sections.get(ref)}"
                         )
 
