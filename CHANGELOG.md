@@ -1029,6 +1029,13 @@ Bugs present in 0.3.0.
   `source_scope`, `providers=` given with a component it bundles (`DataIngestionPipeline`, `GraphRAGChain`), and an
   entity lookup naming not exactly one of id, IRI and name. They raise `InvalidArgumentError` (a `ValueError`, so an
   `except ValueError` still catches them), class `invalid_argument`.
+- `run-ingestion` (and the console's Ingest job, which shows its JSON status) printed "The call failed with an
+  unexpected error (a store or model error)" for a namespace another run is writing (`NamespaceLeaseError`), a resume
+  that cannot go on (`Pipeline resume failed: PipelineResumeError`), a corrupt pipeline metadata file
+  (`PipelineStateError`), a failed S3 cache sync (`CacheSyncError`) and an unknown or corrupt pipeline under
+  `--verify-metadata`. Each now shows its own message (the lease's holder and when it expires, the stage to run and
+  the flag, the file, the keys), as `docs/operations.md` documents, and a held lease no longer prints the recovery
+  suggestions that end in "Use --force-rebuild".
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0

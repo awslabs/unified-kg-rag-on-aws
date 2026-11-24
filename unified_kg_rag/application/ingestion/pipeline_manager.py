@@ -141,7 +141,8 @@ class PipelineStateManager:
             required_fields = ["pipeline_id", "start_time", "status"]
             if not all(field in metadata for field in required_fields):
                 raise PipelineStateError(
-                    f"Metadata missing one of required fields: '{required_fields}'"
+                    f"Metadata missing one of required fields "
+                    f"'{required_fields}': '{metadata_path}'"
                 )
             return metadata
 
@@ -150,6 +151,8 @@ class PipelineStateManager:
             raise PipelineStateError(
                 f"Corrupted metadata file, invalid JSON: '{metadata_path}'"
             ) from e
+        except PipelineStateError:
+            raise
         except Exception as e:
             log_error(
                 logger,
