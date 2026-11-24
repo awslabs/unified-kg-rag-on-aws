@@ -510,15 +510,25 @@ def test_a_renewal_landing_after_a_stop_leaves_the_lease_expired(
             time.sleep(0.7)
             raise KeyboardInterrupt
     stopped = time.time()
+    # The expiry written as of the stop lands late by the time between the
+    # lease's clock read and the store's (a preemption, under load); the
+    # late renewal's runs 3 s past its landing (stopped + 3.8 s).
+    expired_by = stopped + 1.0
+
+    def given_up() -> bool:
+        holder = store.lease_holder("ns")
+        return holder is not None and holder[1] <= expired_by
+
     # The acquire, the stop's expire, the late renewal, then the heartbeat
-    # giving that renewal up.
+    # giving that renewal up. Polled on the stored lease, not on the
+    # renewal count: a renewal is counted before the store writes it.
     deadline = stopped + 5
-    while store.renewals < 4 and time.time() < deadline:
+    while not (store.renewals >= 4 and given_up()) and time.time() < deadline:
         time.sleep(0.05)
     assert store.renewals >= 3  # the late renewal landed
     holder = store.lease_holder("ns")
     assert holder is not None, "released, not expired"
-    assert holder[1] <= stopped
+    assert holder[1] <= expired_by, holder[1] - stopped
 
 
 @pytest.mark.parametrize(
