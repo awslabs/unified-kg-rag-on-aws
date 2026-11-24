@@ -785,6 +785,41 @@ class TestRobustXMLOutputParser:
         # sit far below the regex's minutes, not near the scan's time.
         assert time.perf_counter() - began < 10
 
+    @pytest.mark.timeout(60)
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "".join(f"<t{i}>" for i in range(8000))
+            + "x"
+            + "".join(f"</t{i}>" for i in reversed(range(8000))),
+            "".join(f"<t{i}>   " for i in range(8000))
+            + "".join(f"</t{i}>" for i in reversed(range(8000))),
+            "<a>" * 8000 + "</b>" * 8000,
+            "".join(f"<w{i}><c{i}></c{i}>" for i in range(8000))
+            + "<entities></entities>"
+            + "".join(f"</w{i}>" for i in reversed(range(8000))),
+            "<relationships/>\n" * 8000
+            + "<entities></entities>"
+            + " the <entities>" * 8000,
+        ],
+        ids=[
+            "distinct-nested",
+            "nested-whitespace",
+            "unclosed-then-stray",
+            "wrappers",
+            "prose-after-sections",
+        ],
+    )
+    def test_the_primary_parse_takes_linear_time_on_deep_nesting(self, text) -> None:
+        # 8,000 tags is about what fits in a 16k-token output cap. Reading
+        # the open elements (or the sections before) again for each tag took
+        # 2.3-11 s per shape here, with the GIL held; one pass takes
+        # ~0.05-0.4 s.
+        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+        began = time.perf_counter()
+        parser.parse(text)
+        assert time.perf_counter() - began < 2
+
     def test_the_fallbacks_read_the_tags_once_however_deep_they_nest(
         self, monkeypatch
     ) -> None:

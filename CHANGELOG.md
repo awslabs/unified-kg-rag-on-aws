@@ -1051,6 +1051,10 @@ Bugs present in 0.3.0.
   model looping on a tag or a document written to provoke one stalled the whole ingestion process. One linear scan
   reads the tags once now (0.01 s for both); it finds the same elements, except that a tag's name no longer ends early
   (`<ab>x</a>` was read as an `<a>` element) and an opening tag no longer runs across other tags to a later `>`.
+- The XML parser's main path still took time quadratic in the number of tags on deep nesting: each tag searched the
+  open elements (or the sections read before it) again, so 8,000 nested tags, about what fits in a 16k-token output,
+  held the GIL for 2-11 s per response. Each tag now finds what it closes in one step, and the same responses parse
+  in 0.05-0.4 s; what they parse to is unchanged.
 - `mypy --strict` rejected every import from the package root (`Module "unified_kg_rag" does not explicitly export
   attribute "GraphRAGChain"`): `__all__` was built from the lazy-import table, which a type checker cannot read, so it
   took each name as a private import. `__all__` is a literal list now; the exported names are unchanged.
