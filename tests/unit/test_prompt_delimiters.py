@@ -159,6 +159,21 @@ def test_delimiter_tags_are_the_tags_around_placeholders() -> None:
         ("</\uff43ontext>", "&lt;/\uff43ontext>"),
         ("</c\u043entext>", "&lt;/c\u043entext>"),
         ("< /\u0421ONTEXT >", "&lt; /\u0421ONTEXT >"),
+        # r8diff-4: invisible characters beyond the Basic Multilingual Plane
+        # (a tag character, a shorthand format control, a musical beam
+        # control), a combining mark or a variation selector after the `<`
+        # or in the name, and a name casefolding changes the length of
+        # (`İ` folds to `i` and a combining dot).
+        ("</con\U000e0020text>", "&lt;/con\U000e0020text>"),
+        ("</con\U0001bca0text>", "&lt;/con\U0001bca0text>"),
+        ("</con\U0001d173text>", "&lt;/con\U0001d173text>"),
+        ("</context\U000e0061\U000e0062>", "&lt;/context\U000e0061\U000e0062>"),
+        ("<\U000e0020/context>", "&lt;\U000e0020/context>"),
+        ("<\u0301/context>", "&lt;\u0301/context>"),
+        ("<\ufe0f/context>", "&lt;\ufe0f/context>"),
+        ("<\U000e0100/context>", "&lt;\U000e0100/context>"),
+        ("</con\u0301text>", "&lt;/con\u0301text>"),
+        ("</C\u0307ONTEXT>", "&lt;/C\u0307ONTEXT>"),
         # A word of another script of the same length is no imitation, nor
         # a lookalike `<` before another word.
         (
@@ -167,10 +182,28 @@ def test_delimiter_tags_are_the_tags_around_placeholders() -> None:
         ),
         ("\uff1cb\uff1e \u2039quote\u203a", "\uff1cb\uff1e \u2039quote\u203a"),
         ("</contexte>", "</contexte>"),
+        # Kept as they were: a word of other letters after a lookalike or a
+        # mark, a longer name, an accented word, a lookalike before another
+        # word (r8diff-4's no-over-escape cases).
+        ("Il a dit \u2039contexte\u203a hier", "Il a dit \u2039contexte\u203a hier"),
+        ("x < context_size", "x < context_size"),
+        ("<caf\u00e9> <cafe\u0301>", "<caf\u00e9> <cafe\u0301>"),
+        ("a <contest> b", "a <contest> b"),
+        ("\uff21\uff1c\uff22", "\uff21\uff1c\uff22"),
+        ("</context\u0301ual>", "</context\u0301ual>"),
+        ("<\U0001f600/context>", "<\U0001f600/context>"),
     ],
 )
 def test_neutralise_delimiters(value: str, expected: str) -> None:
     assert neutralise_delimiters(value, {"context"}) == expected
+
+
+def test_a_name_casefolding_lengthens_is_escaped() -> None:
+    # r8diff-4: `İ` casefolds to `i` and a combining dot, so the word was a
+    # character longer than the tag it imitates.
+    tags = {"input_text"}
+    assert neutralise_delimiters("</\u0130nput_text>", tags) == "&lt;/\u0130nput_text>"
+    assert neutralise_delimiters("<\u0130NPUT_TEXT>", tags) == "&lt;\u0130NPUT_TEXT>"
 
 
 def test_a_list_value_is_escaped_as_the_text_it_is_formatted_as() -> None:

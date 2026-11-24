@@ -1123,6 +1123,11 @@ Bugs present in 0.3.0.
   or Cyrillic letter (`</cоntext>`) passed through, and a list value was formatted into the prompt unescaped. Those
   forms are escaped too, and a list, tuple, set or dict value is escaped as the text it is formatted as. Whether a
   model honours such a tag was not measured.
+- Prompt fencing read invisible characters from the Basic Multilingual Plane only and no combining marks: a closing
+  tag with a tag character (U+E0020-E007F) or another format control beyond it inside (`</con\U000E0020text>`), a
+  combining mark or variation selector after the `<` or in the name, or a name casefolding lengthens (`</İnput_text>`)
+  passed through. Those are escaped too; a word with visible letters after the mark (`</context́ual>`) is kept, as a
+  longer name is.
 
 ## [0.3.0] - 2026-11-14
 
