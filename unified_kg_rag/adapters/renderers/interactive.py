@@ -10,7 +10,10 @@ import networkx as nx
 import numpy as np
 from pyvis.network import Network
 
-from unified_kg_rag.domain.ingestion.visualization_data import displayed_graph
+from unified_kg_rag.domain.ingestion.visualization_data import (
+    displayed_graph,
+    relationship_count,
+)
 from unified_kg_rag.domain.models import HierarchicalCommunity
 from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 from unified_kg_rag.shared import get_logger
@@ -39,8 +42,8 @@ class InteractiveRenderer:
         self.font_family = settings.font_family
         self.tooltip_delay = settings.tooltip_delay
         # The one cap of a drawn graph (the console's Graph page's too): keep
-        # the top-N by degree and at most max_edges links between them
-        # (None/0 = no cap).
+        # the top-N by degree and the links between them that hold at most
+        # max_edges relationships (None/0 = no cap).
         self.max_nodes = settings.max_nodes
         self.max_edges = settings.max_edges
 
@@ -93,11 +96,15 @@ class InteractiveRenderer:
                 f"The {kept.number_of_nodes():,} best-connected of "
                 f"{graph.number_of_nodes():,} entities are drawn."
             )
-        if drawn.number_of_edges() < kept.number_of_edges():
+        between, shown = (
+            sum(relationship_count(a) for _, _, a in g.edges(data=True))
+            for g in (kept, drawn)
+        )
+        if shown < between:
             sentences.append(
-                f"Of the {kept.number_of_edges():,} relationships between the "
-                f"drawn entities, the {drawn.number_of_edges():,} strongest are "
-                "drawn, each entity's own strongest first."
+                f"Of the {between:,} relationships between the drawn entities, "
+                f"the {shown:,} strongest are drawn, each entity's own "
+                "strongest first."
             )
         if sentences:
             sentences.append(

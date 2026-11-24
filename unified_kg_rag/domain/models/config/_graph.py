@@ -266,10 +266,12 @@ class InteractiveGraphSettings(ConfigSection):
     max_edges: int | None = Field(
         default=3000,
         ge=0,
-        description="Links a drawn graph keeps between its max_nodes, this "
-        "page's and the console's Graph page's: each node's strongest first "
-        "(by weight, then the other end's degree), so every node keeps its "
-        "own before any node a second; an entity's panel in the console "
+        description="Relationships a drawn graph keeps between its max_nodes, "
+        "this page's and the console's Graph page's, by their links: each "
+        "node's strongest link first (by weight, then the other end's "
+        "degree), so every node keeps its own before any node a second; a "
+        "link merging several relationships of one pair counts each, and one "
+        "that no longer fits is passed over. An entity's panel in the console "
         "still lists all of its links. 0 or null disables the cap. 3000 is "
         "5 per node at max_nodes 600: a sparse graph keeps all of them, and "
         "a dense one (the structural benchmark's large seed graph, 27,863 "

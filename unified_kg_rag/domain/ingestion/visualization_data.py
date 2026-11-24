@@ -32,6 +32,7 @@ __all__ = [
     "VISUALIZATION_DATA_FILENAME",
     "displayed_graph",
     "graph_data",
+    "relationship_count",
     "spring_layout",
     "stored_visualization_data",
     "strip_heavy_attributes",
@@ -199,18 +200,28 @@ def stored_visualization_data(
     }
 
 
+def relationship_count(attributes: dict[str, Any]) -> int:
+    """The relationships a link of a drawn graph holds: those it merges (the
+    export's ``relationships``, listed for a pair of several), else 1."""
+    merged = attributes.get("relationships")
+    return len(merged) if isinstance(merged, list) and merged else 1
+
+
 def displayed_graph(
     graph: nx.Graph, max_nodes: int | None, max_edges: int | None = None
 ) -> nx.Graph:
     """The part of ``graph`` the interactive page draws: its top ``max_nodes``
     by degree (``graph.visualization.interactive.max_nodes``; None or 0 draws
-    every node), and of the links between them at most ``max_edges``
-    (``interactive.max_edges``; None or 0 keeps them all), as
-    :func:`kept_edges` picks them."""
+    every node), and of the relationships between them at most ``max_edges``
+    (``interactive.max_edges``, each link counting the relationships it
+    merges, :func:`relationship_count`; None or 0 keeps them all), as
+    :func:`kept_edges` picks their links."""
     if max_nodes and graph.number_of_nodes() > max_nodes:
         ranked = sorted(graph.degree(), key=lambda nd: nd[1], reverse=True)
         graph = graph.subgraph(node for node, _ in ranked[:max_nodes])
-    if not max_edges or graph.number_of_edges() <= max_edges:
+    if not max_edges or (
+        sum(relationship_count(a) for _, _, a in graph.edges(data=True)) <= max_edges
+    ):
         return graph
     # Every drawn node stays, one left with no link too.
     pruned = nx.Graph()
@@ -222,14 +233,17 @@ def displayed_graph(
 
 
 def kept_edges(graph: nx.Graph, max_edges: int) -> list[tuple[Any, Any]]:
-    """``max_edges`` of an undirected ``graph``'s links, chosen so every node
-    keeps its own strongest: a node ranks its links by ``weight`` (heaviest
-    first), then by the other end's degree, and a link counts at the better
-    of its two ends' ranks; the lowest counts are kept, each node's first
-    link before any node's second (local-degree sparsification, Lindner et
-    al. 2015, "Structure-preserving sparsification methods for social
-    networks", with the weight first). In the graph's own order on ties, so
-    the same graph keeps the same links."""
+    """The links of an undirected ``graph`` that hold at most ``max_edges``
+    relationships (:func:`relationship_count`: a link merging several counts
+    each), chosen so every node keeps its own strongest: a node ranks its
+    links by ``weight`` (heaviest first), then by the other end's degree,
+    and a link counts at the better of its two ends' ranks; the lowest
+    counts are kept, each node's first link before any node's second
+    (local-degree sparsification, Lindner et al. 2015, "Structure-preserving
+    sparsification methods for social networks", with the weight first),
+    a link whose relationships no longer fit passed over for the next. In
+    the graph's own order on ties, so the same graph keeps the same
+    links."""
     nodes = list(graph)
     order = {node: i for i, node in enumerate(nodes)}
     adjacency = graph.adj
@@ -259,7 +273,16 @@ def kept_edges(graph: nx.Graph, max_edges: int) -> list[tuple[Any, Any]]:
             if seen is None or rank < seen[0]:
                 best[key] = (rank, weight(neighbours[other]))
     chosen = sorted(best, key=lambda key: (best[key][0], -best[key][1], key))
-    return [(nodes[a], nodes[b]) for a, b in chosen[:max_edges]]
+    kept: list[tuple[Any, Any]] = []
+    left = max_edges
+    for a, b in chosen:
+        count = relationship_count(adjacency[nodes[a]][nodes[b]])
+        if count <= left:
+            kept.append((nodes[a], nodes[b]))
+            left -= count
+            if not left:
+                break
+    return kept
 
 
 def spring_layout(
