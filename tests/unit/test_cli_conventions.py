@@ -3341,3 +3341,91 @@ def test_a_run_starts_with_the_process_stop_mark_cleared() -> None:
         mark_process_stopping(False)
     assert stop.is_set() and stop.cause is StopCause.READER
     assert not process_stopping()
+
+
+async def test_stoppable_makes_a_signal_wake_its_loop_and_restores_the_wakeup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # r8base-1: while stoppable runs, the signal's wakeup descriptor is one
+    # the loop reads (so an idle loop wakes, whichever thread took the
+    # signal); before and after, the process's own is left as it was.
+    import socket
+    import threading
+
+    from unified_kg_rag.application.cli import conventions
+
+    assert threading.current_thread() is threading.main_thread()
+    monkeypatch.setitem(conventions._stop, "task", None)
+    loop = asyncio.get_running_loop()
+    seen: dict[str, int] = {}
+
+    async def main() -> int:
+        seen["inside"] = _wakeup_fd()
+        # The loop reads it: a byte written there is drained.
+        os.write(seen["inside"], b"\x0f")
+        await asyncio.sleep(0.05)
+        return 7
+
+    assert signal.set_wakeup_fd(-1) == -1
+    assert await conventions.stoppable(main()) == 7
+    assert seen["inside"] != -1
+    assert signal.set_wakeup_fd(-1) == -1
+    assert not loop.remove_reader(seen["inside"])
+
+    # A wakeup the process already had (a loop's add_signal_handler) stays.
+    theirs, other = socket.socketpair()
+    theirs.setblocking(False)
+    try:
+        signal.set_wakeup_fd(theirs.fileno())
+        try:
+
+            async def keeps() -> int:
+                return _wakeup_fd()
+
+            assert await conventions.stoppable(keeps()) == theirs.fileno()
+            assert signal.set_wakeup_fd(-1) == theirs.fileno()
+
+            # One installed while it ran is kept, not reset.
+            async def replaces() -> int:
+                signal.set_wakeup_fd(theirs.fileno())
+                return 0
+
+            await conventions.stoppable(replaces())
+            assert signal.set_wakeup_fd(-1) == theirs.fileno()
+        finally:
+            signal.set_wakeup_fd(-1)
+
+        # A loop with no readers (Windows' proactor): nothing changes.
+        def no_readers(*args: object) -> None:
+            raise NotImplementedError
+
+        monkeypatch.setattr(loop, "add_reader", no_readers)
+
+        async def plain() -> int:
+            return _wakeup_fd()
+
+        assert await conventions.stoppable(plain()) == -1
+        assert signal.set_wakeup_fd(-1) == -1
+
+        # Off the main thread (no wakeup to set there): it just runs.
+        async def seven() -> int:
+            await asyncio.sleep(0)
+            return 7
+
+        result: list[int] = []
+        thread = threading.Thread(
+            target=lambda: result.append(asyncio.run(conventions.stoppable(seven())))
+        )
+        thread.start()
+        thread.join()
+        assert result == [7]
+    finally:
+        theirs.close()
+        other.close()
+
+
+def _wakeup_fd() -> int:
+    """The process's signal wakeup descriptor (-1: none), left as it is."""
+    fd = signal.set_wakeup_fd(-1)
+    signal.set_wakeup_fd(fd)
+    return fd

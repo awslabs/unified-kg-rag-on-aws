@@ -1085,6 +1085,11 @@ Bugs present in 0.3.0.
   MCP guide says to set the ECS container's `stopTimeout` to 120 s.
 - The console answered an API request that carried a wrong access token "the console's access token is missing", as
   one that carried none; it says "wrong" for it now (both stay `401 unauthorized`).
+- An idle `run-mcp-server --transport stdio` (its client silent, stdin open) could miss a `SIGTERM` or `Ctrl-C` and
+  run until it was killed: Python runs a signal's handler on the main thread only when it next runs Python code, and
+  a signal the kernel gave another of the process's threads, or one that came just as the event loop went to sleep,
+  left the loop asleep with the stop pending. While a CLI's event loop runs its work, a stop signal now wakes it,
+  whichever thread took it, so the stop runs as before (143 or 130, the same spans and audit records).
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
