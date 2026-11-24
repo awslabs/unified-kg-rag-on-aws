@@ -19,7 +19,7 @@ writes memory; no tool takes an index name, an endpoint or a file path.
 | Tool | Runs | Model calls | Returns |
 |---|---|---|---|
 | `kg_search` | `GraphRAGChain.asearch` | those of the strategy's query processing (the `auto` router, query entities or keywords), the query embedding, the rerank | ranked supporting-content records |
-| `kg_answer` | `GraphRAGChain.ainvoke` (with the caller's `history`, if given) | the above plus the follow-up rewrite (with a `history`) and the answer | the answer first, `abstained`/`abstention_reason`, what it was given without (`degraded`, `degraded_error`, `citations_unresolved`), then the records it cites (`records`: `cited`, the first `mcp.uncited_records` of an answer that cites none; `all`; `none`), `usage`, `blocked`, the strategy run |
+| `kg_answer` | `GraphRAGChain.ainvoke` (with the caller's `history`, if given) | the above plus the follow-up rewrite (with a `history`) and the answer | the answer first, `abstained`/`abstention_reason`, what it was given without (`degraded`, `degraded_error`, `citations_unresolved`), then the records it cites (`records`: `cited`, the first `mcp.uncited_records` of an answer that cites none; `all`; `none`), `usage`, `cost_usd`, `blocked`, the strategy run |
 | `kg_get_entity` | the entities index by `id`, `iri` or exact `name.keyword`; without an exact match, a lexical search of `name` | none | up to `limit` entities, how they matched |
 | `kg_neighbors` | the graph walk from one entity (`max_hops`, the configured per-hop budget) and its incident relationships | none | the neighbours (hop distance, path) and the relationships with their text units and documents |
 | `kg_get_chunks` | the text-units index by `id` (`graph_lookup.text_units`, the one fetch by id of the citations, `text_units.fetch_text_units`), under the caller's filters the index declares (another key refused) | none | the chunks in the order asked (text, document, relative path, pages, communities, document filters, at most `mcp.max_top_k`), and the ids that name none (`missing`, an excluded chunk alike) |
@@ -157,7 +157,7 @@ off), so no caller reaches another caller's history.
 
 **Usage, telemetry and redaction.** `kg_search` and `kg_answer` return the
 chain's `metadata.usage` (model calls, input and output tokens, by role and
-model); the graph tools make no model call and return zero usage. Each call
+model) and its `cost_usd` and `unpriced_models`; the graph tools make no model call and return zero usage. Each call
 opens a `kg_rag.mcp.tool` span (tool name, outcome, record count) under
 which the chain's `kg_rag.query` span nests. Its arguments are recorded as
 `input.value` only with `observability.capture_content`, after

@@ -51,7 +51,7 @@ Ctrl-C.
 | Tool | What it does | Model calls |
 |---|---|---|
 | `kg_search` | Retrieval only: the ranked supporting content for a query (any language), at most `top_k` records, each kind keeping its share of the strategy's results (kinds the reranker scored together, as `tree`'s summaries and passages, compete by score), with `strategy`, `search_type`, `top_k` and `filters` as in `run-rag --mode search` | The strategy's query processing, the query embedding, the rerank |
-| `kg_answer` | The full RAG answer first, with the abstention fields (`abstained`, `abstention_reason`), then the records it rests on and `usage`. `records`: `cited` (the default: the sources and model-written sections the answer cites; when it cites none, as a `global` or `drift` answer, the first `mcp.uncited_records`, `records_kept: top`), `all` (every source the answer model saw, after the model-written sections it may cite: global search's key points, DRIFT's intermediate answers) or `none`; `records_kept` says which applied. `degraded` lists the steps the answer was given without (a partial answer: each `step`, `reason` and `error_type`), `citations_unresolved` the lineage reads that failed. For a follow-up question, pass the conversation so far as `history` (below) | The above, the follow-up rewrite with a `history`, and the answer |
+| `kg_answer` | The full RAG answer first, with the abstention fields (`abstained`, `abstention_reason`), then the records it rests on, `usage` and `cost_usd`. `records`: `cited` (the default: the sources and model-written sections the answer cites; when it cites none, as a `global` or `drift` answer, the first `mcp.uncited_records`, `records_kept: top`), `all` (every source the answer model saw, after the model-written sections it may cite: global search's key points, DRIFT's intermediate answers) or `none`; `records_kept` says which applied. `degraded` lists the steps the answer was given without (a partial answer: each `step`, `reason` and `error_type`), `citations_unresolved` the lineage reads that failed. For a follow-up question, pass the conversation so far as `history` (below) | The above, the follow-up rewrite with a `history`, and the answer |
 | `kg_get_entity` | Entities by `id`, `iri` or `name` (exact first, as the strategies link a name: case, Arabic alef forms or `ё`/`е` aside; without one, the closest names, `match: search`) | None |
 | `kg_neighbors` | The entities within `max_hops` of one entity and the relationships among them | None |
 | `kg_get_chunks` | The chunks (text units) of up to `mcp.max_top_k` `ids`, as other records list them (`chunk_id`, `text_unit_ids`): each one's text, document and lineage, in the order asked ([below](#reading-the-chunks-a-record-cites)) | None |
@@ -290,7 +290,9 @@ app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"
   `kg_answer` what `run-rag` costs, and the graph tools no model call. An
   agent may call tools many times per task: restrict `mcp.tools` and
   `mcp.strategies` to bound it. `kg_search` and `kg_answer` return `usage`
-  (model calls and tokens, by role and model).
+  (model calls and tokens, by role and model) and `cost_usd`, its USD by the
+  server's `models.prices` as `run-rag` states it (`null` when a model
+  called has no price there, named in `unpriced_models`).
 - **Telemetry.** With [observability](./observability.md) on, each call is
   a `kg_rag.mcp.tool` span; its arguments are recorded only with
   `observability.capture_content`, after `redact_patterns`. Logs carry a

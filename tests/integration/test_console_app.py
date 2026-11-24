@@ -1217,6 +1217,7 @@ def test_every_request_needs_the_access_token(client: Any) -> None:
     anonymous = TestClient(client.app, base_url="http://127.0.0.1")
     response = anonymous.get("/api/status")
     assert response.status_code == 401 and response.json()["code"] == "unauthorized"
+    assert response.json()["error"] == "the console's access token is missing"
     assert anonymous.get("/ask").status_code == 401
     assert anonymous.get("/ask?token=wrong-token-value").status_code == 401
     # A non-ASCII token is a wrong token, not a server error.
@@ -1227,10 +1228,10 @@ def test_every_request_needs_the_access_token(client: Any) -> None:
         ).status_code
         == 401
     )
-    assert (
-        anonymous.get("/api/status", headers={"X-Console-Token": "wrong"}).status_code
-        == 401
-    )
+    wrong = anonymous.get("/api/status", headers={"X-Console-Token": "wrong"})
+    # A wrong token is not called missing (D-9).
+    assert wrong.status_code == 401 and wrong.json()["code"] == "unauthorized"
+    assert wrong.json()["error"] == "the console's access token is wrong"
     entry = anonymous.get(f"/ask?token={TOKEN}", follow_redirects=False)
     assert entry.status_code == 303 and entry.headers["location"] == "/ask"
     cookie = entry.headers["set-cookie"]

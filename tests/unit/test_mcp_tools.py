@@ -785,6 +785,26 @@ async def test_answer_returns_the_sources_usage_and_abstention() -> None:
     assert result.usage == chain.metadata["usage"]
 
 
+@pytest.mark.parametrize(
+    ("cost", "unpriced"), [(0.0123, []), (0.0, []), (None, ["vendor.unpriced-v1"])]
+)
+async def test_search_and_answer_return_the_chain_s_cost(
+    cost: float | None, unpriced: list[str]
+) -> None:
+    # D-5: run-rag, the console and RAGOutput.metadata carry the query's
+    # USD; kg_answer and kg_search returned only its usage. They state the
+    # chain's price as it is: 0.0 a priced call that cost nothing, null one
+    # a model it called has no price for.
+    chain = FakeChain(cost_usd=cost, unpriced_models=unpriced)
+    for result in (
+        await _tools(chain).answer("Who stores widgets?"),
+        await _tools(chain).search("Who stores widgets?"),
+    ):
+        assert (result.cost_usd, result.unpriced_models) == (cost, unpriced)
+        dumped = result.model_dump(mode="json")
+        assert dumped["cost_usd"] == cost and dumped["unpriced_models"] == unpriced
+
+
 async def test_answer_records_carry_their_citation_markers() -> None:
     chain = FakeChain()
     chain.citations = [
