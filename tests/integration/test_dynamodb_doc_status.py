@@ -472,3 +472,45 @@ def test_the_annotation_record_is_read_strongly_consistent(
     assert ddb_store.get_annotation_digest("ns") == "d"
     assert spy.call_args_list
     assert all(c.kwargs.get("ConsistentRead") is True for c in spy.call_args_list)
+
+
+@pytest.mark.parametrize("environment_region", [None, "us-east-1"])
+def test_the_bundles_registry_and_s3_sync_call_aws_region_name(
+    monkeypatch: pytest.MonkeyPatch, environment_region: str | None
+) -> None:
+    # Built the production way (the provider bundle's session), the registry
+    # and the stage-cache sync go to aws.region_name: neither a missing
+    # environment region nor AWS_DEFAULT_REGION moves them.
+    from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
+    from unified_kg_rag.application.bootstrap import (
+        build_checkpoint_sync,
+        build_providers,
+    )
+    from unified_kg_rag.domain.models import PipelineConfig
+
+    for name in ("AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", "/dev/null")
+    if environment_region is not None:
+        monkeypatch.setenv("AWS_DEFAULT_REGION", environment_region)
+    config = Config()
+    config.aws.region_name = "ap-northeast-2"
+    config.providers.doc_status.enabled = True
+    config.aws.dynamodb.table_name = "test-doc-status"
+    with mock_aws():
+        providers = build_providers(config)
+        registry = providers.build_doc_status()
+        assert isinstance(registry, DynamoDBDocStatusStore)
+        assert registry.client.meta.region_name == "ap-northeast-2"
+        assert registry.lease_client.meta.region_name == "ap-northeast-2"
+        boto3.client("s3", region_name="ap-northeast-2").create_bucket(
+            Bucket="bucket",
+            CreateBucketConfiguration={"LocationConstraint": "ap-northeast-2"},
+        )
+        sync = build_checkpoint_sync(
+            config,
+            PipelineConfig(s3_sync_enabled=True, s3_bucket_name="bucket"),
+            providers,
+        )
+        assert isinstance(sync, S3CacheManager)
+        assert sync.s3_client.meta.region_name == "ap-northeast-2"

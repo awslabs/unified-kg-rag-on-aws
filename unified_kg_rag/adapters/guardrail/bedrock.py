@@ -28,6 +28,7 @@ from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
 from unified_kg_rag.adapters.aws.bedrock import get_assumed_role_boto_session
+from unified_kg_rag.adapters.aws.session import config_boto_session
 from unified_kg_rag.ports.guardrail import (
     GroundingCheck,
     GroundingContext,
@@ -207,10 +208,8 @@ class BedrockGuardrail:
         self.version = guardrail.version
         self.full_output = guardrail.trace
         if client is None:
-            import boto3
-
             session = get_assumed_role_boto_session(
-                boto_session or boto3.Session(profile_name=config.aws.profile_name),
+                boto_session or config_boto_session(config),
                 assumed_role_arn=config.aws.bedrock.assumed_role_arn,
             )
             # The guardrail lives in the Bedrock runtime region.

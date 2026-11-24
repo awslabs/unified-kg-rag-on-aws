@@ -179,6 +179,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 19. A script that reads `run-visualization`'s pages from `visualization_outputs/` without passing
     `--output-directory` finds them under `visualization_outputs/<namespace>/` (*Changed*); pass
     `--output-directory visualization_outputs` to keep the old place.
+20. A DynamoDB doc-status registry or an S3 stage-cache sync that ran in the environment's region (`AWS_DEFAULT_REGION`
+    or the profile's), not `aws.region_name`, now runs in `aws.region_name` (*Fixed*). If its table or bucket is in
+    the other region, set `aws.region_name` to that region, or move the table; a registry left behind reads every
+    document as new.
 
 ### Added
 
@@ -1057,6 +1061,12 @@ Bugs present in 0.3.0.
   diff (`"new": 8` for an unchanged corpus). The `delta` now says so (`"reused": true`); the resume itself is
   unchanged. The console guide said such a re-run "finds nothing new": it resumes, calls no model and indexes the
   documents again.
+- The DynamoDB doc-status registry and the S3 stage-cache sync, built through the provider bundle (every CLI and
+  `build_providers`), ignored `aws.region_name`: their session named no region, so they went to `AWS_DEFAULT_REGION`
+  or the profile's region, which the docs say is not read, and failed with a bare `NoRegionError` where neither was
+  set (a laptop or an EC2 host). With `create_table_if_missing` a run then made an empty registry table in that
+  region beside stores in the configured one. Every AWS session is now built in one place, from `aws.profile_name` and
+  `aws.region_name`.
 
 ### Security
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0

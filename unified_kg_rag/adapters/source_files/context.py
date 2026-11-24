@@ -33,12 +33,11 @@ SourceT = TypeVar("SourceT", bound=_Located)
 LoaderT = TypeVar("LoaderT", bound=Callable[..., Any])
 
 
-def _default_session(config: Config) -> boto3.Session:
-    import boto3
+def _config_session(config: Config) -> boto3.Session:
+    # Imported on use: a loader of local files loads no AWS adapter.
+    from unified_kg_rag.adapters.aws.session import config_boto_session
 
-    return boto3.Session(
-        profile_name=config.aws.profile_name, region_name=config.aws.region_name
-    )
+    return config_boto_session(config)
 
 
 class SourceContextBase(Generic[SourceT]):
@@ -66,7 +65,7 @@ class SourceContextBase(Generic[SourceT]):
         none."""
         self.source = source
         self.config = config
-        self._session_factory = session_factory or (lambda: _default_session(config))
+        self._session_factory = session_factory or (lambda: _config_session(config))
         self._session: boto3.Session | None = None
         self._lock = threading.Lock()
 

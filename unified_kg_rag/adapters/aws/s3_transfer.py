@@ -95,13 +95,9 @@ def parse_s3_uri(uri: str, *, require_key: bool) -> tuple[str, str]:
 
 def s3_client_for(config: Config) -> S3Client:
     """An S3 client on the configured profile and region."""
-    import boto3
+    from unified_kg_rag.adapters.aws.session import config_boto_session
 
-    return s3_client(
-        boto3.Session(
-            profile_name=config.aws.profile_name, region_name=config.aws.region_name
-        )
-    )
+    return s3_client(config_boto_session(config))
 
 
 def download_s3_object(s3_client: S3Client, uri: str, local_path: Path) -> Path:

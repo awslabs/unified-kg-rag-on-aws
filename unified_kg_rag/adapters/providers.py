@@ -78,7 +78,8 @@ class Providers:
         config: Framework config; ``config.providers`` selects the kind built
             for every role that is not injected.
         boto_session: Session shared by every AWS client. Defaults to
-            ``boto3.Session(profile_name=config.aws.profile_name)``; building it
+            the configured profile and ``aws.region_name``
+            (:func:`~unified_kg_rag.adapters.aws.session.config_boto_session`); building it
             makes no AWS call.
         llm_factory / embedding_factory / rerank_factory: Model factories
             (any ``ModelFactoryPort``).
@@ -146,11 +147,9 @@ class Providers:
     def boto_session(self) -> boto3.Session:
         with self._lock:
             if self._boto_session is None:
-                import boto3
+                from unified_kg_rag.adapters.aws.session import config_boto_session
 
-                self._boto_session = boto3.Session(
-                    profile_name=self.config.aws.profile_name
-                )
+                self._boto_session = config_boto_session(self.config)
             return self._boto_session
 
     @property

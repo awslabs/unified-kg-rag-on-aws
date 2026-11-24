@@ -1196,6 +1196,14 @@ GUARDS = [
             ),
         },
     ),
+    SourceGuard(
+        name="G13 the config's AWS session",
+        use="adapters.aws.session.config_boto_session (the configured profile "
+        "and aws.region_name)",
+        owners=("adapters/aws/session.py",),
+        find=calls("boto3.Session", "boto3.session.Session"),
+        allowed={},
+    ),
 ]
 
 

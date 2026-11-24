@@ -106,12 +106,15 @@ def test_defaults_are_lazy_and_built_once(mocker) -> None:
     rerank_cls.assert_not_called()  # never touched, never built
 
 
-def test_default_session_comes_from_the_profile(mocker) -> None:
+def test_default_session_comes_from_the_profile_and_region(mocker) -> None:
     session_cls = mocker.patch.object(bedrock_module.boto3, "Session")
     config = Config()
+    config.aws.region_name = "ap-northeast-2"
     providers = Providers(config)
     assert providers.boto_session is providers.boto_session
-    session_cls.assert_called_once_with(profile_name=config.aws.profile_name)
+    session_cls.assert_called_once_with(
+        profile_name=config.aws.profile_name, region_name="ap-northeast-2"
+    )
 
 
 def test_injected_providers_are_returned_verbatim(no_bedrock) -> None:

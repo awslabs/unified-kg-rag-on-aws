@@ -43,6 +43,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
     is_transient_bedrock_error,
 )
 from unified_kg_rag.adapters.aws.bedrock_throttles import count_requests
+from unified_kg_rag.adapters.aws.session import config_boto_session
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.chain_factory import PromptCacheMarker
 from unified_kg_rag.adapters.llm.langchain import with_callback
@@ -246,9 +247,7 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         region_name: str | None = None,
     ) -> None:
         self.config = config
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name
-        )
+        self.boto_session = boto_session or config_boto_session(config)
         self.boto_session = get_assumed_role_boto_session(
             self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
         )
