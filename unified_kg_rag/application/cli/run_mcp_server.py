@@ -41,6 +41,7 @@ from unified_kg_rag.application.cli.conventions import (
     exits_on_sigterm,
     failed,
     is_loopback,
+    served_exit_code,
     signal_stopped_server,
     stoppable,
     usage_error,
@@ -203,9 +204,11 @@ async def serve_http(
     host: str,
     port: int,
     trusted_identity_header: str | None = None,
-) -> None:
+) -> int:
     """Serve ``tools`` over stateless streamable HTTP on ``host:port``
-    (``trusted_identity_header``: ``build_mcp_app``'s).
+    (``trusted_identity_header``: ``build_mcp_app``'s); the exit code
+    (``served_exit_code``: ``128 + signum`` once a signal stopped it, a
+    ``SIGINT`` inherited ignored too, which uvicorn does not raise again).
 
     Stateless: the tools keep no session state (an AgentCore Runtime MCP
     server is stateless too). On a loopback address the ``Host`` and
@@ -237,7 +240,9 @@ async def serve_http(
         # stopped, before the platform's kill.
         timeout_graceful_shutdown=SERVER_GRACEFUL_SHUTDOWN_SECONDS,
     )
-    await signal_stopped_server(config).serve()
+    server = signal_stopped_server(config)
+    await server.serve()
+    return served_exit_code(server)
 
 
 class _StdinLines:
@@ -375,9 +380,10 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
         )
         if args.transport == "stdio":
             await serve_stdio(tools)
-        else:
-            await serve_http(tools, args.host, args.port, args.trusted_identity_header)
-        return 0
+            return 0
+        return await serve_http(
+            tools, args.host, args.port, args.trusted_identity_header
+        )
     finally:
         await chain.aclose()
         event_loop.abandon_default_executor(loop, executor)
