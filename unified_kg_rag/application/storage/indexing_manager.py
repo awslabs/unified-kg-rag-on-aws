@@ -243,6 +243,10 @@ class IndexingManager:
         # refresh wrote again or deleted (out of outdated_reports).
         self.stripped_entities: dict[str, set[str]] = {}
         self.refreshed_reports: dict[str, set[str]] = {}
+        # By suffix the refresh ran for, the reports it kept that only
+        # indexing.reset: true writes (RefreshedReports.reset_only): the
+        # build record's reset_only_reports.
+        self.reset_only_reports: dict[str, set[str]] = {}
         # The suffixes whose outdated-report note this run read or wrote
         # (note_outdated_reports), deleted once a build record takes over.
         self._outdated_notes: set[str] = set()
@@ -1298,6 +1302,7 @@ class IndexingManager:
         self.deleted_reports.clear()
         self.stripped_entities.clear()
         self.refreshed_reports.clear()
+        self.reset_only_reports.clear()
         self._outdated_notes.clear()
         self.deleted_communities.clear()
         self._removed_record_keys.clear()

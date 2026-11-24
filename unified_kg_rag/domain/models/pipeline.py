@@ -221,6 +221,17 @@ class IndexBuildRecord(BaseModel):
             "by an earlier version."
         ),
     )
+    reset_only_reports: list[str] | None = Field(
+        default=None,
+        description=(
+            "Of outdated_reports, those the stores cannot tell how to write "
+            "again (a backend without a read the refresh needs, such as "
+            "GraphIndexer.read_community_children): no incremental run "
+            "writes them, only a run with indexing.reset: true. An "
+            "incremental record whose run did not try them keeps the stored "
+            "list. None in a record written by an earlier version."
+        ),
+    )
     reports_written: list[str] = Field(
         default_factory=list,
         exclude=True,
@@ -264,7 +275,7 @@ class IndexBuildRecord(BaseModel):
         if self.mode != "incremental":
             # Written by a delta: the stored reports it kept stay outdated.
             delta: dict[str, Any] = {
-                "outdated_reports": self._outdated(stored.outdated_reports),
+                **self._outdated_lists(stored),
                 **keys,
             }
             if stored.communities is not None:
@@ -273,7 +284,7 @@ class IndexBuildRecord(BaseModel):
         update: dict[str, Any] = {
             **keys,
             "communities": self._counted(stored.communities),
-            "outdated_reports": self._outdated(stored.outdated_reports),
+            **self._outdated_lists(stored),
             # The stored answers were written by the full build the stored
             # record keeps, this run's by its delta alone.
             "answer_fingerprints": stored.answer_fingerprints,
@@ -287,6 +298,7 @@ class IndexBuildRecord(BaseModel):
                     "full_build": None,
                     "communities": None,
                     "outdated_reports": None,
+                    "reset_only_reports": None,
                 }
             )
         return self.model_copy(update=update)
@@ -311,6 +323,20 @@ class IndexBuildRecord(BaseModel):
             recorded_artifacts(self.artifacts, stored, incremental=True)
         )
         return {"artifacts": kept.artifacts, "methodologies": kept.methodologies}
+
+    def _outdated_lists(self, stored: "IndexBuildRecord") -> dict[str, Any]:
+        """The outdated reports over the ``stored`` record's
+        (:meth:`_outdated`), and those of them only a reset writes: this
+        record's when its run tried them, the stored ones otherwise."""
+        outdated = self._outdated(stored.outdated_reports)
+        reset_only = (
+            stored.reset_only_reports
+            if self.reset_only_reports is None
+            else self.reset_only_reports
+        )
+        if reset_only is not None:
+            reset_only = sorted(set(reset_only) & set(outdated or ()))
+        return {"outdated_reports": outdated, "reset_only_reports": reset_only}
 
     def _outdated(self, stored: list[str] | None) -> list[str] | None:
         """The outdated reports over the ``stored`` ones: both sets, without

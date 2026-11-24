@@ -237,7 +237,7 @@ cost (`remedy: next_run`).
 | `kind` | When | `remedy` |
 |---|---|---|
 | `communities` | The community counters crossed an `indexing.community_compaction` threshold (the WARNING above) | `reset` |
-| `outdated_reports` | The build record lists reports kept after the text they were written from was removed, which a run could not write again (`outdated_reports`, whatever `on_drift_recommendation`) | `next_run`: a model call per report |
+| `outdated_reports` | The build record lists reports kept after the text they were written from was removed, which a run could not write again (`outdated_reports`, whatever `on_drift_recommendation`) | `next_run`: a model call per report; `reset` for those the stores cannot tell how to write again (a custom graph backend that cannot read community vertices: `reset_only_reports`) |
 | `community_depths` | The stores hold community reports written before 0.4.0 stored `min_cut_depth` (read off the reports, not the build record): 0.3.0 counted their depths from the coarsest root, so global search's `community_depth` cut reads them one or more levels too coarse beside those incremental runs write, and a cut over `max_reports_per_level` steps no lower than depth 0 | `reset`: it writes every report at its depth |
 | `answer_settings` | The community reports or description summaries the last full build wrote were made under other settings (their model, prompt, language, summarization switched on) than the config's: incremental runs write their delta's alone | `reset`: a model call per report or summary |
 | `extraction_settings` | The extraction settings changed since the last run (the changed paths in `settings`) | `next_run`: it extracts every document again |

@@ -197,7 +197,7 @@ re-clustering: 24 incremental runs since the last full clustering
 | `kind` | 조건 | `remedy` |
 |---|---|---|
 | `communities` | 커뮤니티 카운터가 `indexing.community_compaction` 임곗값을 넘음(위의 WARNING) | `reset` |
-| `outdated_reports` | 작성 근거인 텍스트가 제거된 뒤에도 남았는데 실행이 다시 쓰지 못한 리포트를 빌드 레코드가 나열함(`outdated_reports`, `on_drift_recommendation`과 무관) | `next_run`: 리포트마다 모델 호출 하나 |
+| `outdated_reports` | 작성 근거인 텍스트가 제거된 뒤에도 남았는데 실행이 다시 쓰지 못한 리포트를 빌드 레코드가 나열함(`outdated_reports`, `on_drift_recommendation`과 무관) | `next_run`: 리포트마다 모델 호출 하나. 저장소가 다시 쓰는 방법을 알 수 없는 리포트(커뮤니티 정점을 읽지 못하는 사용자 정의 그래프 백엔드: `reset_only_reports`)는 `reset` |
 | `community_depths` | 저장소에 0.4.0이 `min_cut_depth`를 저장하기 전에 쓴 커뮤니티 리포트가 있음(빌드 기록이 아니라 리포트에서 읽음). 0.3.0은 그 깊이를 가장 거친 루트부터 셌으므로, 전역 검색의 `community_depth` 단면이 증분 실행이 쓴 리포트 옆에서 그 리포트를 한 단계 이상 거칠게 읽고, `max_reports_per_level`을 넘는 단면은 깊이 0 아래로 내려가지 않음 | `reset`: 모든 리포트를 제 깊이로 다시 씀 |
 | `answer_settings` | 마지막 전체 빌드가 쓴 커뮤니티 리포트나 설명 요약이 구성과 다른 설정(모델, 프롬프트, 언어, 요약 켜짐)으로 만들어짐. 증분 실행은 델타의 것만 씀 | `reset`: 리포트나 요약마다 모델 호출 하나 |
 | `extraction_settings` | 마지막 실행 이후 추출 설정이 바뀜(바뀐 경로는 `settings`) | `next_run`: 모든 문서를 다시 추출 |

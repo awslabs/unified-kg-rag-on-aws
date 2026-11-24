@@ -405,6 +405,8 @@ def test_a_child_the_graph_store_cannot_read_keeps_its_parent(caplog) -> None:
     done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
     assert done.written == {community_report_id("c1")}
     assert done.kept == {community_report_id("p")}
+    # Only a reset writes it (r8diff-2: the build record says so).
+    assert done.reset_only == {community_report_id("p")}
     assert len(model.inputs) == 1
     (warning,) = [
         r.getMessage() for r in caplog.records if "cannot read" in r.getMessage()
@@ -612,6 +614,8 @@ def test_a_refresh_that_raises_keeps_every_report(caplog) -> None:
 
     _assert_kept_as_they_were(done, vector, model)
     assert any("stay flagged outdated" in r.getMessage() for r in caplog.records)
+    # A failure the next run may not meet: it tries again.
+    assert not done.reset_only
 
 
 def test_a_lost_lease_is_raised_not_kept() -> None:
@@ -633,7 +637,7 @@ def test_nothing_to_refresh_reads_nothing() -> None:
     graph, vector = _stores(config)
     vector.read_community_reports = MagicMock()
     done = _refresh(config, graph, vector, _Reports())("default", set())
-    assert done == ({*()}, {*()}, {*()}, {})
+    assert done == ({*()}, {*()}, {*()}, {}, {*()})
     vector.read_community_reports.assert_not_called()
 
 
@@ -650,6 +654,8 @@ def test_a_store_that_cannot_read_reports_by_id_keeps_them(caplog) -> None:
     assert any(
         "cannot read community reports" in r.getMessage() for r in caplog.records
     )
+    # The backend cannot: no incremental run writes them (r8diff-2).
+    assert done.reset_only == _OUTDATED
 
 
 def test_a_graph_that_cannot_find_what_units_state_keeps_them(caplog) -> None:
@@ -660,7 +666,13 @@ def test_a_graph_that_cannot_find_what_units_state_keeps_them(caplog) -> None:
     done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
 
     _assert_kept_as_they_were(done, vector, model)
-    assert any("cannot find what text units" in r.getMessage() for r in caplog.records)
+    (warning,) = [
+        r.getMessage()
+        for r in caplog.records
+        if "cannot find what text units" in r.getMessage()
+    ]
+    assert "until indexing.reset: true" in warning
+    assert done.reset_only == _OUTDATED
 
 
 def test_a_store_that_rejects_the_rewrite_keeps_the_reports() -> None:
@@ -693,6 +705,7 @@ def test_a_store_that_rejects_the_rewrite_keeps_the_reports() -> None:
     done = _refresh(config, graph, vector, _Reports())("default", _OUTDATED, {"acme"})
     assert done.written == {community_report_id("c1")}
     assert done.kept == {community_report_id("p")}
+    assert not done.reset_only
 
 
 def test_an_emptied_report_whose_delete_failed_stays_kept() -> None:
