@@ -14,8 +14,10 @@ the tool signatures are built at run time from the settings, and the SDK
 reads them as objects.
 """
 
+import asyncio
 import importlib.util
 import inspect
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
@@ -62,6 +64,7 @@ from unified_kg_rag.shared.exceptions import (
 )
 from unified_kg_rag.shared.extras import extra_hint
 from unified_kg_rag.shared.logging import log_error
+from unified_kg_rag.shared.query_stop import process_stopping
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -164,6 +167,11 @@ def _post_only(app: Any, path: str) -> Any:
     return guarded
 
 
+# The JSON-RPC error code of a call the server's shutdown cut (JSON-RPC
+# 2.0 leaves -32000 to -32099 to the server's own errors).
+SHUTDOWN_ERROR_CODE = -32000
+
+
 def _cancelled_on_disconnect(app: Any) -> Any:
     """``app`` cancelled when its HTTP client disconnects: the SDK answers
     a stateless JSON POST only once its tool call returns and does not watch
@@ -172,7 +180,13 @@ def _cancelled_on_disconnect(app: Any) -> Any:
     request messages are read here and handed on; an ``http.disconnect``
     cancels the request, whose tool call is cancelled with it. A failure
     of ``app`` is raised as it is, not in the task group's
-    ``ExceptionGroup``."""
+    ``ExceptionGroup``.
+
+    A request the server's shutdown cancels (past its graceful-shutdown
+    limit, or at a second ``Ctrl-C``) before its answer started is answered
+    ``503`` with a JSON-RPC error naming the shutdown
+    (:data:`SHUTDOWN_ERROR_CODE`, the request's id), not the bare ``500``
+    the ASGI server sends for a cancelled request."""
     import anyio
 
     async def cancellable(scope: dict[str, Any], receive: Any, send: Any) -> None:
@@ -182,6 +196,15 @@ def _cancelled_on_disconnect(app: Any) -> Any:
         handed, messages = anyio.create_memory_object_stream[dict[str, Any]](
             max_buffer_size=float("inf")
         )
+        body: list[bytes] = []
+        started = False
+
+        async def sending(message: dict[str, Any]) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
         failure: BaseException | None = None
         try:
             async with handed, messages, anyio.create_task_group() as group:
@@ -189,17 +212,23 @@ def _cancelled_on_disconnect(app: Any) -> Any:
                 async def watch() -> None:
                     while True:
                         message = await receive()
+                        if message["type"] == "http.request":
+                            body.append(message.get("body", b""))
                         await handed.send(message)
                         if message["type"] == "http.disconnect":
                             group.cancel_scope.cancel()
                             return
 
                 async def serve() -> None:
-                    await app(scope, messages.receive, send)
+                    await app(scope, messages.receive, sending)
                     group.cancel_scope.cancel()
 
                 group.start_soon(watch)
                 group.start_soon(serve)
+        except asyncio.CancelledError:
+            if not started and process_stopping():
+                await _answer_shutdown(send, b"".join(body))
+            raise
         except BaseExceptionGroup as failed:
             if len(failed.exceptions) != 1:
                 raise
@@ -209,6 +238,38 @@ def _cancelled_on_disconnect(app: Any) -> Any:
             raise failure
 
     return cancellable
+
+
+async def _answer_shutdown(send: Any, request: bytes) -> None:
+    """Answer a request the server's shutdown cut: ``503`` with a JSON-RPC
+    error naming it, under the ``request``'s id when it has one."""
+    try:
+        parsed = json.loads(request)
+    except ValueError:
+        parsed = None
+    request_id = parsed.get("id") if isinstance(parsed, dict) else None
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {
+                "code": SHUTDOWN_ERROR_CODE,
+                "message": "The server is shutting down: the call was stopped "
+                "before it answered; call again once it is back",
+            },
+        }
+    ).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 503,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
 
 
 def build_mcp_app(

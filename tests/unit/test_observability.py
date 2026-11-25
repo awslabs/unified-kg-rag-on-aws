@@ -20,6 +20,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -2878,14 +2879,14 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
-async def _ask_served(surface: str, url: str) -> None:
+async def _ask_served(surface: str, url: str) -> Any:
     """Ask the served ``surface`` one question, reading its answer to the
-    end (or until the server cuts it off)."""
+    end (or until the server cuts it off); the MCP server's response."""
     import httpx
 
     async with httpx.AsyncClient(timeout=60) as client:
         if surface == "mcp":
-            await client.post(
+            return await client.post(
                 f"{url}/mcp",
                 headers={
                     "Accept": "application/json, text/event-stream",
@@ -2901,7 +2902,6 @@ async def _ask_served(surface: str, url: str) -> None:
                     },
                 },
             )
-            return
         async with client.stream(
             "POST",
             f"{url}/api/ask",
@@ -2910,6 +2910,20 @@ async def _ask_served(surface: str, url: str) -> None:
         ) as response:
             async for _ in response.aiter_bytes():
                 pass
+    return None
+
+
+def _assert_shutdown_answer(response: Any) -> None:
+    """``response`` is the MCP server's answer to a call its shutdown cut
+    (D-7): 503 with a JSON-RPC error naming the shutdown, under the
+    request's id, not a bare 500."""
+    from unified_kg_rag.application.cli.mcp_server import SHUTDOWN_ERROR_CODE
+
+    assert response.status_code == 503, response.text
+    answer = response.json()
+    assert answer["id"] == 1
+    assert answer["error"]["code"] == SHUTDOWN_ERROR_CODE
+    assert "shutting down" in answer["error"]["message"]
 
 
 @pytest.mark.parametrize("surface", ["mcp", "console"])
@@ -2960,6 +2974,7 @@ def test_a_second_ctrl_c_cancels_a_draining_server_s_request(
         uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, lifespan="on")
     )
     exited_after: list[float] = []
+    answers: list[Any] = []
 
     async def run() -> None:
         serving = asyncio.create_task(server.serve())
@@ -2980,7 +2995,7 @@ def test_a_second_ctrl_c_cancels_a_draining_server_s_request(
         finally:
             server.should_exit = server.force_exit = True
             await serving
-            await asyncio.gather(asking, return_exceptions=True)
+            answers.extend(await asyncio.gather(asking, return_exceptions=True))
             await chain.aclose()
 
     # The SIGINTs uvicorn took are raised again once it served: not into
@@ -3004,6 +3019,8 @@ def test_a_second_ctrl_c_cancels_a_draining_server_s_request(
         assert errors.get("kg_rag.console.ask") == "CancelledError", errors
     assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)
     assert [r.outcome.value for r in records] == ["stopped"]
+    if surface == "mcp":
+        _assert_shutdown_answer(answers[0])
 
 
 def test_one_sigterm_cuts_an_http_mcp_call_at_the_graceful_shutdown_limit(
@@ -3032,6 +3049,7 @@ def test_one_sigterm_cuts_an_http_mcp_call_at_the_graceful_shutdown_limit(
     chain = held.chain()
     port = _free_port()
     exited_after: list[float] = []
+    answers: list[Any] = []
 
     async def run() -> None:
         serving = asyncio.create_task(
@@ -3046,7 +3064,9 @@ def test_one_sigterm_cuts_an_http_mcp_call_at_the_graceful_shutdown_limit(
             exited_after.append(asyncio.get_running_loop().time() - start)
         finally:
             serving.cancel()
-            await asyncio.gather(serving, asking, return_exceptions=True)
+            answers.extend(
+                await asyncio.gather(serving, asking, return_exceptions=True)
+            )
             await chain.aclose()
 
     # The SIGTERM uvicorn took is raised again once it served: not into
@@ -3068,10 +3088,13 @@ def test_one_sigterm_cuts_an_http_mcp_call_at_the_graceful_shutdown_limit(
     assert errors.get(_Held.span["model"]) == "CancelledError", errors
     assert not any(_attrs(s).get("kg_rag.stopped") for s in spans)
     assert [r.outcome.value for r in records] == ["stopped"]
+    # serve_http's exit code: the SIGTERM's (served_exit_code).
+    assert answers[0] == 143
+    _assert_shutdown_answer(answers[1])
 
 
-async def _ask_after_start(port: int) -> None:
-    """Ask the MCP server on ``port`` once it listens."""
+async def _ask_after_start(port: int) -> Any:
+    """Ask the MCP server on ``port`` once it listens; its response."""
     for _ in range(200):
         try:
             _, writer = await asyncio.open_connection("127.0.0.1", port)
@@ -3081,7 +3104,7 @@ async def _ask_after_start(port: int) -> None:
         writer.close()
         await writer.wait_closed()
         break
-    await _ask_served("mcp", f"http://127.0.0.1:{port}")
+    return await _ask_served("mcp", f"http://127.0.0.1:{port}")
 
 
 _STDIO_SERVER = textwrap.dedent("""
@@ -3152,6 +3175,82 @@ _STDIO_SERVER = textwrap.dedent("""
         return asyncio.run(stoppable(run()))
 
     main()
+    """)
+
+
+# run-mcp-server --transport streamable-http as main runs it (serve, under
+# exits_on_sigterm and stoppable), its chain the held one; argv: the
+# output directory, the port, and whether SIGINT stays as inherited.
+_HTTP_SERVER = textwrap.dedent("""
+    import argparse, asyncio, json, signal, sys
+    from pathlib import Path
+
+    if sys.argv[3] == "default":
+        # As _STDIO_SERVER: a suite started in the background hands its
+        # children SIGINT ignored.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+    from tests.unit.test_observability import _Held
+    from unified_kg_rag.application.cli import run_mcp_server
+    from unified_kg_rag.application.cli.conventions import (
+        exits_on_sigterm, stoppable,
+    )
+    from unified_kg_rag.adapters.observability.otel import build_backend
+    from unified_kg_rag.application.retrieval import query_audit
+    from unified_kg_rag.domain.models import Config, ObservabilityConfig
+    from unified_kg_rag.shared import observability
+
+    out = Path(sys.argv[1])
+
+    def write(record):
+        with (out / "records.jsonl").open("a") as f:
+            f.write(json.dumps(record) + "\\n")
+
+    class Exporter(SpanExporter):
+        def export(self, spans):
+            for s in spans:
+                write({"span": s.name, "status": s.status.status_code.name,
+                       "error_type": (s.attributes or {}).get("error.type")})
+            return SpanExportResult.SUCCESS
+
+    observability.install(build_backend(
+        ObservabilityConfig(enabled=True, backend="otlp"),
+        span_exporter=Exporter(),
+    ))
+    query_audit.audit_enabled = lambda: True
+    query_audit.emit = lambda r: write({"audit": r.outcome.value})
+    held = _Held("model")
+    chain = held.chain()
+    run_mcp_server.GraphRAGChain = lambda **_: chain
+    run_mcp_server.build_providers = lambda *_, **__: None
+
+    async def no_check(*_):
+        return None
+
+    run_mcp_server.warn_of_missing_namespaces = no_check
+    args = argparse.Namespace(
+        metrics_sink=None, namespace=None, transport="streamable-http",
+        host="127.0.0.1", port=int(sys.argv[2]), trusted_identity_header=None,
+    )
+
+    async def run():
+        async def mark():
+            await held.wait()
+            (out / "held").touch()
+
+        marking = asyncio.create_task(mark())
+        try:
+            return await run_mcp_server.serve(args, Config())
+        finally:
+            marking.cancel()
+
+    @exits_on_sigterm
+    def main():
+        return asyncio.run(stoppable(run()))
+
+    sys.exit(main())
     """)
 
 
@@ -3246,6 +3345,122 @@ def test_a_signal_ends_a_stdio_server_whose_stdin_stays_open(
     assert errors.get(_Held.span["model"]) == "CancelledError", records
     assert [r["audit"] for r in records if "audit" in r] == ["stopped"]
     assert [r["fd0_null"] for r in records if "fd0_null" in r] == [True]
+
+
+def _start_http_server(
+    tmp_path: Path, *, sigint: str = "default"
+) -> tuple[subprocess.Popen[str], int]:
+    """``_HTTP_SERVER`` started, listening on its port; ``sigint``
+    ``ignore``: started with SIGINT ignored, as a background launch.
+    Skips without the mcp extra, whose SDK the server process imports."""
+    pytest.importorskip("mcp")
+    port = _free_port()
+    repository = Path(__file__).resolve().parents[2]
+    process = subprocess.Popen(
+        [sys.executable, "-c", _HTTP_SERVER, str(tmp_path), str(port), sigint],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=repository,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(repository),
+            "OTEL_BSP_SCHEDULE_DELAY": "600000",
+        },
+        preexec_fn=(
+            (lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+            if sigint == "ignore"
+            else None
+        ),
+    )
+    import socket
+
+    for _ in range(600):
+        with socket.socket() as probe:
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                return process, port
+        if process.poll() is not None:
+            break
+        time.sleep(0.05)
+    process.kill()
+    raise AssertionError(process.stderr.read() if process.stderr else "")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "signals",
+    [(signal.SIGINT, signal.SIGINT), (signal.SIGTERM, signal.SIGINT)],
+)
+def test_a_second_signal_on_the_http_mcp_server_keeps_the_cut_call_s_trace(
+    tmp_path: Path, signals: tuple[int, int]
+) -> None:
+    # r8e2e-1: uvicorn raises every signal it took again once it served;
+    # the second read as a second stop and ended the process at once,
+    # before the cut call's audit record and with its spans in the OTLP
+    # backend's unflushed batch (0 spans in 5 of 5 runs, the audit record
+    # in 3). The process stops as the first signal's stop: the call's spans
+    # are exported, its audit record written, and the client gets a
+    # JSON-RPC error naming the shutdown (D-7).
+    import httpx
+
+    process, port = _start_http_server(tmp_path)
+    responses: list[Any] = []
+    asking = threading.Thread(
+        target=lambda: responses.append(
+            asyncio.run(_ask_served("mcp", f"http://127.0.0.1:{port}"))
+        )
+    )
+    try:
+        asking.start()
+        for _ in range(600):
+            if (tmp_path / "held").exists():
+                break
+            time.sleep(0.05)
+        assert (tmp_path / "held").exists()
+        start = time.monotonic()
+        process.send_signal(signals[0])
+        time.sleep(0.5)  # the server drains, the call held
+        process.send_signal(signals[1])
+        code = process.wait(timeout=60)
+        took = time.monotonic() - start
+        asking.join(30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        stderr = process.stderr.read() if process.stderr else ""
+    assert code == 128 + signals[0], stderr[-2000:]
+    assert took < 5, took  # the call was held 10 s
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "records.jsonl").read_text().splitlines()
+    ]
+    errors = {r["span"]: r["error_type"] for r in records if r.get("status") == "ERROR"}
+    assert errors.get("kg_rag.query") == "CancelledError", records
+    assert errors.get(_Held.span["model"]) == "CancelledError", records
+    assert "kg_rag.mcp.tool" in {r.get("span") for r in records}, records
+    assert [r["audit"] for r in records if "audit" in r] == ["stopped"]
+    (response,) = responses
+    assert isinstance(response, httpx.Response)
+    _assert_shutdown_answer(response)
+
+
+@pytest.mark.slow
+def test_an_http_mcp_server_started_with_sigint_ignored_exits_130_at_one(
+    tmp_path: Path,
+) -> None:
+    # r8docs-4: started in the background (SIGINT inherited ignored),
+    # uvicorn takes the SIGINT and raises it again into SIG_IGN, so the
+    # server exited 0, as if no signal had stopped it. It exits 130, as
+    # run-console does (served_exit_code).
+    process, _ = _start_http_server(tmp_path, sigint="ignore")
+    try:
+        process.send_signal(signal.SIGINT)
+        code = process.wait(timeout=60)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        stderr = process.stderr.read() if process.stderr else ""
+    assert code == 130, stderr[-2000:]
 
 
 async def test_a_reader_stop_sets_no_stop_while_the_process_stops() -> None:

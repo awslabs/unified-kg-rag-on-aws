@@ -403,7 +403,9 @@ jobs:
           uv lock
 
       - name: Sync dependencies
-        run: uv sync --python 3.13 --frozen --extra otel --extra eval --extra viz --extra ontology
+        # The extras the quality job installs, so the mcp, docx and console
+        # tests run on 3.13 too instead of skipping or failing.
+        run: uv sync --python 3.13 --frozen --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx --extra console
 
       - name: pytest
         run: uv run --python 3.13 --frozen pytest -q -n logical

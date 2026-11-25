@@ -259,7 +259,9 @@ its `stopTimeout` (30 s by default; Fargate allows at most 120 s, and on
 the EC2 launch type an unset `stopTimeout` takes the container agent's
 `ECS_CONTAINER_STOP_TIMEOUT`). On the signal the server takes no new call
 and lets the calls in flight run for 60 s, then cuts them: a cut call's query ends `ERROR`, recorded `stopped`
-([Spans of a stopped query](../reference/telemetry.md#spans-of-a-stopped-query)).
+([Spans of a stopped query](../reference/telemetry.md#spans-of-a-stopped-query)),
+and its client gets `503` with a JSON-RPC error (code `-32000`) saying the
+server is shutting down, a call to make again.
 Set the container's `stopTimeout` to 120 s (Fargate's maximum), which
 leaves the rest for the spans to flush; at the default 30 s a call still
 running is killed with no span and no audit record. A call may run for

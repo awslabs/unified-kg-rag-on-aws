@@ -1098,6 +1098,13 @@ Bugs present in 0.3.0.
   a signal the kernel gave another of the process's threads, or one that came just as the event loop went to sleep,
   left the loop asleep with the stop pending. While a CLI's event loop runs its work, a stop signal now wakes it,
   whichever thread took it, so the stop runs as before (143 or 130, the same spans and audit records).
+- `run-mcp-server --transport streamable-http` stopped by a second signal (a second Ctrl-C, or a Ctrl-C after a
+  SIGTERM) exported none of the cut call's spans and wrote its audit record in only some runs: uvicorn raised both
+  signals again once it had served, and the second ended the process at once, as a second stop does. The server
+  raises the first alone and stops as it would, the call's spans flushed and its record written. The client of a call
+  the shutdown cuts gets `503` with a JSON-RPC error (code `-32000`) saying the server is shutting down, not a bare
+  `500`. Started in the background (SIGINT inherited ignored), the server exited `0` at a Ctrl-C; it exits `130`, as
+  `run-console` does.
 
 ### Security
 - The image upgrades `libzstd1` to the Debian security release fixing CVE-2026-124851 (HIGH, an information

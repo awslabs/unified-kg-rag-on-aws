@@ -548,10 +548,14 @@ def signal_stopped_server(config: Any) -> Any:
     so the requests would run to their end.
 
     ``stopped_by`` names the first signal it took. uvicorn raises the
-    signals it took again once it has served, so the process exits as that
-    signal's stop would; a ``SIGINT`` the process inherited ignored (a
-    background launch) raises nothing, and the caller exits with
-    ``128 + stopped_by`` itself (:func:`served_exit_code`)."""
+    signals it took again once it has served; this server raises the first
+    alone, so the process stops as that signal's stop would: a second one
+    raised again would read, to :func:`exits_on_sigterm`, as a second stop
+    and end the process at once, before the cancelled requests' queries
+    wrote their audit records and the tracing backend flushed their spans.
+    A ``SIGINT`` the process inherited ignored (a background launch) raises
+    nothing, and the caller exits with ``128 + stopped_by`` itself
+    (:func:`served_exit_code`)."""
     import uvicorn
 
     class _Server(uvicorn.Server):
@@ -577,6 +581,15 @@ def signal_stopped_server(config: Any) -> Any:
         def _cancel_requests(self) -> None:
             for task in list(self.server_state.tasks):
                 task.cancel(msg="Task cancelled, the server was forced to stop")
+
+        @contextlib.contextmanager
+        def capture_signals(self) -> Iterator[None]:
+            with super().capture_signals():
+                try:
+                    yield
+                finally:
+                    # Before uvicorn raises them again: the first alone.
+                    del self._captured_signals[1:]
 
     return _Server(config)
 
