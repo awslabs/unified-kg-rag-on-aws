@@ -419,10 +419,10 @@ def _read_graph(
         weight = attrs.get("weight")
         weight = float(weight) if isinstance(weight, int | float) else 0.0
         # Two links of one pair: the pair at the heavier one's weight.
-        if not graph.has_edge(source, target) or (
-            graph.edges[source, target]["weight"] < weight
-        ):
-            graph.add_edge(source, target, weight=weight)
+        if not graph.has_edge(source, target):
+            graph.add_edge(source, target, weight=weight, relationships=[])
+        elif graph.edges[source, target]["weight"] < weight:
+            graph.edges[source, target]["weight"] = weight
         # An edge that merges several relationships of its pair lists them
         # (the export's ``relationships``): one entry each, so the panel
         # and the counts see every one; the pair is drawn once.
@@ -433,6 +433,8 @@ def _read_graph(
             ends = (str(rel.get("source_id") or ""), str(rel.get("target_id") or ""))
             if set(ends) != {source, target}:
                 ends = (source, target)
+            # The pair's relationships, which the link cap counts.
+            graph.edges[source, target]["relationships"].append(rel)
             edges.append(
                 {
                     "id": str(rel.get("id") or f"{source}->{target}"),
@@ -450,10 +452,10 @@ def _read_graph(
     degrees = dict(graph.degree())
     for node in nodes:
         node["degree"] = degrees.get(node["id"], 0)
-    # The page draws the best-connected max_nodes and at most max_edges of
-    # the links between them, at an exported layout's positions when it has
-    # them (an export may lay out more), else at the layout
-    # run-visualization draws them at.
+    # The page draws the best-connected max_nodes and the links between them
+    # that hold at most max_edges relationships (one page edge each), at an
+    # exported layout's positions when it has them (an export may lay out
+    # more), else at the layout run-visualization draws them at.
     drawn = displayed_graph(graph, max_nodes, max_edges)
     exported = data.get("layout") or {}
     layout = {k: v for k, v in exported.items() if k in drawn}

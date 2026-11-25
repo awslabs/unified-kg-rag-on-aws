@@ -97,6 +97,36 @@ def test_each_relationship_of_a_pair_is_an_edge_of_the_page(tmp_path: Path) -> N
     assert {e["id"] for e in found["edges"]} >= {"r1", "r2"}
 
 
+def test_the_link_cap_counts_each_relationship_of_a_pair(tmp_path: Path) -> None:
+    """r8diff-5: since E-3 the page sends one edge per relationship, but
+    max_edges capped the pairs: one pair of 200 relationships at
+    max_edges 1 sent 200 edges (135 KB), past the documented bound."""
+    path = write_export(tmp_path / "v.json", 4)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["edges"][0]["attributes"] = {
+        "id": "r0",
+        "weight": 9.0,
+        "relationships": [
+            {"id": f"r{i}", "source_id": "n0", "target_id": "n1", "type": "SUPPLIES"}
+            for i in range(200)
+        ],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    pairs = len(data["edges"])
+    for cap in (1, 5, pairs + 10, 300):
+        page = graph_api.cached_graph(path, _CAP, max_edges=cap).page
+        assert len(page["edges"]) <= cap, cap
+        # The relationships between the drawn entities, drawn or not.
+        assert page["linked"] == 200 + pairs - 1
+    # A pair kept keeps every relationship (E-3); one that no longer fits
+    # is passed over for the next.
+    few = graph_api.cached_graph(path, _CAP, max_edges=pairs).page
+    assert not [e for e in few["edges"] if {e["source"], e["target"]} == {"n0", "n1"}]
+    assert len(few["edges"]) == pairs - 1
+    every = graph_api.cached_graph(path, _CAP, max_edges=300).page
+    assert len(every["edges"]) == 200 + pairs - 1
+
+
 def test_an_undrawn_entity_is_read_with_every_edge_that_touches_it(
     tmp_path: Path,
 ) -> None:

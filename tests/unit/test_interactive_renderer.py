@@ -158,6 +158,23 @@ class TestNetworkVisualization:
         (warned,) = [r for r in caplog.records if r.levelname == "WARNING"]
         assert text in warned.getMessage()
 
+    def test_the_notice_counts_the_relationships_a_link_merges(
+        self, tmp_path: Path
+    ) -> None:
+        # r8diff-5: max_edges counts relationships; the notice counts the
+        # same (a link of 3 relationships is 3), not the drawn lines.
+        graph = nx.complete_graph(4)
+        graph.edges[0, 1]["relationships"] = [{"id": f"r{i}"} for i in range(3)]
+        out = tmp_path / "g.html"
+        InteractiveRenderer({"max_edges": 5}).create_network_visualization(
+            graph, {}, str(out)
+        )
+        page = out.read_text(encoding="utf-8")
+        notice = re.search(r'<p class="kg-rag-cap-notice"[^>]*>([^<]*)</p>', page)
+        assert notice is not None
+        text = html.unescape(notice.group(1))
+        assert "Of the 8 relationships between the drawn entities, the 5" in text
+
     def test_a_whole_graph_page_has_no_notice(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

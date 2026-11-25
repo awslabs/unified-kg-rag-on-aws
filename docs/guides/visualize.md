@@ -90,8 +90,9 @@ Ingestion itself renders nothing. Another renderer plugs in through
   (the hierarchy page of data without communities), so the directory never
   mixes its pages of an earlier render with this one's.
 - **Size.** The interactive graph keeps the top `interactive.max_nodes` nodes
-  by degree (default 600; 2000 take about 15 s to lay out) and of the links
-  between them at most `interactive.max_edges` (default 3000), each node's
+  by degree (default 600; 2000 take about 15 s to lay out) and the links
+  between them that hold at most `interactive.max_edges` relationships
+  (default 3000; a link merging several counts each), each node's
   strongest first, so a dense graph stays a page of about 1 MB
   ([measured](../concepts/defaults-and-evidence.md#graph-page-size)). It
   lays out only those, each connected component on its own, packed in rows

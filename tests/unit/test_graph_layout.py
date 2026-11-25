@@ -20,6 +20,7 @@ from tests.fixtures.graph_exports import write_export
 from unified_kg_rag.domain.ingestion.visualization_data import (
     displayed_graph,
     kept_edges,
+    relationship_count,
     spring_layout,
 )
 from unified_kg_rag.domain.models import Config
@@ -129,6 +130,28 @@ def test_the_link_cap_keeps_each_node_s_strongest_and_every_node() -> None:
     assert kept_edges(graph, 30) == kept_edges(graph.copy(), 30)
     assert displayed_graph(graph, None, 1000) is graph
     assert displayed_graph(graph, None, None) is graph
+
+
+def test_the_link_cap_counts_the_relationships_a_link_merges() -> None:
+    # r8diff-5: a link merging several relationships of its pair (the
+    # export's ``relationships``) counts each against max_edges, on every
+    # page that draws the graph.
+    graph = _dense(6)
+    graph.edges["n0", "n1"]["weight"] = 5.0
+    graph.edges["n0", "n1"]["relationships"] = [{"id": f"r{i}"} for i in range(4)]
+    assert relationship_count(graph.edges["n0", "n1"]) == 4
+    assert relationship_count(graph.edges["n2", "n3"]) == 1
+    total = graph.number_of_edges() + 3
+    assert displayed_graph(graph, None, total) is graph
+    drawn = displayed_graph(graph, None, total - 1)
+    held = sum(relationship_count(a) for _, _, a in drawn.edges(data=True))
+    assert held <= total - 1
+    # Every link but one: the 4-relationship link, the strongest, is kept.
+    assert drawn.has_edge("n0", "n1")
+    assert drawn.number_of_edges() == graph.number_of_edges() - 1
+    # A link that no longer fits is passed over, the smaller ones kept.
+    kept = kept_edges(graph, 3)
+    assert ("n0", "n1") not in kept and len(kept) == 3
 
 
 def test_the_layout_lays_out_the_links_drawn() -> None:
