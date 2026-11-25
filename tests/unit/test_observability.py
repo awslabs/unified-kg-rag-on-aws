@@ -3351,7 +3351,9 @@ def _start_http_server(
     tmp_path: Path, *, sigint: str = "default"
 ) -> tuple[subprocess.Popen[str], int]:
     """``_HTTP_SERVER`` started, listening on its port; ``sigint``
-    ``ignore``: started with SIGINT ignored, as a background launch."""
+    ``ignore``: started with SIGINT ignored, as a background launch.
+    Skips without the mcp extra, whose SDK the server process imports."""
+    pytest.importorskip("mcp")
     port = _free_port()
     repository = Path(__file__).resolve().parents[2]
     process = subprocess.Popen(
