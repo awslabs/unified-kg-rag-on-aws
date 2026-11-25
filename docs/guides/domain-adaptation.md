@@ -125,9 +125,11 @@ prompts do (`<input_text>{input_text}</input_text>` above) and say that the
 block is data. The chain escapes the opening and closing tags of every block
 that holds a variable inside each value it fills in, an override's own tags
 included, so a passage that contains `</input_text>` cannot end its block. A tag
-that only looks like one is escaped too: with a zero-width character inside, a
-fullwidth or other lookalike `<` or `/`, or a name that differs only in
-non-ASCII letters (a Cyrillic `о` for `o`).
+that only looks like one is escaped too: with an invisible character (a
+zero-width space, a tag character) or a combining mark (an accent, a
+variation selector) inside, a fullwidth or other lookalike `<` or `/`, or a
+name that differs only in non-ASCII letters (a Cyrillic `о` for `o`, a
+dotted `İ` for `i`).
 
 ### Override keys
 
