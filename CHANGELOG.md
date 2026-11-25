@@ -632,7 +632,10 @@ Bugs present in 0.3.0.
   `on_drift_recommendation` says, until a later run writes it. A parent whose community lists a child stored without
   a report (one a removal deleted, a seed-only one, one whose report failed) is written again too, from its members
   read down the stored hierarchy, a child without a report through its graph vertex
-  (`GraphIndexer.read_community_children`), as a full build packs it; a deleted child is no longer listed. A note in
+  (`GraphIndexer.read_community_children`), as a full build packs it; a deleted child is no longer listed. On a graph
+  backend that cannot read community vertices (the method at the port's default) such a parent stays until
+  `indexing.reset: true`: the build record lists it in `reset_only_reports`, its rebuild reason says remedy `reset`,
+  and its run's WARNING names that remedy alone. A note in
   the extraction store lists the flagged
   reports until the build record does: a run killed after the removal deleted the documents' registry records, before
   its refresh, left them flagged and listed nowhere, and the next run now writes them again (a run that writes no

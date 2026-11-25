@@ -18,7 +18,10 @@ stale, each with what applies it:
   thresholds: the record lists community reports kept after a run removed
   text they were written from and could not write them again from what
   remains (``IndexBuildRecord.outdated_reports``): they may state it, and
-  the next incremental run tries again (``report_refresh``).
+  the next incremental run tries again (``report_refresh``); those the
+  stores cannot tell how to write again
+  (``IndexBuildRecord.reset_only_reports``, a backend without a read the
+  refresh needs) are a second ``outdated_reports`` reason, remedy reset.
 - ``community_depths`` (reset): the stores hold community reports written
   before 0.4.0 stored ``min_cut_depth`` (0.3.0 counted their depths from the
   coarsest root, not from the first Leiden pass as global search's
@@ -198,26 +201,58 @@ def _outdated_report_reasons(
         return []
     if IndexArtifact.COMMUNITY_REPORTS not in held_artifacts(record, config):
         return []
-    one = len(outdated) == 1
-    kept = (
-        "1 community report was kept after documents it was"
-        if one
-        else f"{len(outdated)} community reports were kept after documents they were"
-    )
-    return [
-        RebuildReason(
-            kind=RebuildReasonKind.OUTDATED_REPORTS,
-            remedy=RebuildRemedy.NEXT_RUN,
-            detail=f"{kept} written from were deleted or changed, and the run "
-            "could not write "
-            + ("it" if one else "them")
-            + " again from what remains: such a report may still state the "
-            "removed text and is flagged outdated where it is read; the next "
-            "incremental run tries again, a model call each (a run with "
-            "indexing.reset: true writes every report)",
-            settings=[IndexArtifact.COMMUNITY_REPORTS.value],
+    listed = record.get("reset_only_reports")
+    reset_only = set(listed) & set(outdated) if isinstance(listed, list) else set()
+    retried = len(set(outdated) - reset_only)
+    reasons = []
+    if retried:
+        reasons.append(
+            RebuildReason(
+                kind=RebuildReasonKind.OUTDATED_REPORTS,
+                remedy=RebuildRemedy.NEXT_RUN,
+                detail=f"{_kept(retried)}, and the run could not write "
+                + ("it" if retried == 1 else "them")
+                + " again from what remains: such a report may still state "
+                "the removed text and is flagged outdated where it is read; "
+                "the next incremental run tries again, a model call each (a "
+                "run with indexing.reset: true writes every report)",
+                settings=[IndexArtifact.COMMUNITY_REPORTS.value],
+            )
         )
-    ]
+    if reset_only:
+        one = len(reset_only) == 1
+        reasons.append(
+            RebuildReason(
+                kind=RebuildReasonKind.OUTDATED_REPORTS,
+                remedy=RebuildRemedy.RESET,
+                detail=f"{_kept(len(reset_only))}, and the stores cannot tell "
+                "how to write "
+                + ("it" if one else "them")
+                + " again (a backend without a read the refresh needs, such "
+                "as a community below "
+                + ("it" if one else "them")
+                + " stored without a report): such a report may still state "
+                "the removed text and is flagged outdated where it is read; "
+                "no incremental run writes "
+                + ("it" if one else "them")
+                + ", a run with indexing.reset: true writes every report",
+                settings=[IndexArtifact.COMMUNITY_REPORTS.value],
+            )
+        )
+    return reasons
+
+
+def _kept(count: int) -> str:
+    """How many reports a removal kept outdated, as a clause."""
+    if count == 1:
+        return (
+            "1 community report was kept after documents it was written from "
+            "were deleted or changed"
+        )
+    return (
+        f"{count} community reports were kept after documents they were "
+        "written from were deleted or changed"
+    )
 
 
 def _community_depth_reasons(root_depth_reports: bool | None) -> list[RebuildReason]:

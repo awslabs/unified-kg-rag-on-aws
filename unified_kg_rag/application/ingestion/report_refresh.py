@@ -37,8 +37,11 @@ only seed-graph members, has no report in a full build: its report is
 deleted. A report the run cannot write again (the model failed, the stores
 could not be read, or one below it got no report this run and it rolls its
 children up) stays flagged outdated and listed in the build record, and the
-next run tries again; so does one with a community below it the graph store
-cannot read (a backend that cannot tell), until ``indexing.reset: true``.
+next run tries again. One the stores cannot tell how to write again (a
+backend that cannot read reports by id, find what text units state, or read
+a community below it stored without a report) stays outdated until
+``indexing.reset: true`` (``RefreshedReports.reset_only``), and the build
+record says so (``IndexBuildRecord.reset_only_reports``).
 """
 
 from __future__ import annotations
@@ -102,6 +105,10 @@ class RefreshedReports(NamedTuple):
     kept: set[str]
     # The store writes (``IndexingStats`` by write).
     results: dict[str, IndexingStats]
+    # Of ``kept``, those the stores cannot tell how to write again (a
+    # backend without the read the refresh needs): no later incremental run
+    # writes them, only ``indexing.reset: true``.
+    reset_only: set[str]
 
 
 class _Hierarchy(NamedTuple):
@@ -157,7 +164,7 @@ class ReportRefresh:
         """
         ids = set(report_ids)
         if not ids:
-            return RefreshedReports(set(), set(), set(), {})
+            return RefreshedReports(set(), set(), set(), {}, set())
         try:
             return self._refresh(suffix, ids, set(candidates))
         except NamespaceLeaseError:
@@ -172,7 +179,7 @@ class ReportRefresh:
                 suffix,
                 error=e,
             )
-            return RefreshedReports(set(), set(), ids, {})
+            return RefreshedReports(set(), set(), ids, {}, set())
 
     def _refresh(
         self, suffix: str, ids: set[str], candidates: set[str]
@@ -188,7 +195,7 @@ class ReportRefresh:
                 len(ids),
                 suffix,
             )
-            return RefreshedReports(set(), set(), ids, {})
+            return RefreshedReports(set(), set(), ids, {}, set(ids))
         outdated = {r.community_id: r for r in stored}
         gone = ids - {r.id for r in stored}
         hierarchy = self._hierarchy(suffix, outdated)
@@ -205,11 +212,12 @@ class ReportRefresh:
         if read is None:
             logger.warning(
                 "The graph store cannot find what text units state: %d outdated "
-                "community reports of '%s' stay outdated",
+                "community reports of '%s' stay outdated until indexing.reset: "
+                "true writes them again",
                 len(ids),
                 suffix,
             )
-            return RefreshedReports(set(), set(), ids, {})
+            return RefreshedReports(set(), set(), ids, {}, set(ids))
         members, graph = read
         communities: list[Community] = []
         emptied: set[str] = set()
@@ -249,6 +257,7 @@ class ReportRefresh:
             emptied | gone,
             ids - written - emptied - gone,
             results,
+            unread,
         )
 
     def _hierarchy(

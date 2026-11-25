@@ -290,6 +290,68 @@ def test_the_record_keeps_the_outdated_reports_until_a_run_writes_them() -> None
     assert unknown.over(old).outdated_reports is None
 
 
+def test_reports_the_stores_cannot_write_again_need_a_reset() -> None:
+    # r8diff-2: a backend without a read the refresh needs keeps them for
+    # good; the record names them, and the reason says a reset writes them,
+    # apart from those the next run tries again.
+    config = Config()
+    record = _record(
+        config,
+        outdated_reports=["r1", "r2", "r3"],
+        reset_only_reports=["r2", "r9"],
+    )
+    retried, reset = rebuild_reasons(record, config)
+    assert retried.kind is reset.kind is RebuildReasonKind.OUTDATED_REPORTS
+    assert retried.remedy is RebuildRemedy.NEXT_RUN
+    assert retried.detail.startswith("2 community reports were kept")
+    assert reset.remedy is RebuildRemedy.RESET
+    # Only the listed ones still outdated count (r9 is not).
+    assert reset.detail.startswith("1 community report was kept")
+    assert "no incremental run writes it" in reset.detail
+    assert "next incremental run" not in reset.detail
+    (only,) = rebuild_reasons(
+        _record(config, outdated_reports=["r2"], reset_only_reports=["r2"]), config
+    )
+    assert only.remedy is RebuildRemedy.RESET
+
+
+def test_the_record_keeps_the_reset_only_reports_until_a_run_tries_them() -> None:
+    config = Config()
+    full = _record(config, outdated_reports=[], reset_only_reports=[])
+
+    def delta(
+        outdated: list[str], written: list[str], reset_only: list[str] | None
+    ) -> IndexBuildRecord:
+        return IndexBuildRecord(
+            pipeline_id="delta",
+            mode="incremental",
+            built_at=datetime.now(UTC),
+            documents=1,
+            extraction_fingerprint="x",
+            outdated_reports=outdated,
+            reports_written=written,
+            reset_only_reports=reset_only,
+        )
+
+    first = delta(["r1", "r2"], [], ["r2"]).over(full)
+    assert first.reset_only_reports == ["r2"]
+    # A run that did not try them (its refresh did not run) keeps them.
+    kept = delta([], [], None).over(first.model_dump(mode="json"))
+    assert kept.outdated_reports == ["r1", "r2"]
+    assert kept.reset_only_reports == ["r2"]
+    # A run that tried them says what it found; one it wrote or deleted
+    # leaves both lists.
+    tried = delta([], ["r2"], ["r1", "r2"]).over(kept.model_dump(mode="json"))
+    assert tried.outdated_reports == ["r1"]
+    assert tried.reset_only_reports == ["r1"]
+    # A full build writes every report.
+    rebuilt = IndexBuildRecord.model_validate(full)
+    assert rebuilt.over(tried.model_dump(mode="json")).reset_only_reports == []
+    # A record from before the field tells nothing.
+    old = {k: v for k, v in full.items() if k != "reset_only_reports"}
+    assert delta(["r1"], [], None).over(old).reset_only_reports is None
+
+
 def _record_0_3_0(config: Config) -> dict[str, Any]:
     """A full build's record as 0.3.0 wrote it: its fields only (no
     document filter keys, answer fingerprints or outdated reports)."""

@@ -74,6 +74,23 @@ describe("rebuild due", () => {
     expect(item).not.toContain("far from the last full clustering");
   });
 
+  it("says only a reset writes reports the stores cannot write again (r8diff-2)", async () => {
+    serve({
+      ...held,
+      rebuild: [
+        { kind: "outdated_reports", remedy: "next_run", detail: "2 community reports were kept", settings: ["community_reports"] },
+        { kind: "outdated_reports", remedy: "reset", detail: "1 community report was kept", settings: ["community_reports"] },
+      ],
+    });
+    page("en");
+    await screen.findByText("default is due for a rebuild");
+    const [retried, reset] = screen.getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(retried).toContain("The next run tries to write them again from what remains, a model call each.");
+    expect(reset).toContain("could not be written again: they may still state the removed text.");
+    expect(reset).toContain("Only a run with “Rebuild the namespace” (More options) applies it.");
+    expect(reset).not.toContain("The next run");
+  });
+
   it("names reports at an earlier release's depths, and a kind it has no sentence for", async () => {
     serve({
       ...held,

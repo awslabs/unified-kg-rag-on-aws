@@ -827,12 +827,16 @@ class IncrementalIndexer:
                 if ids
             }
         for suffix, ids in sorted(left.items()):
+            # The refresh named the remedy of those only a reset writes.
+            retried = ids - self.indexing_manager.reset_only_reports.get(suffix, set())
+            if not retried:
+                continue
             logger.warning(
                 "%d community reports in '%s' cite removed text and stay "
                 "flagged outdated: the next run writes them again (rebuild "
                 "reason outdated_reports; indexing.reset: true rebuilds every "
                 "report)",
-                len(ids),
+                len(retried),
                 suffix,
             )
         self.community_drift = self._measure_drift(
@@ -913,7 +917,8 @@ class IncrementalIndexer:
         candidates. Those written again or deleted leave the run's outdated
         reports and are taken out of the record's
         (``IndexingManager.refreshed_reports``); the others stay, for the
-        next run, and are returned by suffix."""
+        next run, and are returned by suffix, those only a reset writes
+        noted (``IndexingManager.reset_only_reports``)."""
         left: dict[str, set[str]] = {}
         m = self.indexing_manager
         delta_reports: dict[str, set[str]] = defaultdict(set)
@@ -939,6 +944,7 @@ class IncrementalIndexer:
                 m.outdated_reports.get(suffix, set())
                 | set(listed if isinstance(listed, list) else ())
             ) - (m.deleted_reports.get(suffix, set()) | delta_reports[suffix])
+            m.reset_only_reports[suffix] = set()
             if not ids:
                 continue
             done = refresh(
@@ -949,6 +955,7 @@ class IncrementalIndexer:
             settled = done.written | done.deleted
             m.outdated_reports[suffix] = m.outdated_reports.get(suffix, set()) - settled
             m.refreshed_reports.setdefault(suffix, set()).update(settled)
+            m.reset_only_reports[suffix] = done.reset_only
             if ids - settled:
                 left[suffix] = ids - settled
         return left

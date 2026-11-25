@@ -37,7 +37,11 @@ from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
-from unified_kg_rag.domain.ingestion.rebuild_due import RebuildRemedy, rebuild_reasons
+from unified_kg_rag.domain.ingestion.rebuild_due import (
+    RebuildReasonKind,
+    RebuildRemedy,
+    rebuild_reasons,
+)
 from unified_kg_rag.domain.ingestion.report_references import REPORT_OUTDATED_FIELD
 from unified_kg_rag.domain.models import (
     Config,
@@ -47,6 +51,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import SeedGraphConfig
+from unified_kg_rag.ports.indexer import GraphIndexer
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
@@ -457,15 +462,12 @@ def test_a_parent_whose_child_the_removal_deleted_is_written_again(
     assert not any("Alder" in r["summary"] for r in reports.values())
 
 
-@pytest.mark.timeout(600)
-def test_a_parent_over_a_seed_only_child_is_written_again(
-    tmp_path: Path, store_harness: StoreHarness, caplog: pytest.LogCaptureFixture
-) -> None:
-    # B-1, from a fresh full build: the seed graph's triangle S is a
-    # community of its own, stored without a report (no document states
-    # it), under P(A, S), which lists it. Deleting a2.txt outdates P; it
-    # was kept for good. A full build writes P from A's members and S's:
-    # so does the refresh.
+def _seeded_forest(
+    tmp_path: Path, harness: StoreHarness
+) -> tuple[Config, Any, Path, dict, str]:
+    """The seed graph's triangle S, a community of its own stored without a
+    report (no document states it), under P(A, S), which lists it: the
+    config, providers, corpus, P's report and S's id."""
     a = _GROUPS["A"]
     seeded = _SEEDED
     nodes = [
@@ -495,7 +497,7 @@ def test_a_parent_over_a_seed_only_child_is_written_again(
         + f"{b[0]} works with {d[0]}. {b[1]} works with {d[1]}.",
         "d.txt": _triangle("D"),
     }
-    config, providers, source = _forest(tmp_path, store_harness, files, nodes + edges)
+    config, providers, source = _forest(tmp_path, harness, files, nodes + edges)
     before = _reports(config, providers)
     (parent,) = [
         r for s, r in _level1(before).items() if "Alder" in s and "Sequoia" in s
@@ -503,6 +505,19 @@ def test_a_parent_over_a_seed_only_child_is_written_again(
     (reportless,) = set(parent["child_community_ids"]) - {
         r["community_id"] for r in before.values()
     }
+    return config, providers, source, parent, reportless
+
+
+@pytest.mark.timeout(600)
+def test_a_parent_over_a_seed_only_child_is_written_again(
+    tmp_path: Path, store_harness: StoreHarness, caplog: pytest.LogCaptureFixture
+) -> None:
+    # B-1, from a fresh full build: deleting a2.txt outdates P; it was kept
+    # for good. A full build writes P from A's members and S's: so does the
+    # refresh.
+    config, providers, source, parent, reportless = _seeded_forest(
+        tmp_path, store_harness
+    )
     units = _unit_ids(config, providers)
 
     (source / "a2.txt").unlink()
@@ -514,5 +529,54 @@ def test_a_parent_over_a_seed_only_child_is_written_again(
         config, providers, caplog, units - _unit_ids(config, providers)
     )
     written = reports[parent["id"]]
-    assert all(n in written["summary"] for n in (*a, *seeded)), written["summary"]
+    assert all(n in written["summary"] for n in (*_GROUPS["A"], *_SEEDED)), written[
+        "summary"
+    ]
     assert reportless in written["child_community_ids"]
+
+
+@pytest.mark.timeout(600)
+def test_a_parent_a_backend_cannot_read_below_says_only_a_reset_writes_it(
+    tmp_path: Path,
+    store_harness: StoreHarness,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # r8diff-2: a custom graph backend that cannot read community vertices
+    # (GraphIndexer.read_community_children at the port's default) keeps P
+    # outdated until a reset (the maintainer's B-1 decision). Every surface
+    # names that remedy: one WARNING (not also "the next run writes them
+    # again"), the build record's reset_only_reports, and the rebuild
+    # reason run-describe shows (remedy reset, not next_run), run after run.
+    config, providers, source, parent, _ = _seeded_forest(tmp_path, store_harness)
+    graph = providers.build_graph_indexer()
+    try:
+        backend = type(graph)
+    finally:
+        graph.close()
+    monkeypatch.setattr(
+        backend, "read_community_children", GraphIndexer.read_community_children
+    )
+    (source / "a2.txt").unlink()
+    for run in ("run2", "run3"):
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            done = e2e._ingest(config, providers, source, tmp_path / run)
+        assert done.status is PipelineStageStatus.COMPLETED, e2e._errors(done)
+        assert REPORT_OUTDATED_FIELD in _reports(config, providers)[parent["id"]]
+        warned = _logged(caplog, logging.WARNING, "outdated")
+        (kept,) = [w for w in warned if "due for a rebuild" not in w]
+        assert "indexing.reset: true writes them again" in kept
+        assert not [w for w in warned if "the next run writes" in w], warned
+        # The rebuild-due WARNING of the run that writes the record carries
+        # its reason.
+        due = [w for w in warned if "due for a rebuild" in w]
+        assert due or run == "run3"
+        assert all("no incremental run writes it" in w for w in due), due
+        record = _record(providers)
+        assert record["outdated_reports"] == [parent["id"]]
+        assert record["reset_only_reports"] == [parent["id"]]
+        (reason,) = rebuild_reasons(record, config)
+        assert reason.kind is RebuildReasonKind.OUTDATED_REPORTS
+        assert reason.remedy is RebuildRemedy.RESET
+        assert "no incremental run writes it" in reason.detail

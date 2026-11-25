@@ -290,7 +290,7 @@ export function IngestPage({ status, namespace, onJobsChanged }: { status: Statu
                 <Notice tone="warn" title={t("ingest.rebuildTitle", { namespace: held.data.namespace })}>
                   <ul style={{ margin: 0, paddingLeft: 18 }}>
                     {held.data.rebuild.map((reason) => (
-                      <li key={`${reason.kind}-${reason.settings.join(",")}`} title={reason.detail}>
+                      <li key={`${reason.kind}-${reason.remedy}-${reason.settings.join(",")}`} title={reason.detail}>
                         {joinSentences([reasonText(reason, t), t(remedyKey(reason), { option: t("ingest.reset"), section: t("ingest.advanced") })], t)}
                         {reason.settings.length && !NAMES_ITS_ARTIFACT.has(reason.kind) ? <span className="field-help"> {reason.settings.join(", ")}</span> : null}
                       </li>
@@ -399,9 +399,10 @@ export function resetReasons(job: Pick<JobRecord, "result">): RebuildReason[] {
   return [...kinds.values()];
 }
 
-/** The reasons whose remedy has a sentence of its own: outdated reports are
- * written again by the next run (report_refresh), not by "extracting or
- * rebuilding". */
+/** The reasons whose next-run remedy has a sentence of its own: outdated
+ * reports are written again by the next run (report_refresh), not by
+ * "extracting or rebuilding". Those the stores cannot write again come with
+ * remedy reset and take its sentence. */
 const OWN_REMEDY = new Set<RebuildReason["kind"]>(["outdated_reports"]);
 /** The reasons whose `settings` is the artifact their sentence names (the
  * community reports), not a setting to show. */
@@ -409,7 +410,7 @@ const NAMES_ITS_ARTIFACT = new Set<RebuildReason["kind"]>(["outdated_reports", "
 
 /** The catalog key of what applies `reason`. */
 function remedyKey(reason: RebuildReason): string {
-  return OWN_REMEDY.has(reason.kind) ? `ingest.rebuildRemedy.${reason.kind}` : `ingest.rebuildRemedy.${reason.remedy}`;
+  return OWN_REMEDY.has(reason.kind) && reason.remedy === "next_run" ? `ingest.rebuildRemedy.${reason.kind}` : `ingest.rebuildRemedy.${reason.remedy}`;
 }
 
 /** Why `reason` is due, in the page's language; a kind this page has no

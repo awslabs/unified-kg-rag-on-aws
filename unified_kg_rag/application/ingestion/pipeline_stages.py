@@ -3511,6 +3511,10 @@ class IndexingStage(_RegistryStage):
                 update["outdated_reports"] = sorted(
                     manager.outdated_reports.get(suffix, ())
                 )
+                if suffix in manager.reset_only_reports:
+                    update["reset_only_reports"] = sorted(
+                        manager.reset_only_reports[suffix]
+                    )
                 update["reports_written"] = sorted(
                     written_reports[suffix]
                     | manager.deleted_reports.get(suffix, set())
@@ -3519,6 +3523,7 @@ class IndexingStage(_RegistryStage):
             elif not rewritten:
                 # A full build writes every report.
                 update["outdated_reports"] = []
+                update["reset_only_reports"] = []
             if not incremental and (not rewritten or added[suffix]):
                 update["communities"] = CommunityCounters(
                     clustered_at=record.built_at,

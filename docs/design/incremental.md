@@ -613,10 +613,13 @@ without that child's roll-up, the parent would never be asked again once
 the child is) stays flagged and in
 the build record (`IndexBuildRecord.outdated_reports`, an `outdated_reports`
 rebuild reason with remedy `next_run`), and the next run, a run with
-nothing to index included, tries again; one with a community below it
-stored without a report on a graph backend that cannot read community
-vertices (`GraphIndexer.read_community_children` at its default) stays
-until `indexing.reset: true`. Property tests check that the
+nothing to index included, tries again; one the stores cannot tell how to
+write again (a community below it stored without a report on a graph
+backend that cannot read community vertices,
+`GraphIndexer.read_community_children` at its default, or a backend
+without the other reads the refresh needs) stays until `indexing.reset:
+true`, listed in `IndexBuildRecord.reset_only_reports` (an
+`outdated_reports` reason with remedy `reset`). Property tests check that the
 model is asked with what a full build's detector packs for the same
 community over the surviving graph, over two- and three-level hierarchies
 with seed-only, report-less and deleted communities, and that no report is
