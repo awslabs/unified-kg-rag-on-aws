@@ -13,7 +13,7 @@ import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Final, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, Generic, NamedTuple, TypeVar
 
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.exceptions import OutputParserException
@@ -862,6 +862,48 @@ class _ElementScan:
         return start, end
 
 
+_Frame = TypeVar("_Frame")
+
+
+class _OpenElements(Generic[_Frame]):
+    """The elements open at one point of a tag scan, innermost last, each
+    with a name and a frame of the caller's state.
+
+    The innermost open element of a name is found in O(1) (each name keeps
+    where its open elements sit), and closing elements costs one step per
+    element closed, so one scan over n tags takes O(n) however deep the
+    elements nest. A list searched by name took O(depth) per tag, O(n^2) on
+    a few thousand nested tags."""
+
+    def __init__(self) -> None:
+        self.names: list[str] = []
+        self.frames: list[_Frame] = []
+        self._at: defaultdict[str, list[int]] = defaultdict(list)
+
+    def __len__(self) -> int:
+        return len(self.names)
+
+    def push(self, name: str, frame: _Frame) -> None:
+        self._at[name].append(len(self.names))
+        self.names.append(name)
+        self.frames.append(frame)
+
+    def innermost(self, name: str) -> int | None:
+        """Where the innermost open element named ``name`` sits, if any."""
+        at = self._at.get(name)
+        return at[-1] if at else None
+
+    def positions(self, name: str) -> list[int]:
+        """Where the open elements named ``name`` sit, outermost first."""
+        return self._at.get(name, [])
+
+    def close_through(self, index: int) -> None:
+        """Close the element at ``index`` and every element inside it."""
+        while len(self.names) > index:
+            self._at[self.names.pop()].pop()
+            self.frames.pop()
+
+
 def _holds_text_only(value: Any) -> bool:
     """Whether a parsed section is text without any element."""
     return isinstance(value, str) and _TAG.search(value) is None
@@ -915,12 +957,6 @@ class _Section(NamedTuple):
     closed: bool
 
 
-def _starts_line(text: str, index: int) -> bool:
-    """Whether only whitespace precedes ``index`` on its line: a section tag
-    a model writes, not one prose names ("the <relationships> above")."""
-    return not text[text.rfind("\n", 0, index) + 1 : index].strip()
-
-
 def _content_elements(text: str, expected: set[str]) -> set[int]:
     """Where each element of ``text`` that is not an expected section but
     holds one as content starts: it is closed and has a closed child that is
@@ -928,26 +964,24 @@ def _content_elements(text: str, expected: set[str]) -> set[int]:
     ``<explanation>``). An expected tag inside one is not top-level. An
     element holding expected sections only (an ``<output>`` wrapper) or never
     closed (prose naming a tag) hides nothing."""
-    open_elements: list[tuple[str, int, bool]] = []  # name, start, has content
+    open_elements: _OpenElements[list[Any]] = _OpenElements()  # [start, has content]
     containers: set[int] = set()
     for match in _TAG.finditer(text):
         is_close, name, rest = match.group(1), match.group(2), match.group(3)
         if not is_close:
             if not rest.rstrip().endswith("/"):
-                open_elements.append((name, match.start(), False))
+                open_elements.push(name, [match.start(), False])
             continue
-        names = [element[0] for element in open_elements]
-        if name not in names:
+        index = open_elements.innermost(name)
+        if index is None:
             continue
-        index = len(names) - 1 - names[::-1].index(name)
-        _, element_start, has_content = open_elements[index]
-        del open_elements[index:]
+        element_start, has_content = open_elements.frames[index]
+        open_elements.close_through(index)
         if name not in expected:
             if has_content:
                 containers.add(element_start)
             if open_elements:
-                parent, parent_start, _ = open_elements[-1]
-                open_elements[-1] = (parent, parent_start, True)
+                open_elements.frames[-1][1] = True
     return containers
 
 
@@ -1241,70 +1275,102 @@ class RobustXMLOutputParser(XMLOutputParser):
             return ()
         containers = _content_elements(text, expected)
         sections: list[_Section] = []
-        stack: list[str] = []
-        outer: list[str] = []  # open containers outside any section
+        stack: _OpenElements[None] = _OpenElements()
+        outer: _OpenElements[None] = _OpenElements()  # containers outside sections
+        closed: set[str] = set()  # the sections closed at the top level so far
+        last_end_tags: dict[str, int] = {}
         start = 0
         after_section = -1  # where the last closed top-level section ended
+        previous_end = 0  # where the tag before this one ended
+        # Each tag reads only the text since the tag before it, and the end
+        # tags of a name are found once: one pass is O(n) (slicing back to
+        # the line start or the last section was O(n^2) on a long line).
         for match in _TAG.finditer(text):
+            gap_start, previous_end = previous_end, match.end()
             is_close, name, rest = match.group(1), match.group(2), match.group(3)
             if name not in expected:
                 if stack:
                     continue
                 if is_close:
-                    if name in outer:
-                        del outer[len(outer) - 1 - outer[::-1].index(name) :]
+                    if (index := outer.innermost(name)) is not None:
+                        outer.close_through(index)
                 elif match.start() in containers:
-                    outer.append(name)
+                    outer.push(name, None)
                 continue
             if outer:
                 continue
             if is_close:
-                if name in stack:
-                    del stack[len(stack) - 1 - stack[::-1].index(name) :]
+                if (index := stack.innermost(name)) is not None:
+                    stack.close_through(index)
                     if not stack:
                         sections.append(_Section(name, start, match.end(), True))
+                        closed.add(name)
                         after_section = match.end()
                 continue
             self_closing = rest.rstrip().endswith("/")
-            if stack and not (name == stack[0] and _starts_line(text, match.start())):
+            gap = text[gap_start : match.start()]
+            # Only whitespace before the tag on its line: every tag is text
+            # that is not whitespace, so a line start since the tag before.
+            line = gap.rfind("\n")
+            starts_line = (
+                not gap[line + 1 :].strip()
+                if line >= 0
+                else gap_start == 0 and not gap.strip()
+            )
+            if stack and not (name == stack.names[0] and starts_line):
                 if not self_closing:
-                    stack.append(name)
+                    stack.push(name, None)
                 continue
             if not stack and not (
-                _starts_line(text, match.start())
-                or (
-                    after_section >= 0
-                    and not text[after_section : match.start()].strip()
+                starts_line
+                or (gap_start == after_section and not gap.strip())
+                or RobustXMLOutputParser._repeats_closed_section(
+                    text, match, closed, last_end_tags
                 )
-                or RobustXMLOutputParser._repeats_closed_section(text, match, sections)
             ):
                 continue
             if stack:
-                sections.append(_Section(stack[0], start, match.start(), False))
-                stack = []
+                sections.append(_Section(stack.names[0], start, match.start(), False))
+                stack = _OpenElements()
             if self_closing:
                 sections.append(_Section(name, match.start(), match.end(), True))
+                closed.add(name)
                 after_section = match.end()
             else:
-                stack, start = [name], match.start()
+                stack, start = _OpenElements(), match.start()
+                stack.push(name, None)
         if stack:
-            sections.append(_Section(stack[0], start, len(text), False))
+            sections.append(_Section(stack.names[0], start, len(text), False))
         return tuple(sections)
 
     @staticmethod
     def _repeats_closed_section(
-        text: str, match: re.Match[str], sections: list[_Section]
+        text: str,
+        match: re.Match[str],
+        closed: set[str],
+        last_end_tags: dict[str, int],
     ) -> bool:
         """Whether a mid-line opening tag starts a section again: one already
-        closed at the top level, written in full again (self-closing, or an
-        end tag of its name follows), as a model correcting itself after
-        prose on the same line ("... Sorry, correction: <entities>") does.
-        Prose naming a section ("the <entities> above") writes no end tag."""
+        closed at the top level (``closed``), written in full again
+        (self-closing, or an end tag of its name follows), as a model
+        correcting itself after prose on the same line ("... Sorry,
+        correction: <entities>") does. Prose naming a section ("the
+        <entities> above") writes no end tag. ``last_end_tags`` caches where
+        the last end tag of each name starts (-1: none), so the text is
+        searched once per name, not once per tag."""
         name = match.group(2)
-        if not any(section.closed and section.tag == name for section in sections):
+        if name not in closed:
             return False
-        return match.group(3).rstrip().endswith("/") or bool(
-            re.compile(rf"</{re.escape(name)}\s*>").search(text, match.end())
+        if name not in last_end_tags:
+            last_end_tags[name] = max(
+                (
+                    end_tag.start()
+                    for end_tag in re.finditer(rf"</{re.escape(name)}\s*>", text)
+                ),
+                default=-1,
+            )
+        return (
+            match.group(3).rstrip().endswith("/") or last_end_tags[name] >= match.end()
         )
 
     def _detect_xml_sections(self, text: str) -> set[str]:
@@ -1513,8 +1579,8 @@ class RobustXMLOutputParser(XMLOutputParser):
         Any other ``<`` left in text is escaped too.
         """
         vocabulary = RobustXMLOutputParser._structural_tag_names(text) | set(known_tags)
-        # Per open element: [name, has_child, has_text, escaped tag names].
-        stack: list[list[Any]] = []
+        # Per open element: [has_child, has_text, escaped tag names (counts)].
+        stack: _OpenElements[list[Any]] = _OpenElements()
         last_closed = ""
         out: list[str] = []
         pos = 0
@@ -1522,19 +1588,18 @@ class RobustXMLOutputParser(XMLOutputParser):
 
         def close_through(index: int) -> str:
             nonlocal last_closed
-            closes = []
-            while len(stack) > index:
-                last_closed = stack.pop()[0]
-                closes.append(f"</{last_closed}>")
+            closes = [f"</{name}>" for name in reversed(stack.names[index:])]
+            last_closed = stack.names[index]
+            stack.close_through(index)
             if stack:
-                stack[-1][1] = True
+                stack.frames[-1][0] = True
             return "".join(closes)
 
         def next_tag_closes_innermost(i: int) -> bool:
             if i + 1 >= len(matches):
                 return False
             following = matches[i + 1]
-            return bool(following.group(1)) and following.group(2) == stack[-1][0]
+            return bool(following.group(1)) and following.group(2) == stack.names[-1]
 
         for i, match in enumerate(matches):
             is_close, name, rest = match.group(1), match.group(2), match.group(3)
@@ -1542,37 +1607,37 @@ class RobustXMLOutputParser(XMLOutputParser):
             segment = text[pos : match.start()]
             segment = re.sub(r"<(?![!?])", "&lt;", segment)
             if stack and segment.strip():
-                stack[-1][2] = True
-            top = stack[-1] if stack else None
-            names = [frame[0] for frame in stack]
+                stack.frames[-1][1] = True
+            top = stack.frames[-1] if stack else None
             if is_close:
-                if top is not None and name in top[3]:
-                    top[3].remove(name)
+                if top is not None and top[2][name]:
+                    top[2][name] -= 1
                     tag = _escape_markup(tag)
-                elif name in names:
-                    index = len(names) - 1 - names[::-1].index(name)
+                elif (index := stack.innermost(name)) is not None:
                     tag = close_through(index)
-                elif top is None or name == last_closed or top[1]:
+                elif top is None or name == last_closed or top[0]:
                     tag = ""
                 elif next_tag_closes_innermost(i):
                     tag = ""
                 else:
                     tag = close_through(len(stack) - 1)
-            elif top is not None and top[2] and not top[1] and name not in vocabulary:
+            elif top is not None and top[1] and not top[0] and name not in vocabulary:
                 if not rest.rstrip().endswith("/"):
-                    top[3].append(name)
+                    top[2][name] += 1
                 tag = _escape_markup(tag)
             else:
                 prefix = ""
-                for index in range(len(stack) - 1, -1, -1):
-                    if stack[index][0] == name and stack[index][1]:
+                # Every open element but the innermost has a child (the one
+                # opened in it), so this looks at two elements at most.
+                for index in reversed(stack.positions(name)):
+                    if stack.frames[index][0]:
                         prefix = close_through(index)
                         break
                 if stack:
-                    stack[-1][1] = True
+                    stack.frames[-1][0] = True
                 last_closed = ""
                 if not rest.rstrip().endswith("/"):
-                    stack.append([name, False, False, []])
+                    stack.push(name, [False, False, Counter()])
                 tag = prefix + tag
             out.append(segment)
             out.append(tag)
