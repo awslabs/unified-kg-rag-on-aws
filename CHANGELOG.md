@@ -1095,6 +1095,9 @@ Bugs present in 0.3.0.
   whichever thread took it, so the stop runs as before (143 or 130, the same spans and audit records).
 
 ### Security
+- The image upgrades `libzstd1` to the Debian security release fixing CVE-2026-124851 (HIGH, an information
+  disclosure through uninitialized memory), which the `python:3.12-slim` base still carries; the pin goes once the
+  base digest ships it.
 - ragas 0.4.4 fixes the multi-modal SSRF (PYSEC-2026-3046 / GHSA-95ww-475f-pr4f), one of the two advisories 0.3.0
   accepted: the `eval` extra requires it (`ragas>=0.4.4`), and the pip-audit job no longer accepts the advisory
   (`.github/pip-audit-accepted.txt` lists only diskcache PYSEC-2026-2447).

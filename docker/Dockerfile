@@ -81,12 +81,14 @@ FROM ${BASE_IMAGE} AS runtime
 # + satisfies SAST). Bump the pin when the python:3.12-slim base advances and
 # it is dropped from the apt repo (check with `apt-cache policy libgomp1` in
 # the base image). zlib1g is upgraded to the Debian security release that fixes
-# CVE-2026-76844 and CVE-2026-85091 (HIGH): the base image still carries the
-# vulnerable build, so the image scan would fail; drop the pin once the base
-# digest ships the fixed version.
+# CVE-2026-76844 and CVE-2026-85091 (HIGH), and libzstd1 to the one that fixes
+# CVE-2026-124851 (HIGH): the base image still carries the vulnerable builds,
+# so the image scan would fail; drop each pin once the base digest ships the
+# fixed version.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libgomp1=14.2.0-19 \
+        libzstd1=1.5.7+dfsg-1+deb13u1 \
         zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
