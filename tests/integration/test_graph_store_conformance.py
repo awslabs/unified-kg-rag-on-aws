@@ -436,6 +436,45 @@ def test_read_community_children_reads_the_hierarchy_of_a_suffix(
     assert graph.read_community_children([], suffix="default") == {}
 
 
+def test_read_communities_round_trips_a_community_vertex(
+    harness: StoreHarness,
+) -> None:
+    # r8diff-6: a community stored without a report is written again from
+    # its members: its place (level, parent, children) and the detector's
+    # attributes are read back from its vertex, which holds no member ids.
+    graph = harness.graph_indexer
+    tenant = harness.suffix("s1")
+    stored = _community("p", ["a", "b"]).model_copy(
+        update={
+            "level": "1",
+            "parent": "",
+            "children": ["c1", "c2"],
+            "text_unit_ids": ["t1", "t2"],
+            "size": 2,
+            "attributes": {"entity_names": ["A", "B"], "density": 0.5},
+        }
+    )
+    graph.upsert_communities(
+        [stored, _community("c1", ["a"]), _community("x", ["a"], tenant)]
+    )
+    found = graph.read_communities(["c9", "p", "c1"], suffix="default")
+    assert [c.id for c in found or []] == ["p", "c1"]
+    p, c1 = found
+    assert (p.name, p.level, p.parent, sorted(p.children)) == (
+        "p",
+        "1",
+        "",
+        ["c1", "c2"],
+    )
+    assert (sorted(p.text_unit_ids or []), p.size) == (["t1", "t2"], 2)
+    assert sorted(p.attributes["entity_names"]) == ["A", "B"]
+    assert p.attributes["density"] == 0.5
+    assert p.entity_ids is None and p.relationship_ids is None
+    assert (c1.level, c1.parent, c1.children, c1.text_unit_ids) == ("0", "-1", [], None)
+    assert [c.id for c in graph.read_communities(["x", "p"], suffix=tenant)] == ["x"]
+    assert graph.read_communities([], suffix="default") == []
+
+
 def test_find_relationship_ids_citing_reads_the_edges_of_a_suffix(
     harness: StoreHarness,
 ) -> None:

@@ -226,7 +226,8 @@ class IndexBuildRecord(BaseModel):
         description=(
             "Of outdated_reports, those the stores cannot tell how to write "
             "again (a backend without a read the refresh needs, such as "
-            "GraphIndexer.read_community_children): no incremental run "
+            "GraphIndexer.read_communities and read_community_children): no "
+            "incremental run "
             "writes them, only a run with indexing.reset: true. An "
             "incremental record whose run did not try them keeps the stored "
             "list. None in a record written by an earlier version."

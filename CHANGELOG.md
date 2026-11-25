@@ -634,7 +634,8 @@ Bugs present in 0.3.0.
   a report (one a removal deleted, a seed-only one, one whose report failed) is written again too, from its members
   read down the stored hierarchy, a child without a report through its graph vertex
   (`GraphIndexer.read_community_children`), as a full build packs it; a deleted child is no longer listed. On a graph
-  backend that cannot read community vertices (the method at the port's default) such a parent stays until
+  backend that cannot read community vertices (`read_communities` and `read_community_children` at the port's
+  defaults) such a parent stays until
   `indexing.reset: true`: the build record lists it in `reset_only_reports`, its rebuild reason says remedy `reset`,
   and its run's WARNING names that remedy alone. A note in
   the extraction store lists the flagged
@@ -1105,6 +1106,13 @@ Bugs present in 0.3.0.
   the shutdown cuts gets `503` with a JSON-RPC error (code `-32000`) saying the server is shutting down, not a bare
   `500`. Started in the background (SIGINT inherited ignored), the server exited `0` at a Ctrl-C; it exits `130`, as
   `run-console` does.
+- An incremental run that removed some of the text units of a community stored without a report (a seed-only one,
+  after an edit to one of its seed shards, or one whose report failed or was emptied) left the removed units in the
+  community's graph vertex, since only a report's refresh wrote a vertex again. Such a vertex is now written again
+  from the community's current members, as a refreshed report's is, and deleted when none is left; the removal lists
+  it in its outdated-report note, so a run killed before its commit leaves it to the next. A graph backend reads the
+  vertices through the new `GraphIndexer.read_communities` (`read_community_children` now reads through it); one
+  that leaves it at its default keeps the vertex as stored, as before.
 
 ### Security
 - The image upgrades `libzstd1` to the Debian security release fixing CVE-2026-124851 (HIGH, an information

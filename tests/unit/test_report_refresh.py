@@ -394,13 +394,18 @@ def test_a_reportless_child_reads_its_level0_communities_through_its_vertex() ->
     assert parent.child_community_ids == ["c1", "m"]
 
 
-def test_a_child_the_graph_store_cannot_read_keeps_its_parent(caplog) -> None:
+@pytest.mark.parametrize("unread", ["read_community_children", "read_communities"])
+def test_a_child_the_graph_store_cannot_read_keeps_its_parent(
+    caplog, unread: str
+) -> None:
     # A backend that cannot tell a community's children (the port's
-    # default): p's members cannot be told, so p is kept, and the warning
-    # names the remedy that writes it.
+    # default; the fake's read_community_children, as the port's, reads
+    # through read_communities, so a backend without either cannot walk):
+    # p's members cannot be told, so p is kept, and the warning names the
+    # remedy that writes it.
     config = _config()
     graph, vector = _stores(config, child_report=False)
-    graph.read_community_children = lambda ids, suffix=None: None
+    setattr(graph, unread, lambda ids, suffix=None: None)
     model = _Reports()
     done = _refresh(config, graph, vector, model)("default", _OUTDATED, {"acme"})
     assert done.written == {community_report_id("c1")}
@@ -464,7 +469,9 @@ def test_a_seed_only_child_is_emptied_and_its_parent_written_again() -> None:
     assert first.deleted == {c2}
     assert first.written == _OUTDATED
     assert c2 not in vector.ids("community_reports")
-    assert ("default", "c2") in graph.data["communities"]
+    # Its vertex is written again from its members, as a refreshed one.
+    vertex = graph.data["communities"][("default", "c2")]
+    assert (vertex.text_unit_ids, vertex.size) == ([seed], 2)
     (parent,) = vector.read_community_reports([community_report_id("p")])
     assert parent.summary == "Members: Acme, Carrier, Depot."
     assert parent.child_community_ids == ["c1", "c2"]
@@ -786,7 +793,7 @@ def test_only_a_note_the_run_read_or_wrote_is_cleared(mocker) -> None:
     delete.assert_not_called()
 
     vector.write_extraction_records({OUTDATED_REPORTS: {"report_ids": ["r1"]}})
-    assert manager.read_outdated_note("default") == ({"r1"}, set())
+    assert manager.read_outdated_note("default") == ({"r1"}, set(), set())
     manager.clear_outdated_note("default")
     assert OUTDATED_REPORTS not in vector.read_extraction_records([OUTDATED_REPORTS])
     # A run starts knowing of none.
@@ -925,3 +932,65 @@ def test_a_refresh_on_a_store_that_cannot_read_unit_attributes_keeps_the_lineage
     # filters those stored with the report (the store cannot say less).
     assert reports["p"].text_unit_ids == ["t2", "t3"]
     assert _lineage(vector) == _STORED_LINEAGE
+
+
+def test_a_community_without_a_report_has_its_vertex_written_from_its_members() -> None:
+    # r8diff-6: c2 is stored without a report (seed-only, or its report
+    # failed) and its vertex cites t1, which a removal took: the refresh
+    # writes its vertex from its members (no model call), and deletes the
+    # vertex of one with no member left.
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.upsert_communities(
+        [_vertex("c2", ["t1", "t2", "t3"], 0), _vertex("c8", ["t1"], 0)]
+    )
+    model = _Reports()
+    done = _refresh(config, graph, vector, model)("default", (), (), {"c2", "c8"})
+    assert not (done.written | done.deleted | done.kept)
+    assert not model.inputs
+    vertex = graph.data["communities"][("default", "c2")]
+    assert vertex.text_unit_ids == ["t2", "t3"]
+    assert (vertex.size, vertex.level, vertex.parent) == (2, "0", "p")
+    assert vertex.attributes["entity_names"] == ["Carrier", "Depot"]
+    assert ("default", "c8") not in graph.data["communities"]
+
+
+def test_a_graph_that_cannot_read_vertices_keeps_them(caplog) -> None:
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.upsert_communities([_vertex("c2", ["t1", "t2", "t3"], 0)])
+    graph.read_communities = lambda ids, suffix=None: None
+    done = _refresh(config, graph, vector, _Reports())("default", (), (), {"c2"})
+    assert not (done.written | done.deleted | done.kept)
+    assert graph.data["communities"][("default", "c2")].text_unit_ids == [
+        "t1",
+        "t2",
+        "t3",
+    ]
+    (warning,) = [
+        r.getMessage()
+        for r in caplog.records
+        if "cannot read community vertices" in r.getMessage()
+    ]
+    assert "indexing.reset: true" in warning
+
+
+def test_a_removal_lists_the_communities_it_leaves_without_an_outdated_report(
+    mocker,
+) -> None:
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    _, manager, vector = _removal_stores()
+    graph = manager.graph_indexer
+    # s cites t1 and a unit left, and has no report; g cites only t1.
+    graph.upsert_communities([_vertex("s", ["t1", "t2"], 0), _vertex("g", ["t1"], 0)])
+    manager.remove_text_units("default", ["t1"])
+    # c1 and p have outdated reports (written again with their vertices).
+    assert manager.stale_communities == {"default": {"s"}}
+    note = vector.read_extraction_records([OUTDATED_REPORTS])[OUTDATED_REPORTS]
+    assert note["community_ids"] == ["s"]
+    # A successor of a run killed before its commit refreshes them too.
+    manager.reset_run_state()
+    assert not manager.stale_communities
+    manager.merge_outdated_note("default")
+    assert manager.stale_communities == {"default": {"s"}}

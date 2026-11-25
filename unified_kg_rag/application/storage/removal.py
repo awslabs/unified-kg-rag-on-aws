@@ -48,7 +48,10 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
     index_language,
     unbuilt_record_prefixes,
 )
-from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_lineage
+from unified_kg_rag.domain.ingestion.community_hierarchy import (
+    attach_report_lineage,
+    community_report_id,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     RECORD_KINDS,
@@ -167,7 +170,16 @@ class TextUnitRemoval:
         )
         if summaries.total_items or summaries.failed_items:
             results[f"vector_summary_nodes_{suffix}"] = summaries
-        if outdated:
+        # The communities kept with no outdated report (a seed-only one, one
+        # whose report failed or was emptied): their graph vertices are
+        # written again from their current members by the same refresh.
+        flagged = set(outdated)
+        stale = sorted(
+            i
+            for i, units in citing.communities.items()
+            if not gone(units) and community_report_id(i) not in flagged
+        )
+        if outdated or stale:
             # Noted, then flagged, before the text they were written from is
             # stripped from the rest: a run that dies after this leaves them
             # flagged, and listed for its successor's refresh. A note that
@@ -175,26 +187,35 @@ class TextUnitRemoval:
             # it is retried).
             key = f"vector_outdated_reports_{suffix}"
             try:
-                m.note_outdated_reports(suffix, outdated, shared_entities)
+                m.note_outdated_reports(suffix, outdated, shared_entities, stale)
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - reported as failed items
+                noted = len(outdated) + len(stale)
                 log_error(
                     logger,
                     logging.ERROR,
-                    "Noting %d outdated community reports of '%s' failed: %s",
+                    "Noting %d outdated community reports and %d communities "
+                    "of '%s' failed: %s",
                     len(outdated),
+                    len(stale),
                     suffix,
                     error=e,
                 )
-                results[key] = IndexingStats(total_items=len(outdated))
-                results[key].add_error(e, count=len(outdated))
+                results[key] = IndexingStats(total_items=noted)
+                results[key].add_error(e, count=noted)
             else:
-                narrowed = self._narrow_reports(suffix, outdated, set(text_unit_ids))
-                if narrowed is not None:
-                    results[f"vector_narrowed_reports_{suffix}"] = narrowed
-                results[key] = m.vector_indexer.mark_reports_outdated(outdated, suffix)
-                m.outdated_reports.setdefault(suffix, set()).update(outdated)
+                m.stale_communities.setdefault(suffix, set()).update(stale)
+                if outdated:
+                    narrowed = self._narrow_reports(
+                        suffix, outdated, set(text_unit_ids)
+                    )
+                    if narrowed is not None:
+                        results[f"vector_narrowed_reports_{suffix}"] = narrowed
+                    results[key] = m.vector_indexer.mark_reports_outdated(
+                        outdated, suffix
+                    )
+                    m.outdated_reports.setdefault(suffix, set()).update(outdated)
         m.deleted_reports.setdefault(suffix, set()).update(
             i for i, units in citing.reports.items() if gone(units)
         )

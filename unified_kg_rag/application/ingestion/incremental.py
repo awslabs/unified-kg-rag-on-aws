@@ -888,7 +888,7 @@ class IncrementalIndexer:
         suffix. A note that cannot be read is kept for a later run."""
         m = self.indexing_manager
         candidates: dict[str, set[str]] = {}
-        for suffix in sorted({*m.outdated_reports, self.suffix}):
+        for suffix in sorted({*m.outdated_reports, *m.stale_communities, self.suffix}):
             try:
                 candidates[suffix] = m.merge_outdated_note(suffix)
             except NamespaceLeaseError:
@@ -918,13 +918,16 @@ class IncrementalIndexer:
         reports and are taken out of the record's
         (``IndexingManager.refreshed_reports``); the others stay, for the
         next run, and are returned by suffix, those only a reset writes
-        noted (``IndexingManager.reset_only_reports``)."""
+        noted (``IndexingManager.reset_only_reports``). The communities the
+        removals left citing removed text with no outdated report
+        (``IndexingManager.stale_communities``) have their graph vertices
+        written again with them."""
         left: dict[str, set[str]] = {}
         m = self.indexing_manager
         delta_reports: dict[str, set[str]] = defaultdict(set)
         for report in written:
             delta_reports[BaseIndexer.get_suffix(report)].add(report.id)
-        for suffix in sorted({*m.outdated_reports, self.suffix}):
+        for suffix in sorted({*m.outdated_reports, *m.stale_communities, self.suffix}):
             try:
                 stored = m.vector_indexer.read_build_record(suffix) or {}
             except NamespaceLeaseError:
@@ -945,12 +948,14 @@ class IncrementalIndexer:
                 | set(listed if isinstance(listed, list) else ())
             ) - (m.deleted_reports.get(suffix, set()) | delta_reports[suffix])
             m.reset_only_reports[suffix] = set()
-            if not ids:
+            stale = m.stale_communities.get(suffix, set())
+            if not ids and not stale:
                 continue
             done = refresh(
                 suffix,
                 ids,
                 m.stripped_entities.get(suffix, set()) | candidates.get(suffix, set()),
+                stale,
             )
             settled = done.written | done.deleted
             m.outdated_reports[suffix] = m.outdated_reports.get(suffix, set()) - settled

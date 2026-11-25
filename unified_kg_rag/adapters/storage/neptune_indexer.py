@@ -50,7 +50,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     NAME_KEY_PROPERTY,
     census_row_from_edge,
     census_row_from_vertex,
-    community_children,
+    community_from_vertex,
     community_properties,
     edge_text_unit_ids,
     entity_from_vertex,
@@ -368,36 +368,31 @@ class NeptuneIndexer(GraphIndexer):
         except Exception as e:
             raise AWSServiceError.caused_by("Neptune read_entities failed", e) from e
 
-    def read_community_children(
+    def read_communities(
         self, ids: list[str], suffix: str | None = None
-    ) -> dict[str, list[str]] | None:
-        """The children of ``suffix``'s community vertices among ``ids``
-        (see the port).
+    ) -> list[Community]:
+        """``suffix``'s community vertices among ``ids`` (see the port).
 
         Raises:
             AWSServiceError: The read failed (see :meth:`read_entities`).
         """
         if not ids:
-            return {}
+            return []
         label = self._label(self.neptune_config.community_label_prefix, suffix)
         try:
             rows = self._read_batches(
                 ids,
-                lambda g, batch: self._vertices(g, (label,), batch)
-                .project("id", "children")
-                .by("id")
-                .by(__.values("children").fold()),
-                "read_community_children",
+                lambda g, batch: self._vertices(g, (label,), batch).valueMap(),
+                "read_communities",
             )
         except Exception as e:
-            raise AWSServiceError.caused_by(
-                "Neptune read_community_children failed", e
-            ) from e
-        return {
-            str(row["id"]): community_children(row)
-            for row in rows
-            if isinstance(row, dict) and "id" in row
+            raise AWSServiceError.caused_by("Neptune read_communities failed", e) from e
+        found = {
+            community.id: community
+            for community in (community_from_vertex(row) for row in rows)
+            if community is not None
         }
+        return [found[i] for i in dict.fromkeys(ids) if i in found]
 
     def read_relationships(
         self, ids: list[str], suffix: str | None = None

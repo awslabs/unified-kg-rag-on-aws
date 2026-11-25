@@ -233,7 +233,9 @@ def test_reports_written_again_converge_with_a_full_build_over_any_hierarchy(
     deletes anywhere in a two- or three-level hierarchy, every outdated
     report is written again as a full build's detector packs it, or deleted
     where a full build has none, and none is kept; flagged again later,
-    none is kept either."""
+    none is kept either. Every community vertex citing a removed unit, with
+    a report or without, holds its surviving members' units and size, or
+    is deleted with none left (r8diff-6)."""
     from tests.unit.test_report_refresh import _vertex
     from unified_kg_rag.domain.ingestion.seed_graph import seed_only
 
@@ -329,7 +331,16 @@ def test_reports_written_again_converge_with_a_full_build_over_any_hierarchy(
     providers = Providers(
         config, boto_session=MagicMock(), llm_factory=ScriptedLLMFactory(refreshed)
     )
-    done = ReportRefresh(manager, providers)("default", outdated, stripped)
+    # The communities the removal finds citing a removed unit, kept, with
+    # no outdated report (IndexingManager.stale_communities).
+    stale = {
+        c
+        for c in every
+        if c not in gone
+        and removed & set(full_units[c])
+        and community_report_id(c) not in outdated
+    }
+    done = ReportRefresh(manager, providers)("default", outdated, stripped, stale)
 
     # A full build's detector over the surviving graph, for the outdated
     # communities with their surviving members and children.
@@ -366,6 +377,22 @@ def test_reports_written_again_converge_with_a_full_build_over_any_hierarchy(
     for report in vector.read_community_reports(sorted(done.written)):
         # No deleted child is listed.
         assert not set(report.child_community_ids) & gone
+    vertices = graph.data.get("communities", {})
+    for c in every:
+        if c in gone or not removed & set(full_units[c]):
+            continue
+        members = [e for e in entities if e.community_ids[0] in under(c)]
+        vertex = vertices.get(("default", c))
+        if not members:
+            assert vertex is None, c
+            continue
+        assert vertex is not None, c
+        assert vertex.text_unit_ids == sorted(
+            {u for e in members for u in e.text_unit_ids}
+        ), c
+        assert vertex.size == len(members), c
+        assert vertex.level == str(level[c]), c
+        assert set(vertex.children) <= set(children.get(c, [])) - gone
 
     # A later removal flags them again: none is kept (no child the refresh
     # deleted or emptied leaves its parent stuck).
