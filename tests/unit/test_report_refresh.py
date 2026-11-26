@@ -955,6 +955,32 @@ def test_a_community_without_a_report_has_its_vertex_written_from_its_members() 
     assert ("default", "c8") not in graph.data["communities"]
 
 
+def test_a_parent_written_again_no_longer_lists_a_child_deleted_beside_it() -> None:
+    # r9diff-2: c8, stored without a report, keeps t9 but no member: the
+    # refresh deletes its vertex. p, refreshed in the same run, read its
+    # place before the deletion was known and still listed c8 in its
+    # report's child_community_ids and its vertex's children.
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.upsert_communities(
+        [
+            _vertex("c8", ["t1", "t9"], 0),
+            _vertex("p", ["t1", "t2", "t3", "t9"], 1, ["c1", "c2", "c8"]),
+        ]
+    )
+    vector.upsert_community_reports(
+        [_report("p", ["t1", "t2", "t3", "t9"], 1, children=["c1", "c2", "c8"])]
+    )
+    done = _refresh(config, graph, vector, _Reports())(
+        "default", _OUTDATED, {"acme"}, {"c2", "c8"}
+    )
+    assert done.written == _OUTDATED and not done.kept
+    assert ("default", "c8") not in graph.data["communities"]
+    assert graph.data["communities"][("default", "p")].children == ["c1", "c2"]
+    (report,) = vector.read_community_reports([community_report_id("p")])
+    assert report.child_community_ids == ["c1", "c2"]
+
+
 def test_a_graph_that_cannot_read_vertices_keeps_them(caplog) -> None:
     config = _config()
     graph, vector = _stores(config, child_report=False)

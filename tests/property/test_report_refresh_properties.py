@@ -374,10 +374,11 @@ def test_reports_written_again_converge_with_a_full_build_over_any_hierarchy(
     assert done.written == {community_report_id(c.id) for c in expected}
     assert done.deleted == outdated - done.written
     assert not done.kept
-    for report in vector.read_community_reports(sorted(done.written)):
-        # No deleted child is listed.
-        assert not set(report.child_community_ids) & gone
     vertices = graph.data.get("communities", {})
+    for report in vector.read_community_reports(sorted(done.written)):
+        # No deleted child is listed, nor one with no vertex (r9diff-2).
+        assert not set(report.child_community_ids) & gone
+        assert all(("default", k) in vertices for k in report.child_community_ids)
     for c in every:
         if c in gone or not removed & set(full_units[c]):
             continue
@@ -393,6 +394,7 @@ def test_reports_written_again_converge_with_a_full_build_over_any_hierarchy(
         assert vertex.size == len(members), c
         assert vertex.level == str(level[c]), c
         assert set(vertex.children) <= set(children.get(c, [])) - gone
+        assert all(("default", k) in vertices for k in vertex.children), c
 
     # A later removal flags them again: none is kept (no child the refresh
     # deleted or emptied leaves its parent stuck).
