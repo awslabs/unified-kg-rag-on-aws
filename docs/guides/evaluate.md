@@ -420,6 +420,14 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   records as `citations.strategies`) warns that the answer prompt differs
   too: `global` and `drift` do not cite by default, so they warn against
   the other strategies unless the map sets them alike.
+- Likewise, a comparison whose runs answered with different answer prompts
+  (`search.answer_prompt_style`, resolved for each run's strategy, which the
+  manifest records as `answer_prompt_style`) warns that its deltas measure
+  the prompt as well as the strategies: a comprehensive answer is a
+  multi-paragraph markdown answer, a concise one a direct sentence.
+  `global` is comprehensive by default, so it warns against the other
+  strategies unless the map sets them alike. A run saved before the style
+  was recorded is unknown, named in one warning. The scores are unchanged.
 - An arm retrieves on the base runs' query extractions (the translation,
   entities and keywords, one call each per question) when its overlay
   leaves them alone; one

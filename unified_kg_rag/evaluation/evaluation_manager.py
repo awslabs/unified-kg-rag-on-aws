@@ -1777,6 +1777,16 @@ class EvaluationManager:
                 },
                 "scoring": CITATION_SCORING,
             },
+            # The answer prompt each strategy's answers were written with
+            # (search.answer_prompt_style, resolved; auto's routes and
+            # iterative included): a concise and a comprehensive answer
+            # differ in length and shape, so a comparison of the two
+            # measures the prompt as well.
+            "answer_prompt_style": {
+                s.value: self.config.search.answer_prompt_style_for(s)
+                for s in SearchStrategy
+                if s is not SearchStrategy.AUTO
+            },
             # What the usage records count (USAGE_SCHEMA: 2 meters the
             # rerank requests), so a comparison prices like with like.
             "usage_schema": USAGE_SCHEMA,

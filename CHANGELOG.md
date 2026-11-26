@@ -434,6 +434,12 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 - MCP `kg_search` and `kg_answer` return the call's `cost_usd` and `unpriced_models`, as `run-rag`, the console and
   `RAGOutput.metadata` state them (`null` when a model called has no price in `models.prices`): they returned only
   `usage`, so an agent host that budgets per call priced the tokens itself.
+- The `run-eval` manifest records the answer prompt each strategy's answers were written with (`answer_prompt_style`:
+  `concise` or `comprehensive`, `search.answer_prompt_style` resolved), and a comparison of runs that differ warns
+  that its deltas measure the prompt as well as the strategies (`global` is comprehensive by default, so a default
+  `global` against another strategy warns), as it does for runs that differ in whether they cite. A run saved before
+  it was recorded is unknown, named in one warning; `--rescore` keeps the answering run's. No score changes
+  ([Evaluation output](docs/reference/evaluation-output.md#run-manifest)).
 
 ### Changed
 

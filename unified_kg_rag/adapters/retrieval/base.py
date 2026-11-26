@@ -692,14 +692,9 @@ def answer_prompt_class(
 ) -> type[BasePrompt]:
     """The answer prompt of ``strategy`` (``search.answer_prompt_style``):
     the concise default, or the comprehensive one."""
-    style = (
-        config.search.answer_prompt_style.get(strategy)
-        if strategy is not None
-        else None
-    )
     return (
         ComprehensiveAnswerPrompt
-        if style == "comprehensive"
+        if config.search.answer_prompt_style_for(strategy) == "comprehensive"
         else AnswerGenerationPrompt
     )
 

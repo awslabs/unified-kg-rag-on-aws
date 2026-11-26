@@ -196,6 +196,12 @@ The console prints the same summary.
   asked for markers) and `scoring` (`file_weighted`, how the citation
   metrics weigh a citation's files); a comparison warns when its runs
   differ in either;
+- `answer_prompt_style`: per strategy (`auto` aside: an `auto` run reads
+  the style of its routes), the answer prompt its answers were written
+  with (`concise` or `comprehensive`, `search.answer_prompt_style`
+  resolved); a comparison warns when its runs differ, and names in one
+  warning the runs saved before it was recorded (their style unknown). It
+  changes no score, and a `--rescore` keeps the answering run's;
 - `retrieval_config_sha256`, a hash of every configuration setting that
   can change an answer or a score (model ids and ingestion settings
   included; regions, endpoints, credentials, paths, timeouts and other

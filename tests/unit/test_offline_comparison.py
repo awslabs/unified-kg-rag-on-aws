@@ -1384,6 +1384,35 @@ def test_from_results_warns_on_pooled_runs_with_other_settings(
     assert any("different numbers of repeats (local 2, naive 1)" in w for w in warnings)
 
 
+def test_a_comparison_of_answer_prompt_styles_is_warned(tmp_path: Path) -> None:
+    # Through run-eval: the comparison's warnings name the runs whose
+    # answer prompts differ, and the scores are those saved.
+    styles = {"local": "concise", "global": "comprehensive"}
+    saved = tmp_path / "runs"
+    _saved_strategies(
+        saved, {"local": _BASE, "global": _WORSE}, answer_prompt_style=styles
+    )
+    code, out = _cli(
+        ["--from-results", str(saved), "--output-directory", str(tmp_path / "o")]
+    )
+    assert code == 0
+    (warning,) = [
+        w for w in out["comparison"]["warnings"] if "search.answer_prompt_style" in w
+    ]
+    assert "concise: local; comprehensive: global" in warning
+    alike = tmp_path / "alike"
+    _saved_strategies(
+        alike,
+        {"local": _BASE, "global": _WORSE},
+        answer_prompt_style={**styles, "global": "concise"},
+    )
+    code, out = _cli(
+        ["--from-results", str(alike), "--output-directory", str(tmp_path / "p")]
+    )
+    assert code == 0
+    assert not [w for w in out["comparison"]["warnings"] if "answer_prompt_style" in w]
+
+
 def test_saved_runs_without_a_summary_are_warned(tmp_path: Path) -> None:
     saved = tmp_path / "runs"
     _saved_comparison(saved, _WORSE)
@@ -1886,6 +1915,58 @@ def test_runs_are_compared_by_their_strategys_citations() -> None:
     whole = {"citations": {**new["citations"], "scoring": "whole"}}
     (only,) = citation_warnings([("local", new), ("global", whole)])
     assert "--rescore" not in only
+
+
+def test_runs_are_compared_by_their_strategys_answer_prompt_style() -> None:
+    # The manifest records, per strategy, the answer prompt its answers were
+    # written with: runs that differ are warned, runs that match are not,
+    # and runs saved before it was recorded are unknown, warned once.
+    from unified_kg_rag.evaluation.saved_results import answer_style_warnings
+
+    per = {"local": "concise", "mix": "concise", "global": "comprehensive"}
+    new = {"answer_prompt_style": per}
+    assert answer_style_warnings([("baseline:local", new), ("local", new)]) == []
+    (mixed,) = answer_style_warnings([("local", new), ("global", new)])
+    assert "(search.answer_prompt_style, per strategy; concise: local; " in mixed
+    assert "comprehensive: global)" in mixed
+    # Arms: the strategy before the arm separator decides.
+    concise = {"answer_prompt_style": {**per, "global": "concise"}}
+    assert answer_style_warnings([("global@concise", concise), ("local", new)]) == []
+    (arm,) = answer_style_warnings([("global", new), ("global@concise", concise)])
+    assert "comprehensive: global; concise: global@concise" in arm
+    # auto routes among strategies that differ.
+    (routed,) = answer_style_warnings([("auto", new), ("baseline:auto", concise)])
+    assert "per strategy: auto; concise: baseline:auto" in routed
+    # Unrecorded: one warning naming every such run, beside matching ones.
+    old: dict[str, Any] = {"answer_scoring": None}
+    (unknown,) = answer_style_warnings(
+        [("baseline:local", old), ("baseline:mix", old), ("local", new)]
+    )
+    assert "baseline:local, baseline:mix record no answer_prompt_style" in unknown
+    both = answer_style_warnings(
+        [("baseline:global", old), ("local", new), ("global", new)]
+    )
+    assert len(both) == 2
+    assert sum("record no answer_prompt_style" in w for w in both) == 1
+    # One run compares nothing; a run without a summary is not judged here.
+    assert answer_style_warnings([("local", old)]) == []
+    assert answer_style_warnings([("local", None), ("global", new)]) == []
+
+
+def test_a_rescore_keeps_the_answering_runs_answer_prompt_style(
+    tmp_path: Path,
+) -> None:
+    # The style is what wrote the answers, not what scores them: a re-score
+    # keeps the saved run's, and one saved before it was recorded stays
+    # unknown instead of taking the re-scoring config's.
+    from unified_kg_rag.application.cli.run_evaluation import rescored_manifest
+
+    scored = {"answer_prompt_style": {"global": "concise"}, "answer_scoring": {}}
+    saved = {"answer_prompt_style": {"global": "comprehensive"}}
+    kept = rescored_manifest(saved, scored, tmp_path / "r.json", None)
+    assert kept["answer_prompt_style"] == {"global": "comprehensive"}
+    old = rescored_manifest({}, scored, tmp_path / "r.json", None)
+    assert "answer_prompt_style" not in old
 
 
 def test_arms_that_differ_in_citations_are_warned() -> None:

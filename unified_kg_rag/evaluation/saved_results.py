@@ -412,16 +412,23 @@ def recorded_citations(citations: dict[str, Any], label: str) -> str:
     for an ``auto`` run whose routes differ. The block's ``strategies``
     (per strategy, what ``search.citations`` resolved to) decides; a run
     saved before it was recorded followed ``enabled`` everywhere."""
-    strategy = label_strategy(label).removeprefix("baseline:")
     per = citations.get("strategies")
     if isinstance(per, dict) and per:
-        if strategy in per:
-            return "on" if per[strategy] else "off"
-        values = {bool(v) for v in per.values()}
-        if len(values) > 1:
-            return "per strategy"
-        return "on" if values.pop() else "off"
+        return _label_setting(
+            {name: "on" if value else "off" for name, value in per.items()}, label
+        )
     return "on" if citations.get("enabled") else "off"
+
+
+def _label_setting(per: Mapping[str, str], label: str) -> str:
+    """The setting of run ``label``'s strategy in ``per`` (a manifest's
+    per-strategy map), or for a strategy it does not name (``auto``, whose
+    routes it records) the one every strategy has, else ``per strategy``."""
+    strategy = label_strategy(label).removeprefix("baseline:")
+    if strategy in per:
+        return per[strategy]
+    values = set(per.values())
+    return values.pop() if len(values) == 1 else "per strategy"
 
 
 def citation_warnings(
@@ -474,6 +481,55 @@ def citation_warnings(
             f"differently ({listed}; runs saved before 'file_weighted' "
             "credited a graph citation whole when any of its files matched): "
             "re-score them with run-eval --from-results --rescore."
+        )
+    return warnings
+
+
+def answer_style_warnings(
+    manifests: Sequence[tuple[str, dict[str, Any] | None]],
+) -> list[str]:
+    """Warnings when the compared runs' answers were written with different
+    answer prompts (manifest ``answer_prompt_style``, per strategy:
+    ``search.answer_prompt_style`` resolved for each run's strategy), or
+    when some runs do not record it (saved before it was recorded: their
+    style is unknown, warned about once). Runs without a manifest are left
+    to ``summary_warnings``."""
+    styles: dict[str, list[str]] = {}
+    unknown: list[str] = []
+    for label, manifest in manifests:
+        if manifest is None:
+            continue
+        per = manifest.get("answer_prompt_style")
+        if isinstance(per, dict) and per:
+            style = _label_setting({k: str(v) for k, v in per.items()}, label)
+            styles.setdefault(style, []).append(label)
+        else:
+            unknown.append(label)
+    if len({label for label, manifest in manifests if manifest is not None}) < 2:
+        return []
+    warnings = []
+    if len(styles) > 1:
+        listed = "; ".join(
+            f"{style}: {', '.join(dict.fromkeys(labels))}"
+            for style, labels in styles.items()
+        )
+        warnings.append(
+            "The compared runs answered with different answer prompts "
+            f"(search.answer_prompt_style, per strategy; {listed}): a "
+            "comprehensive answer is a multi-paragraph markdown answer, a "
+            "concise one a direct sentence with brief support, so the deltas "
+            "measure that prompt as well as the strategies (answer_match "
+            "reads the first line of either; the pairwise judge and the "
+            "ragas metrics read the whole answer). To compare the strategies "
+            "alone, set search.answer_prompt_style alike for them (global is "
+            "comprehensive by default)."
+        )
+    if unknown:
+        warnings.append(
+            f"The runs of {', '.join(dict.fromkeys(unknown))} record no "
+            "answer_prompt_style (saved before it was recorded): their answer "
+            "prompt is unknown, so check they answered with the same "
+            "search.answer_prompt_style as the others."
         )
     return warnings
 

@@ -363,6 +363,16 @@ class SearchConfig(ConfigSection):
         description="Numbered answer contexts and the answer's citations",
     )
 
+    def answer_prompt_style_for(
+        self, strategy: SearchStrategy | None
+    ) -> AnswerPromptStyle:
+        """The answer prompt of ``strategy`` (the one a query ran: ``auto``'s
+        route): its ``answer_prompt_style`` entry, else concise (also for no
+        strategy)."""
+        if strategy is None:
+            return "concise"
+        return self.answer_prompt_style.get(strategy, "concise")
+
     def query_model_timeout(self, configured: float) -> float:
         """A query-time model-server request timeout: ``configured`` (the
         provider's own), capped at ``model_timeout_seconds``."""

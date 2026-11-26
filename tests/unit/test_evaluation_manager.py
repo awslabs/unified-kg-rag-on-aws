@@ -915,6 +915,26 @@ class TestWarmUp:
             "drift",
         }
 
+    def test_the_manifest_records_each_strategys_answer_prompt_style(
+        self, config: Config
+    ) -> None:
+        # A comparison warns when runs answered with different prompts: the
+        # style each strategy resolved to, auto being no strategy of its own.
+        config.search.answer_prompt_style = {SearchStrategy.DRIFT: "comprehensive"}
+        manifest = EvaluationManager(config, rag_chain=object()).build_run_manifest()
+        styles = manifest["answer_prompt_style"]
+        assert "auto" not in styles
+        assert set(styles) == {s.value for s in SearchStrategy} - {"auto"}
+        assert {k for k, v in styles.items() if v == "comprehensive"} == {
+            "global",
+            "drift",
+        }
+        assert set(styles.values()) == {"concise", "comprehensive"}
+        default = EvaluationManager(Config(), rag_chain=object()).build_run_manifest()
+        assert {
+            k for k, v in default["answer_prompt_style"].items() if v != "concise"
+        } == {"global"}
+
     def test_the_manifest_records_the_judge_effort_span_model_and_citations(
         self, config: Config
     ) -> None:
