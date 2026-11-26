@@ -14,6 +14,8 @@ decorator, the async ``aexecute_with_fallback`` path, and the multi-stage
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import threading
 import time
 from collections import Counter
@@ -353,6 +355,41 @@ class TestAExecuteWithFallback:
             show_progress=False,
         )
         assert out == []
+
+    def test_a_non_exception_ending_leaves_no_unretrieved_task(self) -> None:
+        # An item ending on a BaseException that is not an Exception (a
+        # simulated death, a closed generator) ends the batch with it. Every
+        # task the batch made must have its ending retrieved: tqdm's gather
+        # wrapped each item in a task of its own that cancel_on_exit never
+        # saw, and those left "Task exception was never retrieved" at ERROR
+        # for the garbage collector to report during a later test.
+        class _Stop(BaseException):
+            pass
+
+        async def sequential(item):  # noqa: ANN001
+            await asyncio.sleep(0)
+            raise _Stop(item["v"])
+
+        reports: list[dict[str, Any]] = []
+        bp = BatchProcessor(max_concurrency=4, **_NO_BACKOFF)
+        with pytest.raises(_Stop):
+            with asyncio.Runner() as runner:
+                runner.get_loop().set_exception_handler(
+                    lambda _loop, context: reports.append(context)
+                )
+                runner.run(
+                    bp.aexecute_with_fallback(
+                        items_to_process=list(range(4)),
+                        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+                        sequential_func=sequential,
+                        task_name="t",
+                        show_progress=False,
+                    )
+                )
+        # Collected once pytest.raises has dropped the traceback that kept
+        # the tasks alive.
+        gc.collect()
+        assert reports == []
 
 
 # --------------------------------------------------------------------------- #
