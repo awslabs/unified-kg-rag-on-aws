@@ -3187,16 +3187,22 @@ _STDIO_SERVER = textwrap.dedent("""
 
 # run-mcp-server --transport streamable-http as main runs it (serve, under
 # exits_on_sigterm and stoppable), its chain the held one; argv: the
-# output directory, the port, whether SIGINT stays as inherited, and where
-# the model call is held (``loop`` or ``thread``, see _Held).
+# output directory, whether SIGINT stays as inherited, and where the model
+# call is held (``loop`` or ``thread``, see _Held). It binds port 0 and
+# writes the port it bound to ``port`` once it listens, so the port the
+# test asks is this process's (one picked free beforehand could be taken in
+# between); SIGUSR1 dumps its threads to stderr (_server_state).
 _HTTP_SERVER = textwrap.dedent("""
-    import argparse, asyncio, json, signal, sys
+    import argparse, asyncio, faulthandler, json, os, signal, sys
     from pathlib import Path
 
-    if sys.argv[3] == "default":
+    import uvicorn
+
+    if sys.argv[2] == "default":
         # As _STDIO_SERVER: a suite started in the background hands its
         # children SIGINT ignored.
         signal.signal(signal.SIGINT, signal.default_int_handler)
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
 
     from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
@@ -3229,7 +3235,17 @@ _HTTP_SERVER = textwrap.dedent("""
     ))
     query_audit.audit_enabled = lambda: True
     query_audit.emit = lambda r: write({"audit": r.outcome.value})
-    held = _Held("model", in_thread=sys.argv[4] == "thread")
+    real_startup = uvicorn.Server.startup
+
+    async def startup(self, sockets=None):
+        await real_startup(self, sockets)
+        if self.started:
+            (port,) = {s.getsockname()[1] for srv in self.servers for s in srv.sockets}
+            (out / "port.tmp").write_text(str(port))
+            os.replace(out / "port.tmp", out / "port")
+
+    uvicorn.Server.startup = startup
+    held = _Held("model", in_thread=sys.argv[3] == "thread")
     chain = held.chain()
     run_mcp_server.GraphRAGChain = lambda **_: chain
     run_mcp_server.build_providers = lambda *_, **__: None
@@ -3240,7 +3256,7 @@ _HTTP_SERVER = textwrap.dedent("""
     run_mcp_server.warn_of_missing_namespaces = no_check
     args = argparse.Namespace(
         metrics_sink=None, namespace=None, transport="streamable-http",
-        host="127.0.0.1", port=int(sys.argv[2]), trusted_identity_header=None,
+        host="127.0.0.1", port=0, trusted_identity_header=None,
     )
 
     async def run():
@@ -3358,15 +3374,15 @@ def test_a_signal_ends_a_stdio_server_whose_stdin_stays_open(
 def _start_http_server(
     tmp_path: Path, *, sigint: str = "default", hold: str = "loop"
 ) -> tuple[subprocess.Popen[str], int]:
-    """``_HTTP_SERVER`` started, listening on its port; ``sigint``
-    ``ignore``: started with SIGINT ignored, as a background launch;
-    ``hold``: where its model call is held (``loop`` or ``thread``).
-    Skips without the mcp extra, whose SDK the server process imports."""
+    """``_HTTP_SERVER`` started, listening on the port it bound and wrote;
+    ``sigint`` ``ignore``: started with SIGINT ignored, as a background
+    launch; ``hold``: where its model call is held (``loop`` or
+    ``thread``). Skips without the mcp extra, whose SDK the server process
+    imports."""
     pytest.importorskip("mcp")
-    port = _free_port()
     repository = Path(__file__).resolve().parents[2]
     process = subprocess.Popen(
-        [sys.executable, "-c", _HTTP_SERVER, str(tmp_path), str(port), sigint, hold],
+        [sys.executable, "-c", _HTTP_SERVER, str(tmp_path), sigint, hold],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -3382,17 +3398,29 @@ def _start_http_server(
             else None
         ),
     )
-    import socket
-
+    port_file = tmp_path / "port"
     for _ in range(600):
-        with socket.socket() as probe:
-            if probe.connect_ex(("127.0.0.1", port)) == 0:
-                return process, port
+        if port_file.exists():
+            return process, int(port_file.read_text())
         if process.poll() is not None:
             break
         time.sleep(0.05)
-    process.kill()
-    raise AssertionError(process.stderr.read() if process.stderr else "")
+    raise AssertionError(f"the server did not listen: {_server_state(process)}")
+
+
+def _server_state(process: subprocess.Popen[str]) -> str:
+    """What a test that waited on ``process`` in vain reports: its exit
+    status, or, still running, its threads' stacks (SIGUSR1, see
+    _HTTP_SERVER) before it is killed; and the tail of its stderr."""
+    status = process.poll()
+    if status is None:
+        process.send_signal(signal.SIGUSR1)
+        time.sleep(1.0)  # faulthandler writes from its signal handler
+        process.kill()
+    process.wait(timeout=30)
+    stderr = process.stderr.read() if process.stderr else ""
+    shown = "still running (thread dump below)" if status is None else status
+    return f"server exit status: {shown}; stderr tail:\n{stderr[-8000:]}"
 
 
 @pytest.mark.slow
@@ -3430,7 +3458,11 @@ def test_a_second_signal_on_the_http_mcp_server_keeps_the_cut_call_s_trace(
             if (tmp_path / "held").exists():
                 break
             time.sleep(0.05)
-        assert (tmp_path / "held").exists()
+        # r11base-3: a miss says what the server was doing.
+        assert (tmp_path / "held").exists(), (
+            f"the call was never held (client: {responses}): "
+            f"{_server_state(process)}"
+        )
         start = time.monotonic()
         process.send_signal(signals[0])
         time.sleep(0.5)  # the server drains, the call held
