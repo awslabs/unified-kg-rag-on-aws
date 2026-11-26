@@ -251,12 +251,7 @@ class ReportRefresh:
             )
             return RefreshedReports(set(), set(), ids, {}, set(ids))
         members, graph = read
-        communities: list[Community] = []
-        # Written as vertices only: no report (a full build writes none).
-        vertices: list[Community] = []
-        # Deleted: no member is left.
-        empty: set[str] = set()
-        emptied: set[str] = set()
+        current: dict[str, tuple[list[str], list[str]]] = {}
         for community_id, leaves in sorted(hierarchy.leaves.items()):
             entity_ids = sorted(
                 e.id for e in members if set(e.community_ids or ()) & leaves
@@ -269,6 +264,16 @@ class ReportRefresh:
                     for u in e.text_unit_ids or ()
                 }
             )
+            current[community_id] = (entity_ids, units)
+        # Deleted: no member is left. Before any place is read: a parent
+        # written again here no longer lists them as its children.
+        empty = {c for c, (entity_ids, _) in current.items() if not entity_ids}
+        hierarchy = hierarchy._replace(deleted=hierarchy.deleted | empty)
+        communities: list[Community] = []
+        # Written as vertices only: no report (a full build writes none).
+        vertices: list[Community] = []
+        emptied: set[str] = set()
+        for community_id, (entity_ids, units) in current.items():
             report = outdated.get(community_id)
             place = (
                 _place_of_report(report, hierarchy)
@@ -290,8 +295,6 @@ class ReportRefresh:
                         suffix, community_id, place, entity_ids, units, graph
                     )
                 )
-            else:
-                empty.add(community_id)
         results: dict[str, IndexingStats] = {}
         if emptied:
             # A full build has no report for such a community.

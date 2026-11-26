@@ -955,6 +955,32 @@ def test_a_community_without_a_report_has_its_vertex_written_from_its_members() 
     assert ("default", "c8") not in graph.data["communities"]
 
 
+def test_a_parent_written_again_no_longer_lists_a_child_deleted_beside_it() -> None:
+    # r9diff-2: c8, stored without a report, keeps t9 but no member: the
+    # refresh deletes its vertex. p, refreshed in the same run, read its
+    # place before the deletion was known and still listed c8 in its
+    # report's child_community_ids and its vertex's children.
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.upsert_communities(
+        [
+            _vertex("c8", ["t1", "t9"], 0),
+            _vertex("p", ["t1", "t2", "t3", "t9"], 1, ["c1", "c2", "c8"]),
+        ]
+    )
+    vector.upsert_community_reports(
+        [_report("p", ["t1", "t2", "t3", "t9"], 1, children=["c1", "c2", "c8"])]
+    )
+    done = _refresh(config, graph, vector, _Reports())(
+        "default", _OUTDATED, {"acme"}, {"c2", "c8"}
+    )
+    assert done.written == _OUTDATED and not done.kept
+    assert ("default", "c8") not in graph.data["communities"]
+    assert graph.data["communities"][("default", "p")].children == ["c1", "c2"]
+    (report,) = vector.read_community_reports([community_report_id("p")])
+    assert report.child_community_ids == ["c1", "c2"]
+
+
 def test_a_graph_that_cannot_read_vertices_keeps_them(caplog) -> None:
     config = _config()
     graph, vector = _stores(config, child_report=False)
@@ -994,3 +1020,66 @@ def test_a_removal_lists_the_communities_it_leaves_without_an_outdated_report(
     assert not manager.stale_communities
     manager.merge_outdated_note("default")
     assert manager.stale_communities == {"default": {"s"}}
+
+
+def test_a_suffix_with_only_stale_communities_merges_its_note_and_refreshes() -> None:
+    # r9diff-3: a removal can leave communities without an outdated report
+    # citing removed text and flag no report (a seed-only cluster with no
+    # document entity): its suffix's note (here an earlier killed run's,
+    # naming only communities) is merged, and the refresh runs for those
+    # communities alone. Both paths were left to no test.
+    from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+    from unified_kg_rag.application.ingestion.report_refresh import RefreshedReports
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    _, manager, vector = _removal_stores()
+    vector.write_extraction_records(
+        {OUTDATED_REPORTS: {"community_ids": ["s1"], "candidates": ["e1"]}},
+        suffix="other",
+    )
+    # This run's own removal in "other" (the run's namespace is "default").
+    manager.stale_communities["other"] = {"s2"}
+    incremental = IncrementalIndexer(FakeDocStatusStore(), manager)
+    candidates = incremental._merge_outdated_notes()
+    assert manager.stale_communities == {"other": {"s1", "s2"}}
+    assert candidates["other"] == {"e1"}
+
+    calls: list[tuple[str, set[str], set[str]]] = []
+
+    def refresh(suffix, ids, members, stale):  # type: ignore[no-untyped-def]
+        calls.append((suffix, set(ids), set(stale)))
+        return RefreshedReports(set(), set(), set(), {}, set())
+
+    left = incremental._refresh_reports(refresh, [], candidates)  # type: ignore[arg-type]
+    assert calls == [("other", set(), {"s1", "s2"})]
+    assert not left
+
+
+def test_a_failed_delete_of_communities_left_empty_warns_and_keeps_them(
+    caplog,
+) -> None:
+    # r9base-1: deleting the vertices of communities with no member left
+    # is best-effort (only a removal's search reads them): a failed delete
+    # warns, records no stats, and the rest of the refresh stands.
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.upsert_communities(
+        [_vertex("c2", ["t1", "t2", "t3"], 0), _vertex("c8", ["t1"], 0)]
+    )
+
+    def fail(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("graph store down")
+
+    graph.delete_by_id = fail
+    done = _refresh(config, graph, vector, _Reports())("default", (), (), {"c2", "c8"})
+    assert "graph_emptied_communities_default" not in done.results
+    assert "graph_refreshed_communities_default" in done.results
+    assert ("default", "c8") in graph.data["communities"]
+    assert graph.data["communities"][("default", "c2")].text_unit_ids == ["t2", "t3"]
+    (warning,) = [
+        r.getMessage()
+        for r in caplog.records
+        if "with no member left from the graph store failed" in r.getMessage()
+    ]
+    assert "1 communities of 'default'" in warning

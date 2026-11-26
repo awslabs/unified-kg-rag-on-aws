@@ -1110,10 +1110,11 @@ Bugs present in 0.3.0.
 - An incremental run that removed some of the text units of a community stored without a report (a seed-only one,
   after an edit to one of its seed shards, or one whose report failed or was emptied) left the removed units in the
   community's graph vertex, since only a report's refresh wrote a vertex again. Such a vertex is now written again
-  from the community's current members, as a refreshed report's is, and deleted when none is left; the removal lists
-  it in its outdated-report note, so a run killed before its commit leaves it to the next. A graph backend reads the
-  vertices through the new `GraphIndexer.read_communities` (`read_community_children` now reads through it); one
-  that leaves it at its default keeps the vertex as stored, as before.
+  from the community's current members, as a refreshed report's is, and deleted when none is left (a parent written
+  again in the same run no longer lists it as a child, in its report or its vertex); the removal lists it in its
+  outdated-report note, so a run killed before its commit leaves it to the next. A graph backend reads the vertices
+  through the new `GraphIndexer.read_communities` (`read_community_children` now reads through it); one that leaves it
+  at its default keeps the vertex as stored, as before.
 
 ### Security
 - The image upgrades `libzstd1` to the Debian security release fixing CVE-2026-124851 (HIGH, an information
