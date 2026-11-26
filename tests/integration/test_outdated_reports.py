@@ -595,29 +595,35 @@ def _community_vertices(providers: Any, ids: list[str]) -> dict[str, Any]:
 
 
 @pytest.mark.timeout(600)
+@pytest.mark.parametrize("linked", [True, False])
 def test_a_seed_only_community_edited_in_one_shard_keeps_no_removed_unit(
-    tmp_path: Path, store_harness: StoreHarness, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    store_harness: StoreHarness,
+    caplog: pytest.LogCaptureFixture,
+    linked: bool,
 ) -> None:
     # r8diff-6: the seed graph's triangle S is a community of its own,
     # stored without a report. Editing Sequoia's description re-keys the
     # units of its shard only (Spruce and Sumac are in another): S keeps
     # the units of the shard left, and its vertex kept the re-keyed ones
     # too, which nothing stores any more. Its vertex is written again
-    # from its members, as a refreshed report's is.
+    # from its members, as a refreshed report's is. r9diff-3: with no link
+    # to a document entity (``linked`` False) the removal flags no report
+    # at all, only S: the commit refreshes S alone.
     a = _GROUPS["A"]
     seeded = _SEEDED
 
     def seed(sequoia: str) -> list[dict[str, str]]:
         nodes = [
             {"kind": "node", "id": f"n-{n.lower()}", "name": n, "type": "ORGANIZATION"}
-            for n in (*seeded, a[0])
+            for n in (*seeded, *([a[0]] if linked else []))
         ]
         nodes[0]["description"] = sequoia
         pairs = [
             (seeded[0], seeded[1]),
             (seeded[1], seeded[2]),
             (seeded[2], seeded[0]),
-            (seeded[0], a[0]),
+            *([(seeded[0], a[0])] if linked else []),
         ]
         return nodes + [
             {
@@ -656,6 +662,8 @@ def test_a_seed_only_community_edited_in_one_shard_keeps_no_removed_unit(
     with caplog.at_level(logging.INFO):
         second = e2e._ingest(config, providers, source, tmp_path / "run2")
     assert second.status is PipelineStageStatus.COMPLETED, e2e._errors(second)
+    flagged = _logged(caplog, logging.INFO, "flagged outdated until")
+    assert bool(flagged) is linked, flagged
     left = _unit_ids(config, providers)
     dead = units - left
     _assert_current(config, providers, caplog, dead)

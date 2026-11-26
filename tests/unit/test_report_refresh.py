@@ -1020,3 +1020,37 @@ def test_a_removal_lists_the_communities_it_leaves_without_an_outdated_report(
     assert not manager.stale_communities
     manager.merge_outdated_note("default")
     assert manager.stale_communities == {"default": {"s"}}
+
+
+def test_a_suffix_with_only_stale_communities_merges_its_note_and_refreshes() -> None:
+    # r9diff-3: a removal can leave communities without an outdated report
+    # citing removed text and flag no report (a seed-only cluster with no
+    # document entity): its suffix's note (here an earlier killed run's,
+    # naming only communities) is merged, and the refresh runs for those
+    # communities alone. Both paths were left to no test.
+    from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+    from unified_kg_rag.application.ingestion.report_refresh import RefreshedReports
+    from unified_kg_rag.application.storage.stored_items import OUTDATED_REPORTS
+
+    _, manager, vector = _removal_stores()
+    vector.write_extraction_records(
+        {OUTDATED_REPORTS: {"community_ids": ["s1"], "candidates": ["e1"]}},
+        suffix="other",
+    )
+    # This run's own removal in "other" (the run's namespace is "default").
+    manager.stale_communities["other"] = {"s2"}
+    incremental = IncrementalIndexer(FakeDocStatusStore(), manager)
+    candidates = incremental._merge_outdated_notes()
+    assert manager.stale_communities == {"other": {"s1", "s2"}}
+    assert candidates["other"] == {"e1"}
+
+    calls: list[tuple[str, set[str], set[str]]] = []
+
+    def refresh(suffix, ids, members, stale):  # type: ignore[no-untyped-def]
+        calls.append((suffix, set(ids), set(stale)))
+        return RefreshedReports(set(), set(), set(), {}, set())
+
+    left = incremental._refresh_reports(refresh, [], candidates)  # type: ignore[arg-type]
+    assert calls == [("other", set(), {"s1", "s2"})]
+    assert not left
