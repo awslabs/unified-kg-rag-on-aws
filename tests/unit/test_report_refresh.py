@@ -1054,3 +1054,32 @@ def test_a_suffix_with_only_stale_communities_merges_its_note_and_refreshes() ->
     left = incremental._refresh_reports(refresh, [], candidates)  # type: ignore[arg-type]
     assert calls == [("other", set(), {"s1", "s2"})]
     assert not left
+
+
+def test_a_failed_delete_of_communities_left_empty_warns_and_keeps_them(
+    caplog,
+) -> None:
+    # r9base-1: deleting the vertices of communities with no member left
+    # is best-effort (only a removal's search reads them): a failed delete
+    # warns, records no stats, and the rest of the refresh stands.
+    config = _config()
+    graph, vector = _stores(config, child_report=False)
+    graph.upsert_communities(
+        [_vertex("c2", ["t1", "t2", "t3"], 0), _vertex("c8", ["t1"], 0)]
+    )
+
+    def fail(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("graph store down")
+
+    graph.delete_by_id = fail
+    done = _refresh(config, graph, vector, _Reports())("default", (), (), {"c2", "c8"})
+    assert "graph_emptied_communities_default" not in done.results
+    assert "graph_refreshed_communities_default" in done.results
+    assert ("default", "c8") in graph.data["communities"]
+    assert graph.data["communities"][("default", "c2")].text_unit_ids == ["t2", "t3"]
+    (warning,) = [
+        r.getMessage()
+        for r in caplog.records
+        if "with no member left from the graph store failed" in r.getMessage()
+    ]
+    assert "1 communities of 'default'" in warning
