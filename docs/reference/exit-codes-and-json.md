@@ -81,14 +81,17 @@ going after any of them.
 `run-mcp-server` uses the same codes: `0` once the client closes stdio (or
 the HTTP server stops), `2` for a usage or configuration error (the `mcp`
 extra missing, a non-loopback `--host` without `--allow-remote`), `1`
-for a failure, `130` and `143` for a signal (a Ctrl-C to a server started
-in the background, with SIGINT inherited ignored, too). It has no `--output-format`:
+for a failure, `130` and `143` for a signal. Over streamable HTTP a Ctrl-C
+to a server started in the background, with SIGINT inherited ignored,
+exits `130` too, and a second signal keeps the first one's code; over
+stdio a SIGINT inherited ignored stays ignored. It has no `--output-format`:
 over stdio its stdout carries the MCP messages only
 ([MCP server](../guides/mcp.md)).
 
 `run-console` exits `130` when Ctrl-C stops it (the server finishes running
 requests first, up to 60 s; a second Ctrl-C cuts them short), `143` on
-SIGTERM, as `run-mcp-server` does, `2` for a usage error (the
+SIGTERM, as `run-mcp-server` does (a second signal keeps the first one's
+code: SIGTERM and then Ctrl-C exits `143`), `2` for a usage error (the
 `console` extra missing, a non-loopback `--host` without `--allow-remote`,
 a `--source-directory` that is not a directory) and `1` when it cannot
 listen on the address. A config file that does not load is no error: the
