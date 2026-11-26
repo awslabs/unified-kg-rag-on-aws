@@ -343,6 +343,12 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   전략의 답변이 인용하는지(`search.citations`를 전략별로 판정한 값, 매니페스트의
   `citations.strategies`)가 다르면 답변 프롬프트도 다르다고 경고합니다. `global`과 `drift`는
   기본값으로 인용하지 않으므로, 맵에서 같게 맞추지 않으면 다른 전략과 비교할 때 경고합니다.
+- 같은 방식으로, 실행마다 답변 프롬프트(`search.answer_prompt_style`을 전략별로 판정한 값,
+  매니페스트의 `answer_prompt_style`)가 다르면 차이에 전략뿐 아니라 프롬프트의 차이도 섞인다고
+  경고합니다. comprehensive 답변은 여러 문단의 마크다운 답변이고 concise 답변은 직접 답하는 한
+  문장입니다. `global`은 기본값이 comprehensive이므로, 맵에서 같게 맞추지 않으면 다른 전략과
+  비교할 때 경고합니다. 이 값을 기록하기 전에 저장한 실행은 알 수 없음으로 보고 경고 하나에
+  모아 알립니다. 점수는 바뀌지 않습니다.
 - 오버레이가 질의 추출(질문마다 한 번씩 호출하는 번역, 엔터티, 키워드)을 바꾸지 않으면 비교군은 기본
   실행의 추출 결과로 검색합니다. 추출 모델, 기본 계층의 추론 강도(effort),
   `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, LLM

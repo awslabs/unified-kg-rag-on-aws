@@ -160,6 +160,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.evaluation.saved_results import (
         SavedRun,
+        answer_style_warnings,
         check_answer_scoring,
         citation_warnings,
         dataset_warnings,
@@ -275,6 +276,7 @@ __getattr__, _load_evaluation = lazy_names(
         "arm_roles": _arms_module,
         "is_arm_label": _arms_module,
         "label_strategy": _arms_module,
+        "answer_style_warnings": _saved_results_module,
         "check_answer_scoring": _saved_results_module,
         "citation_warnings": _saved_results_module,
         "dataset_warnings": _saved_results_module,
@@ -2349,6 +2351,7 @@ class EvaluationRunner:
                 *dataset_warnings(manifests),
                 *interleaving_warnings(manifests),
                 *citation_warnings(manifests),
+                *answer_style_warnings(manifests),
                 *judge_warnings(manifests),
             ]
         except EvaluationException as e:
