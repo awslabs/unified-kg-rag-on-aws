@@ -37,6 +37,7 @@ from functools import cache
 __all__ = [
     "APOSTROPHE_STAND_INS",
     "INVISIBLE_FORMAT_CHARS",
+    "OTHER_DEFAULT_IGNORABLE_CODES",
     "OTHER_LETTERS",
     "DENSE_SCRIPT_LETTERS",
     "DENSE_SCRIPT_TOKEN_RANGES",
@@ -589,6 +590,32 @@ INVISIBLE_FORMAT_CHARS = (
     + "".join(map(chr, range(0x2060, 0x2065)))
     + "".join(map(chr, range(0x2066, 0x206A)))
     + "\ufeff"
+)
+
+
+# Unicode's Default_Ignorable_Code_Point (UAX #44, DerivedCoreProperties.txt)
+# is the format characters (Cf), the variation selectors (Mn) and
+# Other_Default_Ignorable_Code_Point: characters a renderer shows as nothing
+# when it cannot draw them, assigned or not. Python's character data has the
+# categories but not that property: these are its PropList.txt ranges (the
+# same in every Unicode version since 6.0), Hangul fillers and the reserved
+# code points among them. UTS #39 lists every Default_Ignorable_Code_Point as
+# restricted in identifiers for this reason.
+_OTHER_DEFAULT_IGNORABLE = (
+    (0x034F, 0x034F),  # COMBINING GRAPHEME JOINER
+    (0x115F, 0x1160),  # HANGUL CHOSEONG FILLER, HANGUL JUNGSEONG FILLER
+    (0x17B4, 0x17B5),  # KHMER VOWEL INHERENT AQ, AA
+    (0x2065, 0x2065),  # reserved
+    (0x3164, 0x3164),  # HANGUL FILLER
+    (0xFFA0, 0xFFA0),  # HALFWIDTH HANGUL FILLER
+    (0xFFF0, 0xFFF8),  # reserved
+    (0xE0000, 0xE0000),  # reserved
+    (0xE0002, 0xE001F),  # reserved
+    (0xE0080, 0xE00FF),  # reserved
+    (0xE01F0, 0xE0FFF),  # reserved
+)
+OTHER_DEFAULT_IGNORABLE_CODES = frozenset(
+    code for low, high in _OTHER_DEFAULT_IGNORABLE for code in range(low, high + 1)
 )
 
 

@@ -230,16 +230,15 @@ def test_neutralise_delimiters(value: str, expected: str) -> None:
 def test_the_characters_shown_as_nothing_follow_unicode_s_data() -> None:
     # r9diff-7: every Default_Ignorable_Code_Point (UAX #44) a form may
     # hide in, and the Other_Default_Ignorable_Code_Point ranges spelled in
-    # the module are PropList.txt's (the regex module reads the property).
+    # shared.utils.scripts are PropList.txt's (the regex module reads the property).
     regex = pytest.importorskip("regex")
     from unified_kg_rag.domain.prompts import delimiters
+    from unified_kg_rag.shared.utils.scripts import OTHER_DEFAULT_IGNORABLE_CODES
 
     other = regex.compile(r"\p{Other_Default_Ignorable_Code_Point}")
     ignorable = regex.compile(r"\p{Default_Ignorable_Code_Point}")
     codes = range(0x110000)
-    assert delimiters._OTHER_DEFAULT_IGNORABLE_CODES == {
-        c for c in codes if other.match(chr(c))
-    }
+    assert OTHER_DEFAULT_IGNORABLE_CODES == {c for c in codes if other.match(chr(c))}
     assert all(delimiters._hidden(chr(c)) for c in codes if ignorable.match(chr(c)))
 
 

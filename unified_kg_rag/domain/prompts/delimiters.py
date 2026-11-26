@@ -16,6 +16,8 @@ from collections.abc import Iterable
 from functools import lru_cache
 from typing import NamedTuple
 
+from unified_kg_rag.shared.utils.scripts import OTHER_DEFAULT_IGNORABLE_CODES
+
 # A tag pair whose content holds a template placeholder and no other tag:
 # ``<context>\n{context}\n</context>``.
 _DELIMITED_PLACEHOLDER = re.compile(
@@ -104,31 +106,6 @@ _SLASH_CONFUSABLES = "\u2044\u2215\u29f8"
 # before them, a "<" too.
 _MARK_CATEGORIES = frozenset({"Mn", "Me"})
 
-# Unicode's Default_Ignorable_Code_Point (UAX #44, DerivedCoreProperties.txt)
-# is the format characters (Cf), the variation selectors (Mn) and
-# Other_Default_Ignorable_Code_Point: characters a renderer shows as nothing
-# when it cannot draw them, assigned or not. Python's character data has the
-# categories but not that property: these are its PropList.txt ranges (the
-# same in every Unicode version since 6.0), Hangul fillers and the reserved
-# code points among them. UTS #39 lists every Default_Ignorable_Code_Point as
-# restricted in identifiers for this reason.
-_OTHER_DEFAULT_IGNORABLE = (
-    (0x034F, 0x034F),  # COMBINING GRAPHEME JOINER
-    (0x115F, 0x1160),  # HANGUL CHOSEONG FILLER, HANGUL JUNGSEONG FILLER
-    (0x17B4, 0x17B5),  # KHMER VOWEL INHERENT AQ, AA
-    (0x2065, 0x2065),  # reserved
-    (0x3164, 0x3164),  # HANGUL FILLER
-    (0xFFA0, 0xFFA0),  # HALFWIDTH HANGUL FILLER
-    (0xFFF0, 0xFFF8),  # reserved
-    (0xE0000, 0xE0000),  # reserved
-    (0xE0002, 0xE001F),  # reserved
-    (0xE0080, 0xE00FF),  # reserved
-    (0xE01F0, 0xE0FFF),  # reserved
-)
-_OTHER_DEFAULT_IGNORABLE_CODES = frozenset(
-    code for low, high in _OTHER_DEFAULT_IGNORABLE for code in range(low, high + 1)
-)
-
 # The control characters (Cc) a text shows: tab and the line ends. The others
 # (NUL, ESC, DEL, the C1 controls) show as nothing.
 _SHOWN_CONTROLS = frozenset("\t\n\r")
@@ -142,14 +119,16 @@ _BLANKS = "\u2800"
 def _ignorable(char: str) -> bool:
     """Whether ``char`` is shown as nothing: a format character (every Cf,
     a superset of those Default_Ignorable_Code_Point names), another
-    Default_Ignorable_Code_Point, or a control character but tab and the
-    line ends."""
+    Default_Ignorable_Code_Point (UAX #44: Cf, the variation selectors,
+    which are marks, and ``OTHER_DEFAULT_IGNORABLE_CODES``; UTS #39
+    restricts every one in identifiers), or a control character but tab
+    and the line ends."""
     category = unicodedata.category(char)
     if category == "Cf":
         return True
     if category == "Cc":
         return char not in _SHOWN_CONTROLS
-    return ord(char) in _OTHER_DEFAULT_IGNORABLE_CODES
+    return ord(char) in OTHER_DEFAULT_IGNORABLE_CODES
 
 
 def _hidden(char: str) -> bool:
