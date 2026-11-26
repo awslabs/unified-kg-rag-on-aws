@@ -389,6 +389,12 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["unified_kg_rag"]
+# Measure the processes the tests start (the CLI entry points run as
+# children): coverage hands its settings to every child, which writes its
+# own data file for pytest-cov to combine. _exit: a CLI ends with os._exit
+# once it has flushed, which would skip the child's save.
+# tests/conftest.py passes the settings to a child given an env of its own.
+patch = ["subprocess", "_exit"]
 omit = [
     "tests/*",
     "*/test_*.py",

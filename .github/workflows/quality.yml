@@ -119,7 +119,9 @@ jobs:
         # code cannot silently regress it; ratchet it up as coverage grows.
         # -n logical: one pytest-xdist worker per vCPU (`auto` counts physical
         # cores, half the runner's); pytest-cov combines the workers' coverage
-        # before the floor is checked.
+        # before the floor is checked, with that of the processes the tests
+        # start (the CLI entry points), which [tool.coverage.run] patch
+        # measures.
         env:
           # Python 3.12's sys.monitoring tracer: line coverage (the suite
           # measures no branches) at a fraction of the C tracer's cost.
@@ -128,7 +130,7 @@ jobs:
           uv run pytest -n logical
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=97.1
+          --cov-fail-under=97.3
 
       - name: Upload coverage + test report
         # Surface coverage.xml / report.xml as artifacts for inspection on each
