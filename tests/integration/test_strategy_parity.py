@@ -27,7 +27,11 @@ import pytest
 
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.fixtures.fakes.rerank import FakeCrossEncoder
-from tests.fixtures.store_backends import StoreHarness, open_harness
+from tests.fixtures.store_backends import (
+    StoreHarness,
+    open_harness,
+    point_at_harness_stores,
+)
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
@@ -62,7 +66,7 @@ def _cited_per_strategy(
         *config.indexing.methodologies,
         Methodology.RAPTOR,
     ]
-    e2e._on_harness_stores(config, harness)
+    point_at_harness_stores(config, harness)
     config.indexing.additional_suffix = suffix
     providers = e2e._providers(
         config,

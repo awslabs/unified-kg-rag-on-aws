@@ -32,6 +32,7 @@ from tests.fixtures.store_backends import (
     StoreHarness,
     backends,
     open_harness,
+    point_at_harness_stores,
 )
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
@@ -154,7 +155,7 @@ def _two_documents(
     """Both documents ingested into ``harness``'s stores; the reports
     written from both."""
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
-    e2e._on_harness_stores(config, harness)
+    point_at_harness_stores(config, harness)
     model = _Model()
     server = FakeOllama(model, e2e.ANSWER, e2e.DIM)
     providers = e2e._providers(config, server, FakeCrossEncoder("reranker"))
@@ -371,7 +372,7 @@ def _forest(
     seed: list[dict[str, str]] | None = None,
 ) -> tuple[Config, Any, Path]:
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
-    e2e._on_harness_stores(config, harness)
+    point_at_harness_stores(config, harness)
     if seed:
         path = tmp_path / "seed" / "trees.jsonl"
         path.parent.mkdir()

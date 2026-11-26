@@ -37,6 +37,7 @@ from tests.fixtures.store_backends import (
     StoreHarness,
     backends,
     open_harness,
+    point_at_harness_stores,
 )
 from tests.fixtures.text_units import stored_text_units
 from tests.integration import test_ingestion_stages as stages
@@ -567,20 +568,6 @@ def store_harness(
     yield from open_harness(request.param, tmp_path / "harness")
 
 
-def _on_harness_stores(config: Config, harness: StoreHarness) -> None:
-    """Point ``config`` at the stores (and the namespace) of ``harness``,
-    whose teardown then clears what the run wrote."""
-    stores = harness.config
-    for name in ("graph", "vector"):
-        mine, theirs = getattr(config.providers, name), getattr(stores.providers, name)
-        mine.kind = theirs.kind
-        mine.sqlite_path = theirs.sqlite_path
-    for name in ("neptune", "opensearch"):
-        mine, theirs = getattr(config.aws, name), getattr(stores.aws, name)
-        mine.endpoint, mine.port = theirs.endpoint, theirs.port
-    config.indexing.additional_suffix = stores.indexing.additional_suffix
-
-
 def test_ingest_update_and_every_strategy_on_each_store_backend(
     tmp_path: Path, no_aws, store_harness: StoreHarness
 ) -> None:
@@ -591,7 +578,7 @@ def test_ingest_update_and_every_strategy_on_each_store_backend(
     harness = store_harness
     config = _config(tmp_path / "stores", tmp_path / "viz-data")
     config.indexing.methodologies = [*config.indexing.methodologies, Methodology.RAPTOR]
-    _on_harness_stores(config, harness)
+    point_at_harness_stores(config, harness)
     server = FakeOllama(_respond, ANSWER, DIM)
     encoder = FakeCrossEncoder("synthetic-reranker")
     providers = _providers(config, server, encoder)
@@ -1213,7 +1200,7 @@ def test_path_filters_scope_a_question_to_a_file_or_folder_on_each_store_backend
     # scoped to a file or folder only from Python (InputDocument.filters).
     # Ingestion stamps each document's path filters; every store applies them.
     config = _config(tmp_path / "stores", tmp_path / "viz-data")
-    _on_harness_stores(config, store_harness)
+    point_at_harness_stores(config, store_harness)
     server = FakeOllama(_respond, ANSWER, DIM)
     providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
     source = tmp_path / "corpus"

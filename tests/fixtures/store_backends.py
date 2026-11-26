@@ -22,9 +22,12 @@ so one test states a store contract once and runs it on each:
   the ``Providers`` it builds, so a backend author runs the suites on it
   without editing this file.
 - ``aws``: Neptune and OpenSearch Service (``pytest.mark.aws``). The config is
-  ``UKR_TEST_CONFIG`` if set, else the defaults; ``UKR__AWS__NEPTUNE__ENDPOINT`` and
-  ``UKR__AWS__OPENSEARCH__ENDPOINT`` override the endpoints. Skipped without both
-  endpoints.
+  ``UKR_TEST_CONFIG`` if set, else the defaults, either one under the
+  environment (``UKR__`` variables, ``AWS_REGION``): so
+  ``UKR__AWS__NEPTUNE__ENDPOINT`` and ``UKR__AWS__OPENSEARCH__ENDPOINT`` set
+  the endpoints. Both stores connect over TLS; OpenSearch requests are
+  SigV4-signed unless the config names another auth method (a managed domain
+  answers no unauthenticated request). Skipped without both endpoints.
 
 Every harness of a shared server writes under its own
 ``indexing.additional_suffix``, and clears every suffix it handed out (``StoreHarness.suffix``) on teardown, so a
@@ -49,7 +52,7 @@ import pytest
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.application.config import get_config
+from unified_kg_rag.application.config import ConfigLoader, get_config
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -163,22 +166,46 @@ def local_store_config() -> Config:
 
 def _aws_config() -> Config:
     path = os.getenv("UKR_TEST_CONFIG")
-    config = (
-        get_config(path).model_copy(deep=True)
-        if path and Path(path).is_file()
-        else Config()
-    )
-    if endpoint := os.getenv("UKR__AWS__NEPTUNE__ENDPOINT"):
-        config.aws.neptune.endpoint = endpoint
-    if endpoint := os.getenv("UKR__AWS__OPENSEARCH__ENDPOINT"):
-        config.aws.opensearch.endpoint = endpoint
+    config = ConfigLoader(
+        Path(path) if path and Path(path).is_file() else None
+    ).load_config()
     if not (config.aws.neptune.endpoint and config.aws.opensearch.endpoint):
         pytest.skip(
             "set UKR__AWS__NEPTUNE__ENDPOINT and UKR__AWS__OPENSEARCH__ENDPOINT (real AWS)"
         )
+    opensearch = config.aws.opensearch
+    if not (
+        opensearch.use_iam
+        or opensearch.username
+        or opensearch.password
+        or opensearch.allow_anonymous
+    ):
+        # The default (basic auth) has no credentials to send: sign with the
+        # caller's IAM identity, as the CDK domain expects.
+        opensearch.use_iam = True
     config.providers.graph.kind = "neptune"
     config.providers.vector.kind = "opensearch"
     return config
+
+
+def point_at_harness_stores(config: Config, harness: StoreHarness) -> None:
+    """Point ``config`` at the stores (and the namespace) of ``harness``,
+    whose teardown then clears what the run wrote.
+
+    The whole connection is copied (endpoint, port, TLS, certificate check,
+    IAM or basic auth, the region and profile that sign), not only where the
+    stores are: a config from a ``backend: local`` preset reaching an
+    IAM/TLS domain with its plain-text, unsigned settings is refused."""
+    stores = harness.config
+    for name in ("graph", "vector"):
+        mine, theirs = getattr(config.providers, name), getattr(stores.providers, name)
+        mine.kind = theirs.kind
+        mine.sqlite_path = theirs.sqlite_path
+    for name in ("neptune", "opensearch"):
+        setattr(config.aws, name, getattr(stores.aws, name).model_copy(deep=True))
+    config.aws.region_name = stores.aws.region_name
+    config.aws.profile_name = stores.aws.profile_name
+    config.indexing.additional_suffix = stores.indexing.additional_suffix
 
 
 class StoreHarness:
