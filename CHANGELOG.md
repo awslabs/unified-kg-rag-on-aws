@@ -530,6 +530,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   data names, else `--namespace`'s) instead of `visualization_outputs/`, where a second namespace's render replaced
   the first's pages with no warning. A renderer also removes the pages it does not draw this time (the hierarchy and
   community-size pages of data without communities), which an earlier render had left beside the new ones.
+- Docs: the CDK stack's Korean analyzer (`opensearch_korean_analyzer`, `cjk_script_split` or `nori`) applies only to
+  a corpus whose `processing.translation.source_language` is `ko`; the stack sets no source language, so a Korean
+  corpus under the image defaults (`en`) is analyzed `english`. The deployment guide and the runbook say so and how
+  to set it ([Korean with Nori](docs/operations.md#korean-with-nori)).
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0

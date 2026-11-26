@@ -645,6 +645,21 @@ custom resource looks up the package of the domain's engine version
 deployment) and waits until it is `ACTIVE`, up to two hours; the task
 definitions, deployed after storage, then map `ko` to `nori`.
 
+Either analyzer applies only to the text the config says is Korean. The
+chunk `text` field is analyzed for `processing.translation.source_language`,
+and the entity, relationship, claim and report indexes for the index
+language (`target_language` when translation runs, `source_language`
+otherwise: [Multilingual](./guides/multilingual.md)). The stack sets no
+source language, so a Korean corpus ingested under the image defaults
+(`source_language: en`, nothing to translate into `en`) is analyzed
+`english` throughout, which keeps "AWS를" and "홍길동으로부터" as one token
+each; the loading stage logs a WARNING naming the setting. Set
+`processing.translation.source_language: ko` in `docker/config.yaml`
+before building the image (both task definitions read it), or
+`UKR__PROCESSING__TRANSLATION__SOURCE_LANGUAGE=ko` in a task's
+environment. On a namespace already indexed, the change needs one
+`indexing.reset: true` run, like an analyzer change.
+
 1. Stop ingestion (no `RUNNING` execution).
 2. `cdk deploy --all -c opensearch_nori_package=true`, with the deploy's
    other `-c` flags: the ingestion task definition is in
