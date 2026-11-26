@@ -16,6 +16,8 @@ from collections.abc import Iterable
 from functools import lru_cache
 from typing import NamedTuple
 
+from unified_kg_rag.shared.utils.scripts import OTHER_DEFAULT_IGNORABLE_CODES
+
 # A tag pair whose content holds a template placeholder and no other tag:
 # ``<context>\n{context}\n</context>``.
 _DELIMITED_PLACEHOLDER = re.compile(
@@ -41,9 +43,10 @@ def neutralise_delimiters(value: str, tags: Iterable[str]) -> str:
     is kept as is.
 
     A form that only looks like one is escaped too: characters shown as
-    nothing or on the one before them (:data:`_HIDDEN_CATEGORIES`: a
-    zero-width space, a tag character, a variation selector, an accent)
-    inside it, a ``<`` or ``/`` written as a lookalike (fullwidth ``＜``,
+    nothing or on the one before them (:func:`_hidden`: a zero-width space,
+    a tag character, a Hangul filler, a control character, a variation
+    selector, an accent) inside it, a blank (a braille blank) where it may
+    have white space, a ``<`` or ``/`` written as a lookalike (fullwidth ``＜``,
     small ``﹤``, ``‹``, fullwidth ``／``), and a name that differs from a
     tag's only in non-ASCII letters or marks (``ｃontext`` with a fullwidth
     letter, ``cоntext`` with a Cyrillic ``о``, ``İnput_text`` with a dotted
@@ -96,17 +99,40 @@ class _Marks(NamedTuple):
 _LESS_THAN_CONFUSABLES = "\u02c2\u1438\u16b2\u2039\u276e"
 _SLASH_CONFUSABLES = "\u2044\u2215\u29f8"
 
-# The categories of the characters a form may hide in, in any plane (the tag
-# characters U+E0020-E007F and some format controls lie beyond the Basic
-# Multilingual Plane): invisible format characters (Cf: zero-width space and
-# joiners, bidi marks, the byte-order mark, the soft hyphen) and combining
-# marks (Mn, Me: accents, variation selectors), which show on the character
+# The characters a form may hide in, in any plane (the tag characters
+# U+E0020-E007F and some format controls lie beyond the Basic Multilingual
+# Plane), are those shown as nothing (_ignorable) and the combining marks
+# (Mn, Me: accents, variation selectors), which show on the character
 # before them, a "<" too.
-_HIDDEN_CATEGORIES = frozenset({"Cf", "Mn", "Me"})
+_MARK_CATEGORIES = frozenset({"Mn", "Me"})
+
+# The control characters (Cc) a text shows: tab and the line ends. The others
+# (NUL, ESC, DEL, the C1 controls) show as nothing.
+_SHOWN_CONTROLS = frozenset("\t\n\r")
+
+# Shown as a space, though not white space to Unicode: BRAILLE PATTERN BLANK,
+# a gap of a form as a space is ("< /context>"), not in a name ("con text"
+# is no tag).
+_BLANKS = "\u2800"
+
+
+def _ignorable(char: str) -> bool:
+    """Whether ``char`` is shown as nothing: a format character (every Cf,
+    a superset of those Default_Ignorable_Code_Point names), another
+    Default_Ignorable_Code_Point (UAX #44: Cf, the variation selectors,
+    which are marks, and ``OTHER_DEFAULT_IGNORABLE_CODES``; UTS #39
+    restricts every one in identifiers), or a control character but tab
+    and the line ends."""
+    category = unicodedata.category(char)
+    if category == "Cf":
+        return True
+    if category == "Cc":
+        return char not in _SHOWN_CONTROLS
+    return ord(char) in OTHER_DEFAULT_IGNORABLE_CODES
 
 
 def _hidden(char: str) -> bool:
-    return unicodedata.category(char) in _HIDDEN_CATEGORIES
+    return unicodedata.category(char) in _MARK_CATEGORIES or _ignorable(char)
 
 
 def _run_end(run: re.Pattern[str], value: str, at: int) -> int:
@@ -129,7 +155,7 @@ def _marks() -> _Marks:
     word, read once from the Basic Multilingual Plane's character data (no
     compatibility mapping beyond it folds to "<" or "/")."""
     less_thans, slashes, hidden = ["<"], ["/"], []
-    for code in range(0x80, 0x10000):
+    for code in range(0x10000):
         char = chr(code)
         if _hidden(char):
             hidden.append(char)
@@ -144,21 +170,21 @@ def _marks() -> _Marks:
     return _Marks(
         re.compile(less_than),
         frozenset([*slashes, *_SLASH_CONFUSABLES]),
-        re.compile(f"[\\s{shown_as_nothing}]*+"),
+        re.compile(f"[\\s{re.escape(_BLANKS)}{shown_as_nothing}]*+"),
         re.compile(f"[\\w\\-{shown_as_nothing}]*+"),
     )
 
 
 def _imitates(word: str, names: frozenset[str]) -> bool:
-    """Whether ``word``, its invisible format characters dropped, NFKC-folded
+    """Whether ``word``, its characters shown as nothing dropped, NFKC-folded
     and casefolded, and its combining marks then dropped (those it has, and
     those casefolding adds: ``İ`` folds to ``i`` and a combining dot), is
     one of the tag ``names`` (casefolded ASCII), or differs from one only
     in non-ASCII letters where it keeps at least one of its ASCII
     characters (a word of another script alone imitates no tag)."""
-    if word.isascii():  # nothing to fold or drop: most words
+    if word.isascii() and word.isprintable():  # nothing to fold or drop
         return word.casefold() in names
-    visible = "".join(c for c in word if unicodedata.category(c) != "Cf")
+    visible = "".join(c for c in word if not _ignorable(c))
     folded = "".join(
         c for c in unicodedata.normalize("NFKC", visible).casefold() if not _hidden(c)
     )

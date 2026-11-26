@@ -413,6 +413,8 @@ def _read_graph(
             }
         )
     edges: list[dict[str, Any]] = []
+    # The relationship each of ``edges`` is (the link cap picks them).
+    relationships: list[dict[str, Any]] = []
     for raw in raw_edges:
         attrs = raw.get("attributes") or {}
         source, target = str(raw.get("source")), str(raw.get("target"))
@@ -435,6 +437,7 @@ def _read_graph(
                 ends = (source, target)
             # The pair's relationships, which the link cap counts.
             graph.edges[source, target]["relationships"].append(rel)
+            relationships.append(rel)
             edges.append(
                 {
                     "id": str(rel.get("id") or f"{source}->{target}"),
@@ -457,6 +460,11 @@ def _read_graph(
     # exported layout's positions when it has them (an export may lay out
     # more), else at the layout run-visualization draws them at.
     drawn = displayed_graph(graph, max_nodes, max_edges)
+    # The relationships drawn: of a pair drawn with part of its own
+    # (max_edges), those it keeps.
+    shown = {
+        id(rel) for _, _, a in drawn.edges(data=True) for rel in a["relationships"]
+    }
     exported = data.get("layout") or {}
     layout = {k: v for k, v in exported.items() if k in drawn}
     if not layout:
@@ -475,10 +483,8 @@ def _read_graph(
         ],
         "edges": [
             e
-            for e in edges
-            if e["source"] in layout
-            and e["target"] in layout
-            and drawn.has_edge(e["source"], e["target"])
+            for e, rel in zip(edges, relationships, strict=True)
+            if e["source"] in layout and e["target"] in layout and id(rel) in shown
         ],
         # The links between the drawn entities, drawn or not (more than the
         # drawn ones' pairs: max_edges cut them).

@@ -198,8 +198,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
 
 - `graph.visualization.interactive.max_edges`: a drawn graph keeps at most this many relationships between its nodes
   (3000; 0 for all), by their links, each node's strongest first (a link merging several relationships of one pair
-  counts each, and one that no longer fits is passed over): a dense graph's 600 drawn nodes sent all of their 27,863
-  links (8.1 MB) and blocked the Graph page's main thread 4-5 s; with the cap 1.1 MB and about 1 s
+  counts each, and one that no longer fits whole is drawn with its heaviest relationships that fit, one kept for each
+  node's own strongest link, so a pair merging more than the cap neither vanishes nor takes every other node's link;
+  `run-visualization`'s tooltip of such a link says how many of them it draws): a dense graph's 600 drawn nodes sent
+  all of their 27,863 links (8.1 MB) and blocked the Graph page's main thread 4-5 s; with the cap 1.1 MB and about 1 s
   ([measured](docs/concepts/defaults-and-evidence.md#graph-page-size)). The Graph page says how many it drew, and an
   entity's panel lists all of its links (the first 40, the rest on "Show all relationships"); `run-visualization`'s
   interactive page says at its top how many of the nodes and links it drew when it drew part of the graph, and the run
@@ -1149,7 +1151,10 @@ Bugs present in 0.3.0.
   tag with a tag character (U+E0020-E007F) or another format control beyond it inside (`</con\U000E0020text>`), a
   combining mark or variation selector after the `<` or in the name, or a name casefolding lengthens (`</İnput_text>`)
   passed through. Those are escaped too; a word with visible letters after the mark (`</context́ual>`) is kept, as a
-  longer name is.
+  longer name is. The characters it counts as shown as nothing are now every Default_Ignorable_Code_Point of UAX #44
+  (a Hangul filler, U+3164, or a reserved one such as U+E0002 passed through) and the control characters but tab and
+  the line ends (NUL, ESC, DEL, C1), and a braille blank (U+2800) counts as the space it shows as where a tag may
+  have one (`<⠀/context>`). Korean text, a Hangul filler outside a tag and a line end in a name are kept.
 
 ## [0.3.0] - 2026-11-14
 

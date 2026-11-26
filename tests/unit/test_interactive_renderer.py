@@ -20,6 +20,7 @@ import pytest
 pytest.importorskip("pyvis", reason="needs the viz extra")
 
 from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
+from unified_kg_rag.domain.ingestion.visualization_data import displayed_graph
 from unified_kg_rag.domain.models import HierarchicalCommunity
 
 pytestmark = pytest.mark.unit
@@ -54,6 +55,22 @@ def test_an_edge_title_names_every_relationship_it_merges(mocker) -> None:
     assert "- works_at: Alice works at Acme." in merged
     assert "- owns: Alice owns Acme." in merged
     assert not any("Relationships:" in t for t in titles if t != merged)
+
+
+def test_an_edge_drawn_with_part_of_its_relationships_says_so(mocker) -> None:
+    # r9diff-8: max_edges draws a pair merging more than fits with the
+    # heaviest of them; its tooltip says how many it merges, also when one
+    # is drawn.
+    g = _graph()
+    g.edges["e1", "e2"]["relationships"] = [
+        {"id": f"r{i}", "type": "works_at", "weight": 1.0} for i in range(5)
+    ]
+    g.edges["e1", "e2"]["relationships"][3]["weight"] = 3.0
+    drawn = displayed_graph(g, None, 2)
+    net = mocker.MagicMock()
+    InteractiveRenderer({})._add_edges(net, drawn)
+    titles = [call.kwargs["title"] for call in net.add_edge.call_args_list]
+    assert any("Relationships: 1 of 5 drawn" in t for t in titles), titles
 
 
 class TestScaledPositions:
