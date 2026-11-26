@@ -65,11 +65,11 @@ def is_stop(exc_type: type[BaseException] | None) -> bool:
 async def cancel_on_exit(tasks: Sequence[asyncio.Future[Any]]) -> AsyncIterator[None]:
     """Cancel ``tasks`` and wait for them when the block raises.
 
-    For blocks that await tasks through ``asyncio.as_completed`` (or tqdm's
-    gather, built on it) or that stop at the first error: unlike a plain
-    ``asyncio.gather``, those leave the tasks running when the awaiting task
-    is cancelled (Ctrl-C, a timeout, a host cancelling the call), so they
-    kept spending and their spans never ended.
+    For blocks that await tasks through ``asyncio.as_completed`` or that
+    stop at the first error: unlike a plain ``asyncio.gather``, those leave
+    the tasks running when the awaiting task is cancelled (Ctrl-C, a
+    timeout, a host cancelling the call), so they kept spending and their
+    spans never ended.
     """
     try:
         yield

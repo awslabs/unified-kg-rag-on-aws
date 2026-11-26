@@ -50,7 +50,7 @@ from unified_kg_rag.shared.query_stop import (
 from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
-    cancel_on_exit,
+    gather_or_cancel,
 )
 from unified_kg_rag.shared.utils.model_output import parse_model_object
 
@@ -767,16 +767,14 @@ class BatchProcessor(BaseModel):
                 return result
 
             # The item tasks are awaited by a plain gather, not tqdm's (whose
-            # own wrapper tasks, out of cancel_on_exit's reach, were left
-            # holding an unretrieved exception when an item ended on a
-            # non-Exception): gather retrieves every item's ending, and
-            # cancel_on_exit cancels and waits for the rest.
-            tasks = [
-                asyncio.ensure_future(process_one(idx, single_input))
+            # own wrapper tasks, out of reach of the cancel, were left holding
+            # an unretrieved exception when an item ended on a non-Exception):
+            # gather retrieves every item's ending, and the rest are cancelled
+            # and waited for.
+            results: list[Any] = await gather_or_cancel(
+                process_one(idx, single_input)
                 for idx, single_input in enumerate(inputs)
-            ]
-            async with cancel_on_exit(tasks):
-                results: list[Any] = list(await asyncio.gather(*tasks))
+            )
         return self._completed(task_name, results)
 
 

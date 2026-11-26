@@ -469,6 +469,51 @@ def test_cancelling_an_async_batch_cancels_its_items() -> None:
     assert calls == Counter(started=2)
 
 
+def test_an_item_ending_the_async_batch_cancels_the_others() -> None:
+    # r11diff-2: an item ending on a non-Exception (a simulated death) ends
+    # the batch; the items still running are cancelled and waited for before
+    # it propagates, not left running as a plain gather leaves them.
+    class _Stop(BaseException):
+        pass
+
+    cancelled: list[int] = []
+
+    async def main() -> None:
+        others_started = asyncio.Event()
+        never = asyncio.Event()
+        started = 0
+
+        async def work(item: dict) -> int:
+            nonlocal started
+            started += 1
+            if item["i"] == 0:
+                await others_started.wait()
+                raise _Stop
+            if started == 3:
+                others_started.set()
+            try:
+                await never.wait()  # only a cancellation ends it
+            except asyncio.CancelledError:
+                cancelled.append(item["i"])
+                raise
+            return item["i"]
+
+        processor = BatchProcessor(max_concurrency=3)
+        with pytest.raises(_Stop):
+            await processor.aexecute_with_fallback(
+                list(range(3)),
+                lambda batch: [{"i": i} for i in batch],
+                work,
+                "T",
+                show_progress=False,
+            )
+        # Checked before asyncio.run's own cancel of what is left.
+        assert sorted(cancelled) == [1, 2]
+        assert len(asyncio.all_tasks()) == 1  # only main
+
+    asyncio.run(main())
+
+
 async def test_an_async_item_that_failed_names_its_ids_and_keeps_its_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
