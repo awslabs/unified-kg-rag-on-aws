@@ -1,19 +1,28 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The ``aws`` store harness (tests/fixtures/store_backends.py) reaches a
-managed domain as shipped: its config signs and uses TLS, and a suite
-pointing its own config at the harness carries that connection over. No AWS
-call: configs only."""
+managed domain as shipped: its config signs and uses TLS, a suite pointing
+its own config at the harness carries that connection over, and its teardown
+outlasts the domain's automated snapshot. No AWS call: configs and fakes
+only."""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from opensearchpy.exceptions import RequestError
 
 from tests.fixtures import store_backends
-from tests.fixtures.store_backends import point_at_harness_stores
+from tests.fixtures.store_backends import (
+    SNAPSHOT_RETRY_DELAYS_SECONDS,
+    StoreHarness,
+    clear_through_snapshots,
+    point_at_harness_stores,
+)
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.shared.exceptions import AWSServiceError
 
 pytestmark = pytest.mark.unit
 
@@ -86,3 +95,123 @@ def test_a_local_preset_config_pointed_at_the_aws_harness_carries_its_connection
     # A copy: the suite changing its config leaves the harness's alone.
     config.aws.opensearch.port = 9200
     assert harness.config.aws.opensearch.port == 443
+
+
+def _snapshot_refusal() -> AWSServiceError:
+    """What ``OpenSearchClient.delete_indices`` raises while the domain's
+    automated snapshot runs."""
+    cause = RequestError(
+        400,
+        "snapshot_in_progress_exception",
+        {"error": {"type": "snapshot_in_progress_exception"}},
+    )
+    error = AWSServiceError.caused_by(
+        "Failed to delete 1 of 1 index name(s): kg-text-units; first error", cause
+    )
+    error.__cause__ = cause
+    return error
+
+
+class _Refusing:
+    """A ``clear`` the domain refuses ``refusals`` times, then runs."""
+
+    def __init__(self, refusals: int, error: Exception | None = None) -> None:
+        self.refusals = refusals
+        self.error = error
+        self.calls: list[list[str]] = []
+
+    def __call__(self, suffixes: list[str]) -> None:
+        self.calls.append(suffixes)
+        if len(self.calls) <= self.refusals:
+            raise self.error or _snapshot_refusal()
+
+
+def test_a_clear_refused_for_a_snapshot_runs_again_after_a_backoff() -> None:
+    clear, sleeps = _Refusing(2), []
+    clear_through_snapshots(clear, ["default"], sleep=sleeps.append)
+    assert clear.calls == [["default"]] * 3
+    assert sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS[:2])
+
+
+def test_a_snapshot_outlasting_the_backoff_fails_the_clear() -> None:
+    clear, sleeps = _Refusing(len(SNAPSHOT_RETRY_DELAYS_SECONDS) + 1), []
+    with pytest.raises(AWSServiceError, match="Failed to delete"):
+        clear_through_snapshots(clear, ["default"], sleep=sleeps.append)
+    assert sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS)
+    assert sum(SNAPSHOT_RETRY_DELAYS_SECONDS) < 120 / 2  # the test timeout
+
+
+def test_any_other_clear_error_is_raised_at_once() -> None:
+    clear, sleeps = _Refusing(1, AWSServiceError("access denied")), []
+    with pytest.raises(AWSServiceError, match="access denied"):
+        clear_through_snapshots(clear, ["default"], sleep=sleeps.append)
+    assert len(clear.calls) == 1 and sleeps == []
+
+
+class _FakeClient:
+    """The OpenSearch client calls the teardown makes: no extraction-records
+    index left, and deletes the domain refuses ``refusals`` times."""
+
+    def __init__(self, refusals: int) -> None:
+        self.delete_indices = _Refusing(refusals)
+
+    def get_aliases_by_index(self, pattern: str) -> dict[str, Any]:
+        return {}
+
+
+class _FakeVectorStore:
+    def __init__(self, client: _FakeClient) -> None:
+        self.opensearch_client = client
+        self.opensearch_config = SimpleNamespace(
+            extraction_records_index_prefix="kg-extraction-records"
+        )
+        self.closed = False
+
+    def _get_name(self, prefix: str, suffix: str) -> str:
+        return f"{prefix}-{suffix}"
+
+    def clear(self, suffixes: list[str]) -> None:
+        self.opensearch_client.delete_indices(
+            [self._get_name("kg-text-units", s) for s in suffixes]
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeGraphStore:
+    def clear(self, suffixes: list[str]) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _aws_harness(refusals: int) -> tuple[StoreHarness, _FakeClient]:
+    harness = StoreHarness("fake", Config())
+    harness.kind = "aws"
+    client = _FakeClient(refusals)
+    harness.graph_indexer = _FakeGraphStore()
+    harness.vector_indexer = _FakeVectorStore(client)
+    return harness, client
+
+
+def test_the_aws_teardown_outlasts_an_automated_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(store_backends.time, "sleep", sleeps.append)
+    harness, client = _aws_harness(refusals=2)
+    harness.teardown()
+    assert len(client.delete_indices.calls) == 3
+    assert sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS[:2])
+    assert harness.vector_indexer.closed
+
+
+def test_the_aws_teardown_reports_a_snapshot_that_does_not_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(store_backends.time, "sleep", lambda _: None)
+    harness, _ = _aws_harness(refusals=len(SNAPSHOT_RETRY_DELAYS_SECONDS) + 1)
+    with pytest.raises(AssertionError, match="left data behind: vector clear failed"):
+        harness.teardown()

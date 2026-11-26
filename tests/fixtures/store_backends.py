@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -473,7 +474,7 @@ class StoreHarness:
                     ("extraction records", partial(clear_extraction_records, vector)),
                 ):
                     try:
-                        clear(suffixes)
+                        clear_through_snapshots(clear, suffixes)
                     except Exception as e:  # noqa: BLE001 - reported below
                         errors.append(f"{name} clear failed ({e})")
             for store in (harness.graph_indexer, harness.vector_indexer):
@@ -496,6 +497,48 @@ def _owner(method: str) -> str:
     """The port that declares ``method``: ``VectorIndexer`` or one of the
     concern ports it inherits."""
     return next(port.__name__ for port in VectorIndexer.__mro__ if method in vars(port))
+
+
+# OpenSearch Service refuses to delete an index while its automated snapshot
+# runs (400 ``snapshot_in_progress_exception``). A teardown that meets one
+# waits and clears again: SNAPSHOT_RETRY_DELAYS_SECONDS sum to 30 s, which
+# leaves the rest of a test's 120 s timeout (pytest-timeout covers the
+# teardown) to the test itself; a snapshot still running after that fails the
+# teardown as before.
+SNAPSHOT_IN_PROGRESS = "snapshot_in_progress_exception"
+SNAPSHOT_RETRY_DELAYS_SECONDS = (2.0, 4.0, 8.0, 16.0)
+
+
+def _snapshot_in_progress(error: BaseException) -> bool:
+    """Whether ``error`` or one it was raised from is OpenSearch's
+    ``snapshot_in_progress_exception``."""
+    seen: BaseException | None = error
+    while seen is not None:
+        if SNAPSHOT_IN_PROGRESS in str(seen):
+            return True
+        seen = seen.__cause__
+    return False
+
+
+def clear_through_snapshots(
+    clear: Callable[[list[str]], None],
+    suffixes: list[str],
+    *,
+    sleep: Callable[[float], None] | None = None,
+) -> None:
+    """``clear(suffixes)``, run again after each delay of
+    :data:`SNAPSHOT_RETRY_DELAYS_SECONDS` while the domain refuses it for a
+    snapshot in progress. Any other error, or the snapshot one after the
+    last delay, is raised. ``sleep`` (a test's) defaults to ``time.sleep``,
+    looked up at each call."""
+    for delay in (*SNAPSHOT_RETRY_DELAYS_SECONDS, None):
+        try:
+            clear(suffixes)
+            return
+        except Exception as e:
+            if delay is None or not _snapshot_in_progress(e):
+                raise
+        (sleep or time.sleep)(delay)
 
 
 def clear_extraction_records(vector_indexer: Any, suffixes: list[str]) -> None:
