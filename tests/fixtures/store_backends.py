@@ -22,9 +22,12 @@ so one test states a store contract once and runs it on each:
   the ``Providers`` it builds, so a backend author runs the suites on it
   without editing this file.
 - ``aws``: Neptune and OpenSearch Service (``pytest.mark.aws``). The config is
-  ``UKR_TEST_CONFIG`` if set, else the defaults; ``UKR__AWS__NEPTUNE__ENDPOINT`` and
-  ``UKR__AWS__OPENSEARCH__ENDPOINT`` override the endpoints. Skipped without both
-  endpoints.
+  ``UKR_TEST_CONFIG`` if set, else the defaults, either one under the
+  environment (``UKR__`` variables, ``AWS_REGION``): so
+  ``UKR__AWS__NEPTUNE__ENDPOINT`` and ``UKR__AWS__OPENSEARCH__ENDPOINT`` set
+  the endpoints. Both stores connect over TLS; OpenSearch requests are
+  SigV4-signed unless the config names another auth method (a managed domain
+  answers no unauthenticated request). Skipped without both endpoints.
 
 Every harness of a shared server writes under its own
 ``indexing.additional_suffix``, and clears every suffix it handed out (``StoreHarness.suffix``) on teardown, so a
@@ -37,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -49,7 +53,7 @@ import pytest
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.application.config import get_config
+from unified_kg_rag.application.config import ConfigLoader, get_config
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -163,22 +167,46 @@ def local_store_config() -> Config:
 
 def _aws_config() -> Config:
     path = os.getenv("UKR_TEST_CONFIG")
-    config = (
-        get_config(path).model_copy(deep=True)
-        if path and Path(path).is_file()
-        else Config()
-    )
-    if endpoint := os.getenv("UKR__AWS__NEPTUNE__ENDPOINT"):
-        config.aws.neptune.endpoint = endpoint
-    if endpoint := os.getenv("UKR__AWS__OPENSEARCH__ENDPOINT"):
-        config.aws.opensearch.endpoint = endpoint
+    config = ConfigLoader(
+        Path(path) if path and Path(path).is_file() else None
+    ).load_config()
     if not (config.aws.neptune.endpoint and config.aws.opensearch.endpoint):
         pytest.skip(
             "set UKR__AWS__NEPTUNE__ENDPOINT and UKR__AWS__OPENSEARCH__ENDPOINT (real AWS)"
         )
+    opensearch = config.aws.opensearch
+    if not (
+        opensearch.use_iam
+        or opensearch.username
+        or opensearch.password
+        or opensearch.allow_anonymous
+    ):
+        # The default (basic auth) has no credentials to send: sign with the
+        # caller's IAM identity, as the CDK domain expects.
+        opensearch.use_iam = True
     config.providers.graph.kind = "neptune"
     config.providers.vector.kind = "opensearch"
     return config
+
+
+def point_at_harness_stores(config: Config, harness: StoreHarness) -> None:
+    """Point ``config`` at the stores (and the namespace) of ``harness``,
+    whose teardown then clears what the run wrote.
+
+    The whole connection is copied (endpoint, port, TLS, certificate check,
+    IAM or basic auth, the region and profile that sign), not only where the
+    stores are: a config from a ``backend: local`` preset reaching an
+    IAM/TLS domain with its plain-text, unsigned settings is refused."""
+    stores = harness.config
+    for name in ("graph", "vector"):
+        mine, theirs = getattr(config.providers, name), getattr(stores.providers, name)
+        mine.kind = theirs.kind
+        mine.sqlite_path = theirs.sqlite_path
+    for name in ("neptune", "opensearch"):
+        setattr(config.aws, name, getattr(stores.aws, name).model_copy(deep=True))
+    config.aws.region_name = stores.aws.region_name
+    config.aws.profile_name = stores.aws.profile_name
+    config.indexing.additional_suffix = stores.indexing.additional_suffix
 
 
 class StoreHarness:
@@ -446,7 +474,7 @@ class StoreHarness:
                     ("extraction records", partial(clear_extraction_records, vector)),
                 ):
                     try:
-                        clear(suffixes)
+                        clear_through_snapshots(clear, suffixes)
                     except Exception as e:  # noqa: BLE001 - reported below
                         errors.append(f"{name} clear failed ({e})")
             for store in (harness.graph_indexer, harness.vector_indexer):
@@ -469,6 +497,48 @@ def _owner(method: str) -> str:
     """The port that declares ``method``: ``VectorIndexer`` or one of the
     concern ports it inherits."""
     return next(port.__name__ for port in VectorIndexer.__mro__ if method in vars(port))
+
+
+# OpenSearch Service refuses to delete an index while its automated snapshot
+# runs (400 ``snapshot_in_progress_exception``). A teardown that meets one
+# waits and clears again: SNAPSHOT_RETRY_DELAYS_SECONDS sum to 30 s, which
+# leaves the rest of a test's 120 s timeout (pytest-timeout covers the
+# teardown) to the test itself; a snapshot still running after that fails the
+# teardown as before.
+SNAPSHOT_IN_PROGRESS = "snapshot_in_progress_exception"
+SNAPSHOT_RETRY_DELAYS_SECONDS = (2.0, 4.0, 8.0, 16.0)
+
+
+def _snapshot_in_progress(error: BaseException) -> bool:
+    """Whether ``error`` or one it was raised from is OpenSearch's
+    ``snapshot_in_progress_exception``."""
+    seen: BaseException | None = error
+    while seen is not None:
+        if SNAPSHOT_IN_PROGRESS in str(seen):
+            return True
+        seen = seen.__cause__
+    return False
+
+
+def clear_through_snapshots(
+    clear: Callable[[list[str]], None],
+    suffixes: list[str],
+    *,
+    sleep: Callable[[float], None] | None = None,
+) -> None:
+    """``clear(suffixes)``, run again after each delay of
+    :data:`SNAPSHOT_RETRY_DELAYS_SECONDS` while the domain refuses it for a
+    snapshot in progress. Any other error, or the snapshot one after the
+    last delay, is raised. ``sleep`` (a test's) defaults to ``time.sleep``,
+    looked up at each call."""
+    for delay in (*SNAPSHOT_RETRY_DELAYS_SECONDS, None):
+        try:
+            clear(suffixes)
+            return
+        except Exception as e:
+            if delay is None or not _snapshot_in_progress(e):
+                raise
+        (sleep or time.sleep)(delay)
 
 
 def clear_extraction_records(vector_indexer: Any, suffixes: list[str]) -> None:
