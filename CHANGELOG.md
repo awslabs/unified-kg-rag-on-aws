@@ -100,7 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `run-visualization` without `--output-directory` writes its pages to `visualization_outputs/<namespace>/`, not
   `visualization_outputs/` (*Changed*; *Upgrading* step 19).
 - `run-console` exits 130 when Ctrl-C (SIGINT) stops it, a background launch included, where it exited 0 (*Fixed*;
-  *Upgrading* step 21).
+  *Upgrading* step 21). A second signal while it drains keeps the first one's code: SIGTERM and then Ctrl-C exits 143,
+  where it exited 130.
+- `run-mcp-server --transport streamable-http` started in the background (SIGINT inherited ignored) exits 130 when
+  Ctrl-C (SIGINT) stops it, where it exited 0 (*Fixed*; *Upgrading* step 22).
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
@@ -192,6 +195,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
     document as new.
 21. A script or supervisor that stops `run-console` with Ctrl-C (SIGINT) and reads its exit code gets 130 now, not 0
     (*Breaking changes*): read 130 as the stop it asked for, as for `run-mcp-server`
+    ([Exit codes](docs/reference/exit-codes-and-json.md#exit-codes)).
+22. A script or supervisor that starts `run-mcp-server --transport streamable-http` in the background and stops it
+    with Ctrl-C (SIGINT) gets 130 now, not 0 (*Breaking changes*): read 130 as the stop it asked for
     ([Exit codes](docs/reference/exit-codes-and-json.md#exit-codes)).
 
 ### Added
