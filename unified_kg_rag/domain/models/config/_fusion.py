@@ -664,7 +664,8 @@ class CitationConfig(ConfigSection):
             "true, drift: true} turns them back on, with the plain citation "
             "instruction. An auto query follows the strategy it routes to, "
             "and iterative follows its base (iterative_search.base) unless "
-            "it is named itself."
+            "it is named itself (answer_prompt_style does not: there "
+            "iterative uses its own entry)."
         ),
     )
 

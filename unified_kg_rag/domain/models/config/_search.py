@@ -347,7 +347,10 @@ class SearchConfig(ConfigSection):
             "same way, but its p95 latency came close to the 180 s "
             "query_timeout_seconds, so raise that with {drift: "
             "comprehensive}. {global: concise} restores the earlier default. "
-            "An auto query uses the style of the strategy it routes to."
+            "An auto query uses the style of the strategy it routes to. "
+            "iterative uses its own entry (concise unless named), not that "
+            "of its base (iterative_search.base), unlike "
+            "citations.strategies."
         ),
     )
     output_ceilings: QueryOutputCeilingsConfig = Field(
@@ -368,7 +371,8 @@ class SearchConfig(ConfigSection):
     ) -> AnswerPromptStyle:
         """The answer prompt of ``strategy`` (the one a query ran: ``auto``'s
         route): its ``answer_prompt_style`` entry, else concise (also for no
-        strategy)."""
+        strategy). ``iterative`` reads its own entry, not its base's (which
+        ``CitationConfig.enabled_for`` falls back to)."""
         if strategy is None:
             return "concise"
         return self.answer_prompt_style.get(strategy, "concise")

@@ -440,7 +440,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `global` against another strategy warns), as it does for runs that differ in whether they cite. A run saved before
   it was recorded is unknown, named in one warning; `--rescore` keeps the answering run's. Two `auto` runs are
   compared by their whole maps (the default map is already mixed, so two `auto` runs of different maps warn). No score
-  changes ([Evaluation output](docs/reference/evaluation-output.md#run-manifest)).
+  changes ([Evaluation output](docs/reference/evaluation-output.md#run-manifest)). `iterative` answers with its own
+  `answer_prompt_style` entry, not its base's as `search.citations.strategies` reads it; the setting's description now
+  says so.
 
 ### Changed
 
