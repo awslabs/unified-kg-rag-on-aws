@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from hypothesis import HealthCheck, settings
@@ -182,6 +183,41 @@ def _no_nest_asyncio() -> Iterator[None]:
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(nest_asyncio, "apply", refuse)
+        yield
+
+
+# What coverage's subprocess patch (``[tool.coverage.run] patch``) hands a
+# child: the measuring run's settings, read by coverage's .pth at startup.
+_COVERAGE_CHILD_ENV = "COVERAGE_PROCESS_CONFIG"
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _measured_subprocesses() -> Iterator[None]:
+    """Measure the processes a test starts with an environment of its own.
+
+    Under ``--cov``, coverage's subprocess patch sets
+    ``COVERAGE_PROCESS_CONFIG``, so a child that inherits the environment
+    measures itself into the run's data. A test that passes ``env=`` (a
+    stdio MCP server's, a scrubbed one) dropped it, and the CLI entry points
+    those children run read as uncovered. It is added to such an ``env``
+    here, nothing else of it changed; without coverage nothing is.
+    """
+    import subprocess
+
+    value = os.environ.get(_COVERAGE_CHILD_ENV)
+    if not value:
+        yield
+        return
+    original = subprocess.Popen.__init__
+
+    def measured(self: subprocess.Popen[Any], *args: Any, **kwargs: Any) -> None:
+        env = kwargs.get("env")
+        if env is not None and _COVERAGE_CHILD_ENV not in env:
+            kwargs["env"] = {**env, _COVERAGE_CHILD_ENV: value}
+        original(self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(subprocess.Popen, "__init__", measured)
         yield
 
 
