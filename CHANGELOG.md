@@ -1102,10 +1102,11 @@ Bugs present in 0.3.0.
 - `run-mcp-server --transport streamable-http` stopped by a second signal (a second Ctrl-C, or a Ctrl-C after a
   SIGTERM) exported none of the cut call's spans and wrote its audit record in only some runs: uvicorn raised both
   signals again once it had served, and the second ended the process at once, as a second stop does. The server
-  raises the first alone and stops as it would, the call's spans flushed and its record written. The client of a call
-  the shutdown cuts gets `503` with a JSON-RPC error (code `-32000`) saying the server is shutting down, not a bare
-  `500`. Started in the background (SIGINT inherited ignored), the server exited `0` at a Ctrl-C; it exits `130`, as
-  `run-console` does.
+  raises the first alone and stops as it would, the call's spans flushed and its record written, and the process ends
+  at once without waiting for the call's model request still running in a worker thread (a Bedrock call is one). The
+  client of a call the shutdown cuts gets `503` with a JSON-RPC error (code `-32000`) saying the server is shutting
+  down, not a bare `500`. Started in the background (SIGINT inherited ignored), the server exited `0` at a Ctrl-C; it
+  exits `130`, as `run-console` does.
 - An incremental run that removed some of the text units of a community stored without a report (a seed-only one,
   after an edit to one of its seed shards, or one whose report failed or was emptied) left the removed units in the
   community's graph vertex, since only a report's refresh wrote a vertex again. Such a vertex is now written again

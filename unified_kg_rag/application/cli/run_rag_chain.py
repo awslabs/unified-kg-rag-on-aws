@@ -665,14 +665,18 @@ class RAGChainRunner:
                 if not result.get("success", False):
                     sys.exit(EXIT_FAILURE)
         finally:
-            # Release Neptune/OpenSearch sockets when the query/session ends so
-            # a finished process does not leak the retrievers' connection pools.
-            if self.rag_chain is not None:
-                await self.rag_chain.aclose()
-            # A query that timed out leaves its model call running on a worker
-            # thread until the call's read timeout; the process exits without
-            # waiting for it.
-            event_loop.abandon_default_executor(loop, executor)
+            try:
+                # Release Neptune/OpenSearch sockets when the query/session
+                # ends so a finished process does not leak the retrievers'
+                # connection pools.
+                if self.rag_chain is not None:
+                    await self.rag_chain.aclose()
+            finally:
+                # A query that timed out leaves its model call running on a
+                # worker thread until the call's read timeout; the process
+                # exits without waiting for it, also when a stop's cancel
+                # lands in aclose().
+                event_loop.abandon_default_executor(loop, executor)
 
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
