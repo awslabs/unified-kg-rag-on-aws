@@ -2559,14 +2559,21 @@ class _Held:
 
     span = {"retrieve": "kg_rag.retrieve", "model": "chat vendor.model-v1"}
 
-    def __init__(self, where: str) -> None:
+    def __init__(self, where: str, *, in_thread: bool = False) -> None:
         self.where = where
+        # Held in a thread of the loop's default executor, as a sync model
+        # call is (ChatBedrockConverse has no native async path), instead
+        # of on the loop.
+        self.in_thread = in_thread
         # Bound to the loop that first waits on it (its test's).
         self.reached = asyncio.Event()
 
     async def hold(self) -> None:
         self.reached.set()
-        await asyncio.sleep(10)
+        if self.in_thread:
+            await asyncio.get_running_loop().run_in_executor(None, time.sleep, 10)
+        else:
+            await asyncio.sleep(10)
 
     async def wait(self) -> None:
         await self.reached.wait()
@@ -3180,7 +3187,8 @@ _STDIO_SERVER = textwrap.dedent("""
 
 # run-mcp-server --transport streamable-http as main runs it (serve, under
 # exits_on_sigterm and stoppable), its chain the held one; argv: the
-# output directory, the port, and whether SIGINT stays as inherited.
+# output directory, the port, whether SIGINT stays as inherited, and where
+# the model call is held (``loop`` or ``thread``, see _Held).
 _HTTP_SERVER = textwrap.dedent("""
     import argparse, asyncio, json, signal, sys
     from pathlib import Path
@@ -3221,7 +3229,7 @@ _HTTP_SERVER = textwrap.dedent("""
     ))
     query_audit.audit_enabled = lambda: True
     query_audit.emit = lambda r: write({"audit": r.outcome.value})
-    held = _Held("model")
+    held = _Held("model", in_thread=sys.argv[4] == "thread")
     chain = held.chain()
     run_mcp_server.GraphRAGChain = lambda **_: chain
     run_mcp_server.build_providers = lambda *_, **__: None
@@ -3348,16 +3356,17 @@ def test_a_signal_ends_a_stdio_server_whose_stdin_stays_open(
 
 
 def _start_http_server(
-    tmp_path: Path, *, sigint: str = "default"
+    tmp_path: Path, *, sigint: str = "default", hold: str = "loop"
 ) -> tuple[subprocess.Popen[str], int]:
     """``_HTTP_SERVER`` started, listening on its port; ``sigint``
-    ``ignore``: started with SIGINT ignored, as a background launch.
+    ``ignore``: started with SIGINT ignored, as a background launch;
+    ``hold``: where its model call is held (``loop`` or ``thread``).
     Skips without the mcp extra, whose SDK the server process imports."""
     pytest.importorskip("mcp")
     port = _free_port()
     repository = Path(__file__).resolve().parents[2]
     process = subprocess.Popen(
-        [sys.executable, "-c", _HTTP_SERVER, str(tmp_path), str(port), sigint],
+        [sys.executable, "-c", _HTTP_SERVER, str(tmp_path), str(port), sigint, hold],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -3387,12 +3396,13 @@ def _start_http_server(
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("hold", ["loop", "thread"])
 @pytest.mark.parametrize(
     "signals",
     [(signal.SIGINT, signal.SIGINT), (signal.SIGTERM, signal.SIGINT)],
 )
 def test_a_second_signal_on_the_http_mcp_server_keeps_the_cut_call_s_trace(
-    tmp_path: Path, signals: tuple[int, int]
+    tmp_path: Path, signals: tuple[int, int], hold: str
 ) -> None:
     # r8e2e-1: uvicorn raises every signal it took again once it served;
     # the second read as a second stop and ended the process at once,
@@ -3400,10 +3410,14 @@ def test_a_second_signal_on_the_http_mcp_server_keeps_the_cut_call_s_trace(
     # backend's unflushed batch (0 spans in 5 of 5 runs, the audit record
     # in 3). The process stops as the first signal's stop: the call's spans
     # are exported, its audit record written, and the client gets a
-    # JSON-RPC error naming the shutdown (D-7).
+    # JSON-RPC error naming the shutdown (D-7). r9diff-1: the second
+    # signal's cancel lands in serve()'s chain.aclose() and skipped the
+    # executor's abandon after it, so a model call held in an executor
+    # thread (``hold`` ``thread``: a sync Bedrock call) held the exit
+    # until it returned. It is abandoned: the process exits at once.
     import httpx
 
-    process, port = _start_http_server(tmp_path)
+    process, port = _start_http_server(tmp_path, hold=hold)
     responses: list[Any] = []
     asking = threading.Thread(
         target=lambda: responses.append(

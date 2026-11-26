@@ -385,8 +385,12 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
             tools, args.host, args.port, args.trusted_identity_header
         )
     finally:
-        await chain.aclose()
-        event_loop.abandon_default_executor(loop, executor)
+        try:
+            await chain.aclose()
+        finally:
+            # Also when a forced stop's cancel lands in aclose(): asyncio.run
+            # would otherwise join a model call still running in a thread.
+            event_loop.abandon_default_executor(loop, executor)
 
 
 async def async_main(args: argparse.Namespace) -> int:

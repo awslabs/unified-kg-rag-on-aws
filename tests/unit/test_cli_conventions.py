@@ -3429,3 +3429,97 @@ def _wakeup_fd() -> int:
     fd = signal.set_wakeup_fd(-1)
     signal.set_wakeup_fd(fd)
     return fd
+
+
+@pytest.mark.parametrize("cli", ["run-rag", "run-mcp-server"])
+def test_a_stop_landing_in_the_chain_s_close_still_abandons_the_executor(
+    monkeypatch: pytest.MonkeyPatch, cli: str
+) -> None:
+    # r9diff-1: the CLIs close the chain, then abandon the loop's default
+    # executor so asyncio.run does not join a model call still running in
+    # one of its threads. A stop's cancel landing in that close (the HTTP
+    # MCP server's second signal does) skipped the abandon, and the
+    # process waited for the call.
+    from unified_kg_rag.shared.utils import event_loop
+
+    abandoned: list[Any] = []
+    monkeypatch.setattr(
+        event_loop,
+        "abandon_default_executor",
+        lambda loop, executor: abandoned.append(executor),
+    )
+    closing = asyncio.Event()
+
+    class Chain:
+        async def aclose(self) -> None:
+            closing.set()
+            await asyncio.sleep(30)
+
+    chain = Chain()
+    if cli == "run-rag":
+        runner = run_rag_chain.RAGChainRunner.__new__(run_rag_chain.RAGChainRunner)
+        runner.config = Config()
+        runner.args = argparse.Namespace(interactive=True, search_strategy="simple")
+        monkeypatch.setattr(
+            run_rag_chain, "missing_extras_error", lambda *_a, **_k: None
+        )
+        monkeypatch.setattr(
+            run_rag_chain, "missing_endpoints_error", lambda *_a, **_k: None
+        )
+        monkeypatch.setattr(run_rag_chain, "display_ascii_art", lambda **_k: None)
+        runner._display_run_info = lambda: None  # type: ignore[method-assign]
+
+        async def initialize() -> None:
+            runner.rag_chain = chain  # type: ignore[assignment]
+
+        async def session() -> None:
+            return None
+
+        runner._initialize_chain = initialize  # type: ignore[method-assign]
+        runner._interactive_mode = session  # type: ignore[method-assign]
+        main = runner.run
+    else:
+        pytest.importorskip("mcp")
+        from unified_kg_rag.application.cli import run_mcp_server
+
+        class Tools:
+            namespace = "default"
+            namespaces = ["default"]
+
+        async def served(*_a: Any) -> int:
+            return 0
+
+        async def no_check(*_a: Any) -> None:
+            return None
+
+        monkeypatch.setattr(
+            run_mcp_server, "build_metrics_sink", lambda *_a, **_k: None
+        )
+        monkeypatch.setattr(run_mcp_server, "build_providers", lambda *_a, **_k: None)
+        monkeypatch.setattr(run_mcp_server, "GraphRAGChain", lambda **_k: chain)
+        monkeypatch.setattr(
+            run_mcp_server, "KnowledgeGraphTools", lambda *_a, **_k: Tools()
+        )
+        monkeypatch.setattr(run_mcp_server, "warn_of_missing_namespaces", no_check)
+        monkeypatch.setattr(run_mcp_server, "serve_http", served)
+        args = argparse.Namespace(
+            metrics_sink=None,
+            namespace=None,
+            transport="streamable-http",
+            host="127.0.0.1",
+            port=0,
+            trusted_identity_header=None,
+        )
+
+        async def main() -> None:
+            await run_mcp_server.serve(args, Config())
+
+    async def run() -> None:
+        task = asyncio.create_task(main())
+        await asyncio.wait_for(closing.wait(), 10)
+        task.cancel()  # the stop, during aclose()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+    assert len(abandoned) == 1

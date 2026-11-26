@@ -429,3 +429,62 @@ async def test_the_disconnect_watch_raises_the_app_s_own_failure(
     with pytest.raises(RuntimeError, match="inner failure") as raised:
         await app({"type": "http"}, receive, send)
     assert not isinstance(raised.value.__context__, BaseExceptionGroup)
+
+
+@pytest.mark.parametrize(
+    ("answer_started", "stopping", "shutdown_answer"),
+    [(False, True, True), (True, True, False), (False, False, False)],
+)
+async def test_only_a_shutdown_cut_before_the_answer_started_is_answered_503(
+    answer_started: bool, stopping: bool, shutdown_answer: bool
+) -> None:
+    # r9diff-6: a request the shutdown cancels is answered 503 only when
+    # the process is stopping (a cancel otherwise is the ASGI server's or a
+    # host's, not a shutdown) and the app has not started its own answer
+    # (a second response start would break the protocol).
+    import asyncio
+
+    from unified_kg_rag.shared.query_stop import mark_process_stopping
+
+    reached = asyncio.Event()
+
+    async def app(scope: dict[str, object], receive: object, send: object) -> None:
+        await receive()  # type: ignore[operator]
+        if answer_started:
+            await send({"type": "http.response.start", "status": 200, "headers": []})  # type: ignore[operator]
+        reached.set()
+        await asyncio.sleep(10)
+
+    request = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "tools/call"})
+    messages = [{"type": "http.request", "body": request.encode(), "more_body": False}]
+
+    async def receive() -> dict[str, object]:
+        if messages:
+            return messages.pop()
+        await asyncio.sleep(10)
+        return {"type": "http.disconnect"}
+
+    sent: list[dict[str, object]] = []
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    served = asyncio.create_task(
+        mcp_server._cancelled_on_disconnect(app)({"type": "http"}, receive, send)
+    )
+    await asyncio.wait_for(reached.wait(), 5)
+    mark_process_stopping(stopping)
+    try:
+        served.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await served
+    finally:
+        mark_process_stopping(False)
+    statuses = [m["status"] for m in sent if m["type"] == "http.response.start"]
+    if shutdown_answer:
+        assert statuses == [503]
+        body = json.loads(sent[-1]["body"])  # type: ignore[arg-type]
+        assert body["id"] == 7
+        assert body["error"]["code"] == mcp_server.SHUTDOWN_ERROR_CODE
+    else:
+        assert statuses == ([200] if answer_started else [])
