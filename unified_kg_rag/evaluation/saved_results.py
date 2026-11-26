@@ -408,8 +408,9 @@ def _scoring_mismatch(scorings: list[Any], listed: str) -> str:
 
 def recorded_citations(citations: dict[str, Any], label: str) -> str:
     """Whether the answers of run ``label`` cited, as its manifest's
-    ``citations`` block records it: ``on``, ``off``, or ``per strategy``
-    for an ``auto`` run whose routes differ. The block's ``strategies``
+    ``citations`` block records it: ``on``, ``off``, or for an ``auto``
+    run whose routes differ the whole map (``per strategy (drift, global
+    off, else on)``, see ``_label_setting``). The block's ``strategies``
     (per strategy, what ``search.citations`` resolved to) decides; a run
     saved before it was recorded followed ``enabled`` everywhere."""
     per = citations.get("strategies")
@@ -423,12 +424,27 @@ def recorded_citations(citations: dict[str, Any], label: str) -> str:
 def _label_setting(per: Mapping[str, str], label: str) -> str:
     """The setting of run ``label``'s strategy in ``per`` (a manifest's
     per-strategy map), or for a strategy it does not name (``auto``, whose
-    routes it records) the one every strategy has, else ``per strategy``."""
+    routes it records) the one every strategy has, else the whole map:
+    ``per strategy (global comprehensive, else concise)``, the most common
+    setting after ``else``. Two ``auto`` runs then read alike only when
+    their maps are equal: one label for every mixed map hid a difference."""
     strategy = label_strategy(label).removeprefix("baseline:")
     if strategy in per:
         return per[strategy]
-    values = set(per.values())
-    return values.pop() if len(values) == 1 else "per strategy"
+    by_value: dict[str, list[str]] = {}
+    for name in sorted(per):
+        by_value.setdefault(per[name], []).append(name)
+    if len(by_value) == 1:
+        return next(iter(by_value))
+    # The most common setting (the first in sorted order on a tie) is the
+    # one the others are told apart from.
+    common = min(by_value, key=lambda value: (-len(by_value[value]), value))
+    others = "; ".join(
+        f"{', '.join(names)} {value}"
+        for value, names in sorted(by_value.items())
+        if value != common
+    )
+    return f"per strategy ({others}, else {common})"
 
 
 def citation_warnings(

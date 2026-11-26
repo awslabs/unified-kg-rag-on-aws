@@ -438,8 +438,9 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   `concise` or `comprehensive`, `search.answer_prompt_style` resolved), and a comparison of runs that differ warns
   that its deltas measure the prompt as well as the strategies (`global` is comprehensive by default, so a default
   `global` against another strategy warns), as it does for runs that differ in whether they cite. A run saved before
-  it was recorded is unknown, named in one warning; `--rescore` keeps the answering run's. No score changes
-  ([Evaluation output](docs/reference/evaluation-output.md#run-manifest)).
+  it was recorded is unknown, named in one warning; `--rescore` keeps the answering run's. Two `auto` runs are
+  compared by their whole maps (the default map is already mixed, so two `auto` runs of different maps warn). No score
+  changes ([Evaluation output](docs/reference/evaluation-output.md#run-manifest)).
 
 ### Changed
 
@@ -1143,6 +1144,10 @@ Bugs present in 0.3.0.
   holding that exception: asyncio logged "Task exception was never retrieved" at ERROR when the garbage collector took
   them, later and in other code. The batch awaits its items with a plain `gather`, which retrieves each item's ending,
   and cancels and waits for the rest as before.
+- A `run-eval` comparison of two `auto` runs whose `search.citations.strategies` maps differ (`--baseline-results`
+  of a run with another map) did not warn that their answers differ in citing when neither map was the same for every
+  strategy: both read as "per strategy". An `auto` run is now compared by its whole map, and the warning names each
+  map (`per strategy (drift, global off, else on)`).
 
 ### Security
 - The image upgrades `libzstd1` to the Debian security release fixing CVE-2026-124851 (HIGH, an information
