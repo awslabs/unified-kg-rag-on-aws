@@ -93,11 +93,10 @@ def _cli(
 def _stopped_cli(
     chain: Any, config: Any, providers: Any, argv: list[str]
 ) -> list[BaseException | None]:
-    """:func:`_cli` for a run a :class:`_Stop` ends. The batch items' tasks
-    it ended are never awaited, and asyncio reports each as the garbage
-    collector takes it, in whichever test runs then (one that asserts no
-    ERROR log failed). Collected here, the exceptions they report are
-    returned."""
+    """:func:`_cli` for a run a :class:`_Stop` ends, returning the
+    exceptions asyncio reports as never retrieved. A task left holding one
+    is reported when the garbage collector takes it, in whichever test runs
+    then (one that asserts no ERROR log failed), so it is collected here."""
     reported: list[BaseException | None] = []
     with pytest.raises(_Stop):
         _cli(
@@ -196,7 +195,8 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
             providers,
             [*strategies, "--output-directory", str(stopped)],
         )
-        assert all(isinstance(e, _Stop) for e in reported), reported
+        # Every task the stopped batch made had its ending retrieved.
+        assert reported == []
         object.__setattr__(chain, "ainvoke", answer)
         assert not list(stopped.rglob("evaluation_results_naive_*"))
         # The missing strategy alone, into the same directory.

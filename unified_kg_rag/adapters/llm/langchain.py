@@ -22,7 +22,6 @@ from lxml import etree
 from pydantic import BaseModel, ConfigDict, Field
 from structlog.contextvars import bound_contextvars
 from tqdm import tqdm
-from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.adapters.llm.retry import (
     DEFAULT_CALL_TIMEOUT_SECONDS,
@@ -747,29 +746,37 @@ class BatchProcessor(BaseModel):
         semaphore = asyncio.Semaphore(self.max_concurrency)
         progress = ProgressLogger(task_name, len(inputs))
 
-        async def process_one(idx: int, single_input: dict[str, Any]) -> Any:
-            ids = item_ids(single_input) if item_ids is not None else {}
-            async with semaphore:
-                with bound_contextvars(**ids):
-                    try:
-                        result = await retrying_sequential_func(single_input)
-                    except Exception as error:  # noqa: BLE001 - isolate one item
-                        if errors is not None:
-                            errors[idx] = error
-                        result = self._failed(task_name, error)
-            progress.update()
-            return result
+        with tqdm(
+            total=len(inputs),
+            desc=f"Processing: {task_name}",
+            disable=None if show_progress else True,
+        ) as bar:
 
-        tasks = [
-            asyncio.ensure_future(process_one(idx, single_input))
-            for idx, single_input in enumerate(inputs)
-        ]
-        async with cancel_on_exit(tasks):
-            results: list[Any] = await async_tqdm.gather(
-                *tasks,
-                desc=f"Processing: {task_name}",
-                disable=None if show_progress else True,
-            )
+            async def process_one(idx: int, single_input: dict[str, Any]) -> Any:
+                ids = item_ids(single_input) if item_ids is not None else {}
+                async with semaphore:
+                    with bound_contextvars(**ids):
+                        try:
+                            result = await retrying_sequential_func(single_input)
+                        except Exception as error:  # noqa: BLE001 - isolate one item
+                            if errors is not None:
+                                errors[idx] = error
+                            result = self._failed(task_name, error)
+                progress.update()
+                bar.update()
+                return result
+
+            # The item tasks are awaited by a plain gather, not tqdm's (whose
+            # own wrapper tasks, out of cancel_on_exit's reach, were left
+            # holding an unretrieved exception when an item ended on a
+            # non-Exception): gather retrieves every item's ending, and
+            # cancel_on_exit cancels and waits for the rest.
+            tasks = [
+                asyncio.ensure_future(process_one(idx, single_input))
+                for idx, single_input in enumerate(inputs)
+            ]
+            async with cancel_on_exit(tasks):
+                results: list[Any] = list(await asyncio.gather(*tasks))
         return self._completed(task_name, results)
 
 

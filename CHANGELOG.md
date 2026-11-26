@@ -1124,6 +1124,11 @@ Bugs present in 0.3.0.
   outdated-report note, so a run killed before its commit leaves it to the next. A graph backend reads the vertices
   through the new `GraphIndexer.read_communities` (`read_community_children` now reads through it); one that leaves it
   at its default keeps the vertex as stored, as before.
+- A batch of model calls (`BatchProcessor.aexecute_with_fallback`) that ended on a `BaseException` that is not an
+  `Exception` or a cancel (a closed generator, a test's simulated death) left the progress bar's own wrapper tasks
+  holding that exception: asyncio logged "Task exception was never retrieved" at ERROR when the garbage collector took
+  them, later and in other code. The batch awaits its items with a plain `gather`, which retrieves each item's ending,
+  and cancels and waits for the rest as before.
 
 ### Security
 - The image upgrades `libzstd1` to the Debian security release fixing CVE-2026-124851 (HIGH, an information
