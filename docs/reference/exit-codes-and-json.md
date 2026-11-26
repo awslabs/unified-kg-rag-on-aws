@@ -59,7 +59,7 @@ A query's failure maps to its code by its class (`ErrorClass`, the same for
 | `invalid_argument` | `InvalidArgumentError` (`ToolArgumentError`), `DocumentNotFoundError`, a refused command line | `2` | `400` (a refusal of its own: `403`, `409`, `413`, `415`, `422`) |
 | `not_indexed` | `MethodologyNotIndexedError` | `2` | `404` |
 | `index_not_found` | `IndexNotFoundError` | `2` | `404` |
-| `configuration` | `ConfigurationError` | `2` | `400` |
+| `configuration` | `ConfigurationError` (also a bad `format` or `max_items` of the Python `export_graph`, the one bad argument that is not `invalid_argument`: [Python library](../guides/python-library.md#results-and-errors)) | `2` | `400` |
 | `timeout` | `QueryTimeoutError` | `1` | `504` |
 | `limit_exceeded` | `UsageLimitExceededError` (a model call past `search.query_max_model_calls`, `search.query_max_input_tokens` or `RAGInput.limits`), `RunBudgetExhausted` (an ingestion run stopped at `processing.max_run_model_calls` or `processing.max_run_usd`) | `1` | `422` |
 | `store_unreachable` | `StoreConnectionError` | `1` | `503` |

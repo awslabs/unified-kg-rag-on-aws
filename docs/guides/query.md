@@ -625,6 +625,12 @@ refuses a key only when, with the filters already set, no strategy `auto`
 may route to applies them all. `Ctrl-C` while a question is answered stops
 that question (its turn is not kept) and returns to the prompt; `Ctrl-C` at
 the prompt, or a second one while the question stops, ends the session.
+While the prompt waits for input, a stop signal is acted on only when the
+read returns: in the rare case that the kernel delivers a `SIGTERM` (or a
+`Ctrl-C`) to another of the process's threads than the main one, the session
+ends once a line is entered (`Enter`) or the input closes (`Ctrl-D`). The
+wakeup that lets a question being answered see such a signal cannot
+interrupt a terminal read that is blocked.
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):

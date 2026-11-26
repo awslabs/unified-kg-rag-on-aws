@@ -177,6 +177,16 @@ the stores only. `run-describe` prints them
   `PipelineInterrupted` (a `KeyboardInterrupt`); all but the last are
   `GraphRAGException`s. `DataIngestionPipeline(...)` raises `SeedGraphError`
   (a `ConfigurationError`) for a seed graph it cannot import.
+- `export_graph` is the one function that raises `ConfigurationError`, not
+  `InvalidArgumentError`, for a bad argument: an unknown `format` or a
+  `max_items` below 1 (class `configuration`, which a CLI exits 2 on as it
+  does `invalid_argument`); an existing `path` without `overwrite=True` is an
+  `InvalidArgumentError`, as elsewhere. The two classes are siblings, so
+  `except InvalidArgumentError` does not catch it. The next minor release
+  is planned to raise `InvalidArgumentError` for these too, a *Breaking*
+  change then: a caller that catches
+  `(ConfigurationError, InvalidArgumentError)` around `export_graph` works
+  with both.
 - `DataIngestionPipeline.run` raises `ConfigurationError`,
   `StoreConnectionError`, `NamespaceLeaseError` and
   `ConfirmationDeclinedError` as they are, and wraps any other crash outside
