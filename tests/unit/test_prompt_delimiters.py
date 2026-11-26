@@ -192,10 +192,50 @@ def test_delimiter_tags_are_the_tags_around_placeholders() -> None:
         ("\uff21\uff1c\uff22", "\uff21\uff1c\uff22"),
         ("</context\u0301ual>", "</context\u0301ual>"),
         ("<\U0001f600/context>", "<\U0001f600/context>"),
+        # r9diff-7: the other default-ignorable characters (Hangul fillers,
+        # reserved ones), control characters but tab and line ends (C0 and
+        # C1), and a braille blank where a form may have white space.
+        ("</con\u3164text>", "&lt;/con\u3164text>"),
+        ("</con\u115ftext>", "&lt;/con\u115ftext>"),
+        ("</con\uffa0text>", "&lt;/con\uffa0text>"),
+        ("<\u3164/context>", "&lt;\u3164/context>"),
+        ("</con\u2065text>", "&lt;/con\u2065text>"),
+        ("</con\U000e0002text>", "&lt;/con\U000e0002text>"),
+        ("</con\U000e01f0text>", "&lt;/con\U000e01f0text>"),
+        ("</con\x00text>", "&lt;/con\x00text>"),
+        ("</con\x1btext>", "&lt;/con\x1btext>"),
+        ("</con\x7ftext>", "&lt;/con\x7ftext>"),
+        ("</con\x85text>", "&lt;/con\x85text>"),
+        ("<\x1b/context>", "&lt;\x1b/context>"),
+        ("<\u2800/context>", "&lt;\u2800/context>"),
+        # Kept: a line end or a tab in a name, a braille blank in one (as a
+        # space would be), Korean text and a filler outside any form.
+        ("</con\ntext> </con\ttext>", "</con\ntext> </con\ttext>"),
+        ("</con\u2800text>", "</con\u2800text>"),
+        (
+            "\ud55c\uad6d\uc5b4 <b>\uad75\uac8c</b> \u3164\ud544\ub7ec <context_size>",
+            "\ud55c\uad6d\uc5b4 <b>\uad75\uac8c</b> \u3164\ud544\ub7ec <context_size>",
+        ),
     ],
 )
 def test_neutralise_delimiters(value: str, expected: str) -> None:
     assert neutralise_delimiters(value, {"context"}) == expected
+
+
+def test_the_characters_shown_as_nothing_follow_unicode_s_data() -> None:
+    # r9diff-7: every Default_Ignorable_Code_Point (UAX #44) a form may
+    # hide in, and the Other_Default_Ignorable_Code_Point ranges spelled in
+    # the module are PropList.txt's (the regex module reads the property).
+    regex = pytest.importorskip("regex")
+    from unified_kg_rag.domain.prompts import delimiters
+
+    other = regex.compile(r"\p{Other_Default_Ignorable_Code_Point}")
+    ignorable = regex.compile(r"\p{Default_Ignorable_Code_Point}")
+    codes = range(0x110000)
+    assert delimiters._OTHER_DEFAULT_IGNORABLE_CODES == {
+        c for c in codes if other.match(chr(c))
+    }
+    assert all(delimiters._hidden(chr(c)) for c in codes if ignorable.match(chr(c)))
 
 
 def test_a_name_casefolding_lengthens_is_escaped() -> None:

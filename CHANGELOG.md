@@ -1149,7 +1149,10 @@ Bugs present in 0.3.0.
   tag with a tag character (U+E0020-E007F) or another format control beyond it inside (`</con\U000E0020text>`), a
   combining mark or variation selector after the `<` or in the name, or a name casefolding lengthens (`</İnput_text>`)
   passed through. Those are escaped too; a word with visible letters after the mark (`</context́ual>`) is kept, as a
-  longer name is.
+  longer name is. The characters it counts as shown as nothing are now every Default_Ignorable_Code_Point of UAX #44
+  (a Hangul filler, U+3164, or a reserved one such as U+E0002 passed through) and the control characters but tab and
+  the line ends (NUL, ESC, DEL, C1), and a braille blank (U+2800) counts as the space it shows as where a tag may
+  have one (`<⠀/context>`). Korean text, a Hangul filler outside a tag and a line end in a name are kept.
 
 ## [0.3.0] - 2026-11-14
 
