@@ -1264,8 +1264,18 @@ async def test_a_client_that_disconnects_frees_its_call_slot(
             await asyncio.sleep(0.05)
         url = f"http://{host}:{port}/mcp"
         async with httpx.AsyncClient(headers=_HEADERS, timeout=60) as client:
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(client.post(url, json=call), 0.5)
+            # The client leaves once its call holds the slot (inside the
+            # chain), not after a guessed time: on a slow host it could
+            # leave before the call started (r11base-1).
+            leaving = asyncio.create_task(client.post(url, json=call))
+            for _ in range(600):
+                if calls or leaving.done():
+                    break
+                await asyncio.sleep(0.05)
+            assert calls == ["screen"], leaving
+            leaving.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await leaving
             await asyncio.wait_for(cancelled.wait(), 10)
             # The one slot is free: the next call answers at once.
             answered = await asyncio.wait_for(client.post(url, json=call), 30)
