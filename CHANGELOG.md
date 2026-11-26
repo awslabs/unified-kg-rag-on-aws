@@ -530,6 +530,14 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   data names, else `--namespace`'s) instead of `visualization_outputs/`, where a second namespace's render replaced
   the first's pages with no warning. A renderer also removes the pages it does not draw this time (the hierarchy and
   community-size pages of data without communities), which an earlier render had left beside the new ones.
+- Docs: the CDK stack's Korean analyzer (`opensearch_korean_analyzer`, `cjk_script_split` or `nori`) applies only to
+  a corpus whose `processing.translation.source_language` is `ko`; the stack sets no source language, so a Korean
+  corpus under the image defaults (`en`) is analyzed `english`. The deployment guide and the runbook say so and how
+  to set it ([Korean with Nori](docs/operations.md#korean-with-nori)).
+- Docs: an MCP server behind an Application Load Balancer is stopped by the target group's deregistration delay, not
+  by the server's 60 s grace: ECS sends `SIGTERM` only after the delay, and the ALB closes the calls still open
+  (`502`, recorded as a client that left). Set the delay at or above `search.query_timeout_seconds`
+  ([MCP server](docs/guides/mcp.md#http-and-remote-deployment)).
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0
