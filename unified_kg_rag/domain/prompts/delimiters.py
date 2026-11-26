@@ -106,9 +106,9 @@ _SLASH_CONFUSABLES = "\u2044\u2215\u29f8"
 # before them, a "<" too.
 _MARK_CATEGORIES = frozenset({"Mn", "Me"})
 
-# The control characters (Cc) a text shows: tab and the line ends. The others
-# (NUL, ESC, DEL, the C1 controls) show as nothing.
-_SHOWN_CONTROLS = frozenset("\t\n\r")
+# The control characters (Cc) a text shows are its white space (tab, the line
+# ends, VT, FF, which pdftotext writes between pages, FS-US and NEL): a gap, as
+# a space is. The others (NUL, ESC, DEL, the other C1 controls) show as nothing.
 
 # Shown as a space, though not white space to Unicode: BRAILLE PATTERN BLANK,
 # a gap of a form as a space is ("< /context>"), not in a name ("con text"
@@ -121,13 +121,14 @@ def _ignorable(char: str) -> bool:
     a superset of those Default_Ignorable_Code_Point names), another
     Default_Ignorable_Code_Point (UAX #44: Cf, the variation selectors,
     which are marks, and ``OTHER_DEFAULT_IGNORABLE_CODES``; UTS #39
-    restricts every one in identifiers), or a control character but tab
-    and the line ends."""
+    restricts every one in identifiers), or a control character that is no
+    white space (tab, the line ends, VT, FF, FS-US and NEL are shown as a
+    gap, as a space is)."""
     category = unicodedata.category(char)
     if category == "Cf":
         return True
     if category == "Cc":
-        return char not in _SHOWN_CONTROLS
+        return not char.isspace()
     return ord(char) in OTHER_DEFAULT_IGNORABLE_CODES
 
 

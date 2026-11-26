@@ -103,7 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *Upgrading* step 21). A second signal while it drains keeps the first one's code: SIGTERM and then Ctrl-C exits 143,
   where it exited 130.
 - `run-mcp-server --transport streamable-http` started in the background (SIGINT inherited ignored) exits 130 when
-  Ctrl-C (SIGINT) stops it, where it exited 0 (*Fixed*; *Upgrading* step 22).
+  Ctrl-C (SIGINT) stops it, where it exited 0 (*Fixed*; *Upgrading* step 22). A second signal while it drains keeps
+  the first one's code, as for `run-console`: SIGTERM and then Ctrl-C exits 143, where it exited 130.
 
 ### Upgrading
 From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
@@ -1158,9 +1159,11 @@ Bugs present in 0.3.0.
   combining mark or variation selector after the `<` or in the name, or a name casefolding lengthens (`</İnput_text>`)
   passed through. Those are escaped too; a word with visible letters after the mark (`</context́ual>`) is kept, as a
   longer name is. The characters it counts as shown as nothing are now every Default_Ignorable_Code_Point of UAX #44
-  (a Hangul filler, U+3164, or a reserved one such as U+E0002 passed through) and the control characters but tab and
-  the line ends (NUL, ESC, DEL, C1), and a braille blank (U+2800) counts as the space it shows as where a tag may
-  have one (`<⠀/context>`). Korean text, a Hangul filler outside a tag and a line end in a name are kept.
+  (a Hangul filler, U+3164, or a reserved one such as U+E0002 passed through) and the control characters that are
+  no white space (NUL, ESC, DEL, the other C1 controls); the white-space controls (tab, the line ends, VT, FF, the
+  page break pdftotext writes, FS-US, NEL) are a gap as a space is, so `</context\x0cfoo>` is escaped. A braille
+  blank (U+2800) counts as the space it shows as where a tag may have one (`<⠀/context>`). Korean text, a Hangul
+  filler outside a tag and a line end in a name are kept.
 
 ## [0.3.0] - 2026-11-14
 
