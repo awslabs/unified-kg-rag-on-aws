@@ -135,6 +135,24 @@ def test_the_link_cap_counts_each_relationship_of_a_pair(tmp_path: Path) -> None
     assert len(every["edges"]) == 200 + pairs - 1
 
 
+def test_a_pair_s_heavier_second_link_sets_its_weight(tmp_path: Path) -> None:
+    """r9base-1: two exported links of one pair (n0-n1 at weight 1, then
+    5) draw the pair at the heavier one's weight, which the link cap ranks
+    by: n0-n1 is then n0's and n1's strongest link and is drawn at
+    max_edges 2; at the first link's weight n0-n2 and n1-n3 are."""
+    path = write_export(tmp_path / "v.json", 4)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    links = [("n0", "n1", 1.0), ("n0", "n1", 5.0), ("n0", "n2", 3.0)]
+    links += [("n1", "n3", 2.0), ("n2", "n3", 1.0)]
+    data["edges"] = [
+        {"source": a, "target": b, "attributes": {"id": f"r{i}", "weight": w}}
+        for i, (a, b, w) in enumerate(links)
+    ]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    page = graph_api.cached_graph(path, _CAP, max_edges=2).page
+    assert sorted(e["id"] for e in page["edges"]) == ["r1", "r2"]
+
+
 def test_an_undrawn_entity_is_read_with_every_edge_that_touches_it(
     tmp_path: Path,
 ) -> None:

@@ -212,6 +212,11 @@ def test_delimiter_tags_are_the_tags_around_placeholders() -> None:
         # space would be), Korean text and a filler outside any form.
         ("</con\ntext> </con\ttext>", "</con\ntext> </con\ttext>"),
         ("</con\u2800text>", "</con\u2800text>"),
+        # r9base-1: a lookalike `<` that is a letter inside the word of the
+        # form before it (Canadian syllabics PA, runic kauna) starts no form
+        # of its own.
+        ("<x\u1438context>", "<x\u1438context>"),
+        ("<x\u16b2/context>", "<x\u16b2/context>"),
         (
             "\ud55c\uad6d\uc5b4 <b>\uad75\uac8c</b> \u3164\ud544\ub7ec <context_size>",
             "\ud55c\uad6d\uc5b4 <b>\uad75\uac8c</b> \u3164\ud544\ub7ec <context_size>",
