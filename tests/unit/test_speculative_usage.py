@@ -487,25 +487,37 @@ def test_close_ends_the_sync_paths_background_extraction(
     assert "exception was never retrieved" not in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("keywords_served", "estimated"), [(True, 1), (False, 2)], ids=["served", "held"]
+)
 async def test_a_call_the_deadline_cancels_is_counted(
-    monkeypatch: pytest.MonkeyPatch, release: threading.Event
+    monkeypatch: pytest.MonkeyPatch,
+    release: threading.Event,
+    keywords_served: bool,
+    estimated: int,
 ) -> None:
     # The answer call is cut by the deadline, expired once that call is in
     # flight: under ignore_errors the query returns the error answer, whose
-    # usage still holds the cut call.
-    model = _ThreadedChat(gates={"answer": release})
+    # usage still holds the cut call. The speculative keyword call is held
+    # or served before the deadline, not left to the host's timing: one
+    # still in flight is cut and estimated too (r11base-2).
+    gates = {"answer": release} | ({} if keywords_served else {"keywords": release})
+    model = _ThreadedChat(gates=gates)
     chain = _chain(model, query_timeout_seconds=300)
     chain.ignore_errors = True
     timeouts = HeldTimeouts(monkeypatch)
     query = asyncio.ensure_future(chain.ainvoke(_auto()))
-    await _until(lambda: "answer" in model.started)
+    await _until(lambda: {"answer", "keywords"} <= set(model.started))
+    if keywords_served:
+        await _until(lambda: "keywords" in model.served)
     timeouts.expire()
     out = await asyncio.wait_for(query, 30)
     assert "answer" not in model.served
+    assert ("keywords" in model.served) is keywords_served
     release.set()
     assert out.answer == DEFAULT_ERROR_MESSAGE
     usage = out.metadata["usage"]
-    assert (usage["llm_calls"], usage["estimated_calls"]) == (3, 1)
+    assert (usage["llm_calls"], usage["estimated_calls"]) == (3, estimated)
 
 
 async def test_a_call_limit_starts_no_speculative_extraction() -> None:
