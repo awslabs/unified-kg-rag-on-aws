@@ -534,6 +534,10 @@ From 0.3.0. The runbook's [Upgrading the library](docs/operations.md#upgrading-t
   a corpus whose `processing.translation.source_language` is `ko`; the stack sets no source language, so a Korean
   corpus under the image defaults (`en`) is analyzed `english`. The deployment guide and the runbook say so and how
   to set it ([Korean with Nori](docs/operations.md#korean-with-nori)).
+- Docs: an MCP server behind an Application Load Balancer is stopped by the target group's deregistration delay, not
+  by the server's 60 s grace: ECS sends `SIGTERM` only after the delay, and the ALB closes the calls still open
+  (`502`, recorded as a client that left). Set the delay at or above `search.query_timeout_seconds`
+  ([MCP server](docs/guides/mcp.md#http-and-remote-deployment)).
 
 ### Deprecated
 Each name below warns and still works, and is removed in 0.5.0

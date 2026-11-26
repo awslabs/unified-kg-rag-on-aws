@@ -268,8 +268,26 @@ running is killed with no span and no audit record. A call may run for
 `search.query_timeout_seconds` (180 s by default), longer than the 60 s: keep it under 60 s where calls
 must finish across a deploy.
 
-Neither AgentCore nor an ECS service running the server is verified on AWS
-yet.
+**Behind an Application Load Balancer** the 60 s grace and the `503` see no
+call. A StopTask or a deployment of an ECS service first deregisters the
+task from its target group and waits for the target group's deregistration
+delay (`deregistration_delay.timeout_seconds`, 300 s by default) before ECS
+sends `SIGTERM`. In that time the ALB sends the task no new call, and at its
+end the ALB closes the calls still open: their clients get the ALB's `502`,
+and the server records each as a client that left (`cancelled`, audit
+outcome `stopped`, no error span), not as a cut. `SIGTERM` then finds
+nothing in flight. So the order is: deregistration (no new calls), the
+delay (calls in flight finish or the ALB closes them), `SIGTERM`, the
+server's exit within `stopTimeout`. Set the deregistration delay at or
+above `search.query_timeout_seconds` for calls to finish across a deploy.
+The grace and the `503` decide for a server reached directly, or through a
+Network Load Balancer, which by default keeps a connection open past the
+delay (unless `deregistration_delay.connection_termination.enabled`).
+
+An ECS service running the server behind an internal ALB that
+authenticates with Amazon Cognito has run on AWS (the identity header, a
+stop with a call in flight, the spans and the metrics); AgentCore Runtime
+has not.
 
 A host application can mount the server itself. `build_mcp_app` returns
 the stateless ASGI application; `allowed_hosts` (the `Host` values the

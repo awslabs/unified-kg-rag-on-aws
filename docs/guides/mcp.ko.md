@@ -235,7 +235,21 @@ extra가 없고, 스택의 질의 태스크는 서비스, 포트, 로드 밸런�
 `search.query_timeout_seconds`(기본 180초)까지 실행될 수 있어 60초보다 깁니다. 배포 중에도
 호출이 끝나야 한다면 이 값을 60초 아래로 두세요.
 
-AgentCore나 이 서버를 실행하는 ECS 서비스 구성은 아직 AWS에서 검증하지 않았습니다.
+**Application Load Balancer 뒤에서는** 60초 유예와 `503`이 적용되는 호출이 없습니다. ECS 서비스의
+StopTask나 배포는 먼저 태스크를 대상 그룹에서 등록 해제하고, 대상 그룹의 등록 해제 지연
+(`deregistration_delay.timeout_seconds`, 기본 300초)만큼 기다린 뒤에 `SIGTERM`을 보냅니다. 그동안
+ALB는 태스크에 새 호출을 보내지 않고, 지연이 끝나면 아직 열려 있는 호출을 닫습니다. 그 클라이언트는
+ALB의 `502`를 받고, 서버는 끊긴 호출이 아니라 클라이언트가 떠난 호출로 기록합니다(`cancelled`, 감사
+결과 `stopped`, 오류 스팬 없음). 그래서 `SIGTERM`이 올 때는 처리 중인 호출이 없습니다. 순서는 등록
+해제(새 호출 없음), 지연(처리 중인 호출이 끝나거나 ALB가 닫음), `SIGTERM`, `stopTimeout` 안의 서버
+종료입니다. 배포 중에도 호출이 끝나야 한다면 등록 해제 지연을 `search.query_timeout_seconds` 이상으로
+두세요. 유예와 `503`은 서버에
+직접 연결할 때, 또는 기본값에서 지연이 끝난 뒤에도 연결을 열어 두는 Network Load Balancer
+(`deregistration_delay.connection_termination.enabled`를 켜지 않은 경우)를 거칠 때 적용됩니다.
+
+Amazon Cognito로 인증하는 내부 ALB 뒤에서 이 서버를 실행하는 ECS 서비스는 AWS에서 실행해
+보았습니다(신원 헤더, 처리 중인 호출이 있을 때의 중지, 스팬과 지표). AgentCore Runtime은 아직
+검증하지 않았습니다.
 
 호스트 애플리케이션이 서버를 직접 마운트할 수도 있습니다. `build_mcp_app`은 상태 없는
 ASGI 애플리케이션을 돌려줍니다. `allowed_hosts`(프록시가 전달하는 `Host` 값)를 주면
