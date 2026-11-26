@@ -149,9 +149,50 @@ def test_the_link_cap_counts_the_relationships_a_link_merges() -> None:
     # Every link but one: the 4-relationship link, the strongest, is kept.
     assert drawn.has_edge("n0", "n1")
     assert drawn.number_of_edges() == graph.number_of_edges() - 1
-    # A link that no longer fits is passed over, the smaller ones kept.
+    # r9diff-8: a link that no longer fits whole is drawn with as many of
+    # its relationships as fit, one held back for each node's own strongest
+    # link still to come (five links are one's strongest here).
     kept = kept_edges(graph, 3)
-    assert ("n0", "n1") not in kept and len(kept) == 3
+    assert [count for *_, count in kept] == [1, 1, 1]
+    assert kept[0][:2] == ("n0", "n1")
+
+
+def _heavy_pair(relationships: int) -> nx.Graph:
+    """A-B merges ``relationships`` relationships (the heaviest link, the
+    first the heaviest of them); E-F is a component of its own."""
+    graph = nx.Graph()
+    merged = [{"id": f"r{i}", "weight": 1.0} for i in range(relationships)]
+    merged[-1]["weight"] = 2.0
+    graph.add_edge("A", "B", weight=9.0, relationships=merged)
+    for u, v in (("A", "C"), ("B", "D"), ("C", "D"), ("E", "F")):
+        graph.add_edge(u, v, weight=1.0)
+    return graph
+
+
+@pytest.mark.parametrize("cap", [4, 100, 199, 200, 203])
+def test_a_pair_merging_more_than_the_cap_is_drawn_and_takes_no_other_s_link(
+    cap: int,
+) -> None:
+    # r9diff-8: a pair whose relationships no longer fitted was passed over,
+    # though the heaviest link (max_edges 199: A-B never drawn), and one
+    # exactly filling the cap took every other node's strongest link (200:
+    # E-F, a component of its own, vanished), while the notice said the
+    # strongest were drawn, each entity's own first.
+    graph = _heavy_pair(200)
+    drawn = displayed_graph(graph, None, cap)
+    held = [relationship_count(a) for *_, a in drawn.edges(data=True)]
+    assert sum(held) == cap
+    assert drawn.has_edge("A", "B") and drawn.has_edge("E", "F")
+    # Every node keeps a link: its own strongest.
+    assert min(dict(drawn.degree()).values()) >= 1
+    pair = drawn.edges["A", "B"]
+    # Whole once the cap holds it and the others' strongest (203).
+    assert pair.get("relationships_total") == (None if cap >= 203 else 200)
+    shown = [r["id"] for r in pair["relationships"]]
+    # The heaviest first, then the graph's order; the stored pair untouched.
+    assert "r199" in shown and shown[:-1] == [f"r{i}" for i in range(len(shown) - 1)]
+    assert len(graph.edges["A", "B"]["relationships"]) == 200
+    assert "relationships_total" not in graph.edges["A", "B"]
 
 
 def test_the_layout_lays_out_the_links_drawn() -> None:

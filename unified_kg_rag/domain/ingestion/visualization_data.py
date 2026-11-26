@@ -227,23 +227,47 @@ def displayed_graph(
     pruned = nx.Graph()
     pruned.add_nodes_from(graph.nodes(data=True))
     pruned.add_edges_from(
-        (u, v, graph.adj[u][v]) for u, v in kept_edges(graph, max_edges)
+        (u, v, _with_relationships(graph.adj[u][v], drawn))
+        for u, v, drawn in kept_edges(graph, max_edges)
     )
     return pruned
 
 
-def kept_edges(graph: nx.Graph, max_edges: int) -> list[tuple[Any, Any]]:
-    """The links of an undirected ``graph`` that hold at most ``max_edges``
+def _with_relationships(attributes: dict[str, Any], drawn: int) -> dict[str, Any]:
+    """A link's ``attributes``, of the relationships it merges the
+    ``drawn`` heaviest (in their order on ties), and ``relationships_total``
+    the count it merges, when that is fewer than all of them."""
+    merged = attributes.get("relationships")
+    if not isinstance(merged, list) or drawn >= len(merged):
+        return attributes
+
+    def weight(item: Any) -> float:
+        value = item.get("weight") if isinstance(item, dict) else None
+        return float(value) if isinstance(value, int | float) else 0.0
+
+    heaviest = sorted(range(len(merged)), key=lambda i: -weight(merged[i]))[:drawn]
+    return {
+        **attributes,
+        "relationships": [merged[i] for i in sorted(heaviest)],
+        "relationships_total": len(merged),
+    }
+
+
+def kept_edges(graph: nx.Graph, max_edges: int) -> list[tuple[Any, Any, int]]:
+    """The links of an undirected ``graph`` drawn with at most ``max_edges``
     relationships (:func:`relationship_count`: a link merging several counts
-    each), chosen so every node keeps its own strongest: a node ranks its
-    links by ``weight`` (heaviest first), then by the other end's degree,
-    and a link counts at the better of its two ends' ranks; the lowest
-    counts are kept, each node's first link before any node's second
-    (local-degree sparsification, Lindner et al. 2015, "Structure-preserving
-    sparsification methods for social networks", with the weight first),
-    a link whose relationships no longer fit passed over for the next. In
-    the graph's own order on ties, so the same graph keeps the same
-    links."""
+    each), each with the count of its relationships drawn, chosen so every
+    node keeps its own strongest: a node ranks its links by ``weight``
+    (heaviest first), then by the other end's degree, and a link counts at
+    the better of its two ends' ranks; the lowest counts are kept, each
+    node's first link before any node's second (local-degree
+    sparsification, Lindner et al. 2015, "Structure-preserving
+    sparsification methods for social networks", with the weight first).
+    A link is drawn with all of its relationships while they fit, else with
+    as many as fit, one held back for each node's own strongest link still
+    to come (as many as the budget holds): a link merging more than the
+    budget is drawn, and does not take every other node's. In the graph's
+    own order on ties, so the same graph keeps the same links."""
     nodes = list(graph)
     order = {node: i for i, node in enumerate(nodes)}
     adjacency = graph.adj
@@ -273,15 +297,21 @@ def kept_edges(graph: nx.Graph, max_edges: int) -> list[tuple[Any, Any]]:
             if seen is None or rank < seen[0]:
                 best[key] = (rank, weight(neighbours[other]))
     chosen = sorted(best, key=lambda key: (best[key][0], -best[key][1], key))
-    kept: list[tuple[Any, Any]] = []
+    kept: list[tuple[Any, Any, int]] = []
     left = max_edges
+    # One relationship each for the links that are some node's strongest
+    # (rank 0, first in ``chosen``) not yet drawn.
+    held = min(sum(1 for key in chosen if best[key][0] == 0), max_edges)
     for a, b in chosen:
-        count = relationship_count(adjacency[nodes[a]][nodes[b]])
-        if count <= left:
-            kept.append((nodes[a], nodes[b]))
-            left -= count
-            if not left:
-                break
+        if best[(a, b)][0] == 0 and held:
+            held -= 1
+        drawn = min(relationship_count(adjacency[nodes[a]][nodes[b]]), left - held)
+        if drawn < 1:
+            continue
+        kept.append((nodes[a], nodes[b], drawn))
+        left -= drawn
+        if not left:
+            break
     return kept
 
 

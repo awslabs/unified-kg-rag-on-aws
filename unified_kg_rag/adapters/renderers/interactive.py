@@ -312,11 +312,20 @@ class InteractiveRenderer:
     def _merged_relationship_lines(attrs: dict[str, Any]) -> list[str]:
         """The lines that name each relationship of an edge that merges
         several (its exported ``relationships``), by type and description:
-        the scalar lines above are the first one's only."""
+        the scalar lines above are the first one's only. Of a link drawn
+        with part of them (``max_edges``), those drawn, and how many it
+        merges."""
         merged = attrs.get("relationships")
-        if not isinstance(merged, list) or len(merged) < 2:
+        total = attrs.get("relationships_total")
+        if not isinstance(merged, list) or (len(merged) < 2 and total is None):
             return []
-        lines = [f"Relationships: {len(merged)}"]
+        lines = [
+            (
+                f"Relationships: {len(merged)}"
+                if total is None
+                else f"Relationships: {len(merged)} of {total} drawn"
+            )
+        ]
         for rel in merged:
             if isinstance(rel, dict):
                 described = ": ".join(

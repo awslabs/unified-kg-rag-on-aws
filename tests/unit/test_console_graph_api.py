@@ -118,11 +118,19 @@ def test_the_link_cap_counts_each_relationship_of_a_pair(tmp_path: Path) -> None
         assert len(page["edges"]) <= cap, cap
         # The relationships between the drawn entities, drawn or not.
         assert page["linked"] == 200 + pairs - 1
-    # A pair kept keeps every relationship (E-3); one that no longer fits
-    # is passed over for the next.
+    # A pair that fits keeps every relationship (E-3). r9diff-8: one that
+    # no longer fits whole was passed over, though the heaviest; it is
+    # drawn with its heaviest relationships that fit (in their order on
+    # ties), one held back for each other node's strongest link.
     few = graph_api.cached_graph(path, _CAP, max_edges=pairs).page
-    assert not [e for e in few["edges"] if {e["source"], e["target"]} == {"n0", "n1"}]
-    assert len(few["edges"]) == pairs - 1
+    heavy = [e for e in few["edges"] if {e["source"], e["target"]} == {"n0", "n1"}]
+    assert len(few["edges"]) == pairs
+    assert [e["id"] for e in heavy] == [f"r{i}" for i in range(len(heavy))]
+    assert 1 <= len(heavy) < 200
+    drawn = {frozenset((e["source"], e["target"])) for e in few["edges"]}
+    assert all(any(n in pair for pair in drawn) for n in few["layout"])
+    one = graph_api.cached_graph(path, _CAP, max_edges=1).page
+    assert [e["id"] for e in one["edges"]] == ["r0"]
     every = graph_api.cached_graph(path, _CAP, max_edges=300).page
     assert len(every["edges"]) == 200 + pairs - 1
 
