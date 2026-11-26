@@ -17,6 +17,8 @@ from opensearchpy.exceptions import RequestError
 from tests.fixtures import store_backends
 from tests.fixtures.store_backends import (
     SNAPSHOT_RETRY_DELAYS_SECONDS,
+    SNAPSHOT_WAIT_SECONDS,
+    SnapshotWait,
     StoreHarness,
     clear_through_snapshots,
     point_at_harness_stores,
@@ -112,6 +114,25 @@ def _snapshot_refusal() -> AWSServiceError:
     return error
 
 
+class _Clock:
+    """A monotonic clock that only ``sleep`` (or a clear that takes time)
+    moves, recording each sleep."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def wait(self) -> SnapshotWait:
+        return SnapshotWait(clock=self, sleep=self.sleep)
+
+
 class _Refusing:
     """A ``clear`` the domain refuses ``refusals`` times, then runs."""
 
@@ -127,25 +148,56 @@ class _Refusing:
 
 
 def test_a_clear_refused_for_a_snapshot_runs_again_after_a_backoff() -> None:
-    clear, sleeps = _Refusing(2), []
-    clear_through_snapshots(clear, ["default"], sleep=sleeps.append)
+    clear, clock = _Refusing(2), _Clock()
+    clear_through_snapshots(clear, ["default"], clock.wait())
     assert clear.calls == [["default"]] * 3
-    assert sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS[:2])
+    assert clock.sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS[:2])
 
 
-def test_a_snapshot_outlasting_the_backoff_fails_the_clear() -> None:
-    clear, sleeps = _Refusing(len(SNAPSHOT_RETRY_DELAYS_SECONDS) + 1), []
+def test_a_snapshot_outlasting_the_wait_fails_the_clear() -> None:
+    clear, clock = _Refusing(100), _Clock()
     with pytest.raises(AWSServiceError, match="Failed to delete"):
-        clear_through_snapshots(clear, ["default"], sleep=sleeps.append)
-    assert sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS)
-    assert sum(SNAPSHOT_RETRY_DELAYS_SECONDS) < 120 / 2  # the test timeout
+        clear_through_snapshots(clear, ["default"], clock.wait())
+    assert clock.sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS)
+    assert sum(clock.sleeps) == SNAPSHOT_WAIT_SECONDS < 120 / 2  # the test timeout
+
+
+def test_the_clears_of_one_teardown_share_one_wait() -> None:
+    # r11diff-5: the bound was per clear, so a teardown of several clears
+    # (3 per harness) could wait 30 s for each and outlast the test timeout.
+    clock = _Clock()
+    wait = clock.wait()
+    clear_through_snapshots(_Refusing(2), ["default"], wait)
+    with pytest.raises(AWSServiceError):
+        clear_through_snapshots(_Refusing(100), ["default"], wait)
+    # 2 + 4, then 2 + 4 + 8 and the 10 s left of the next 16.
+    assert clock.sleeps == [2.0, 4.0, 2.0, 4.0, 8.0, 10.0]
+    assert sum(clock.sleeps) == SNAPSHOT_WAIT_SECONDS
+    # Spent: a later refusal fails at once.
+    late = _Refusing(1)
+    with pytest.raises(AWSServiceError):
+        clear_through_snapshots(late, ["default"], wait)
+    assert len(late.calls) == 1 and len(clock.sleeps) == 6
+
+
+def test_the_clears_own_time_counts_against_the_wait() -> None:
+    clock = _Clock()
+    wait = clock.wait()
+
+    def slow_refusal(suffixes: list[str]) -> None:
+        clock.now += SNAPSHOT_WAIT_SECONDS
+        raise _snapshot_refusal()
+
+    with pytest.raises(AWSServiceError):
+        clear_through_snapshots(slow_refusal, ["default"], wait)
+    assert clock.sleeps == []
 
 
 def test_any_other_clear_error_is_raised_at_once() -> None:
-    clear, sleeps = _Refusing(1, AWSServiceError("access denied")), []
+    clear, clock = _Refusing(1, AWSServiceError("access denied")), _Clock()
     with pytest.raises(AWSServiceError, match="access denied"):
-        clear_through_snapshots(clear, ["default"], sleep=sleeps.append)
-    assert len(clear.calls) == 1 and sleeps == []
+        clear_through_snapshots(clear, ["default"], clock.wait())
+    assert len(clear.calls) == 1 and clock.sleeps == []
 
 
 class _FakeClient:
@@ -187,8 +239,10 @@ class _FakeGraphStore:
         pass
 
 
-def _aws_harness(refusals: int) -> tuple[StoreHarness, _FakeClient]:
-    harness = StoreHarness("fake", Config())
+def _aws_harness(
+    refusals: int, parent: StoreHarness | None = None
+) -> tuple[StoreHarness, _FakeClient]:
+    harness = StoreHarness("fake", Config(), parent=parent)
     harness.kind = "aws"
     client = _FakeClient(refusals)
     harness.graph_indexer = _FakeGraphStore()
@@ -196,22 +250,37 @@ def _aws_harness(refusals: int) -> tuple[StoreHarness, _FakeClient]:
     return harness, client
 
 
-def test_the_aws_teardown_outlasts_an_automated_snapshot(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sleeps: list[float] = []
-    monkeypatch.setattr(store_backends.time, "sleep", sleeps.append)
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    clock = _Clock()
+    monkeypatch.setattr(store_backends.time, "monotonic", clock)
+    monkeypatch.setattr(store_backends.time, "sleep", clock.sleep)
+    return clock
+
+
+def test_the_aws_teardown_outlasts_an_automated_snapshot(clock: _Clock) -> None:
     harness, client = _aws_harness(refusals=2)
     harness.teardown()
     assert len(client.delete_indices.calls) == 3
-    assert sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS[:2])
+    assert clock.sleeps == list(SNAPSHOT_RETRY_DELAYS_SECONDS[:2])
     assert harness.vector_indexer.closed
 
 
-def test_the_aws_teardown_reports_a_snapshot_that_does_not_end(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(store_backends.time, "sleep", lambda _: None)
-    harness, _ = _aws_harness(refusals=len(SNAPSHOT_RETRY_DELAYS_SECONDS) + 1)
+def test_the_aws_teardown_reports_a_snapshot_that_does_not_end(clock: _Clock) -> None:
+    harness, _ = _aws_harness(refusals=100)
     with pytest.raises(AssertionError, match="left data behind: vector clear failed"):
         harness.teardown()
+
+
+def test_the_aws_teardown_waits_once_for_every_harness(clock: _Clock) -> None:
+    # r11diff-5: the root and its derived harnesses are cleared in one
+    # teardown, so their waits share one deadline.
+    root, _ = _aws_harness(refusals=100)
+    derived, derived_client = _aws_harness(refusals=100, parent=root)
+    with pytest.raises(
+        AssertionError, match="vector clear failed.*vector clear failed"
+    ):
+        root.teardown()
+    assert sum(clock.sleeps) == SNAPSHOT_WAIT_SECONDS
+    assert len(derived_client.delete_indices.calls) == 1
+    assert root.vector_indexer.closed and derived.vector_indexer.closed

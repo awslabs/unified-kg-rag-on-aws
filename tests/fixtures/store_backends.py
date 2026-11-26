@@ -464,6 +464,8 @@ class StoreHarness:
         harnesses = [self, *self._derived] if self is self._root else [self]
         suffixes = sorted(self._root._suffixes)
         shared = self.kind in ("container", "aws")
+        # One wait for the whole teardown: every clear of every harness.
+        wait = SnapshotWait()
         errors: list[str] = []
         for harness in harnesses:
             if shared:
@@ -474,7 +476,7 @@ class StoreHarness:
                     ("extraction records", partial(clear_extraction_records, vector)),
                 ):
                     try:
-                        clear_through_snapshots(clear, suffixes)
+                        clear_through_snapshots(clear, suffixes, wait)
                     except Exception as e:  # noqa: BLE001 - reported below
                         errors.append(f"{name} clear failed ({e})")
             for store in (harness.graph_indexer, harness.vector_indexer):
@@ -501,44 +503,69 @@ def _owner(method: str) -> str:
 
 # OpenSearch Service refuses to delete an index while its automated snapshot
 # runs (400 ``snapshot_in_progress_exception``). A teardown that meets one
-# waits and clears again: SNAPSHOT_RETRY_DELAYS_SECONDS sum to 30 s, which
-# leaves the rest of a test's 120 s timeout (pytest-timeout covers the
-# teardown) to the test itself; a snapshot still running after that fails the
-# teardown as before.
+# waits and clears again, after SNAPSHOT_RETRY_DELAYS_SECONDS, within one
+# SNAPSHOT_WAIT_SECONDS deadline shared by all its clears (3 per harness, the
+# root and each derived one): pytest-timeout's 120 s covers the teardown, so
+# the 30 s leaves the rest to the test however many clears meet the snapshot.
+# A snapshot still running at the deadline fails the teardown as before.
 SNAPSHOT_IN_PROGRESS = "snapshot_in_progress_exception"
 SNAPSHOT_RETRY_DELAYS_SECONDS = (2.0, 4.0, 8.0, 16.0)
+SNAPSHOT_WAIT_SECONDS = sum(SNAPSHOT_RETRY_DELAYS_SECONDS)
 
 
-def _snapshot_in_progress(error: BaseException) -> bool:
-    """Whether ``error`` or one it was raised from is OpenSearch's
-    ``snapshot_in_progress_exception``."""
-    seen: BaseException | None = error
-    while seen is not None:
-        if SNAPSHOT_IN_PROGRESS in str(seen):
-            return True
-        seen = seen.__cause__
-    return False
+class SnapshotWait:
+    """The time one teardown may still wait out a snapshot: a deadline
+    :data:`SNAPSHOT_WAIT_SECONDS` from its start, shared by its clears (the
+    clears' own time counts too). ``clock`` and ``sleep`` (a test's) default
+    to ``time.monotonic`` and ``time.sleep``, looked up at each call."""
+
+    def __init__(
+        self,
+        seconds: float = SNAPSHOT_WAIT_SECONDS,
+        *,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
+    ) -> None:
+        self._clock = clock
+        self._sleep = sleep
+        self.deadline = self._now() + seconds
+
+    def _now(self) -> float:
+        return (self._clock or time.monotonic)()
+
+    def remaining(self) -> float:
+        return max(0.0, self.deadline - self._now())
+
+    def sleep(self, seconds: float) -> None:
+        (self._sleep or time.sleep)(seconds)
 
 
 def clear_through_snapshots(
     clear: Callable[[list[str]], None],
     suffixes: list[str],
-    *,
-    sleep: Callable[[float], None] | None = None,
+    wait: SnapshotWait,
 ) -> None:
     """``clear(suffixes)``, run again after each delay of
-    :data:`SNAPSHOT_RETRY_DELAYS_SECONDS` while the domain refuses it for a
-    snapshot in progress. Any other error, or the snapshot one after the
-    last delay, is raised. ``sleep`` (a test's) defaults to ``time.sleep``,
-    looked up at each call."""
-    for delay in (*SNAPSHOT_RETRY_DELAYS_SECONDS, None):
+    :data:`SNAPSHOT_RETRY_DELAYS_SECONDS` (then the last one again) while
+    the domain refuses it for a snapshot in progress and ``wait`` has time
+    left; a delay is cut to the time left. Any other error, or the snapshot
+    one once the time is spent, is raised. The adapters' error carries the
+    store's text (``AWSServiceError.caused_by``), which names the
+    snapshot."""
+    delays = iter(SNAPSHOT_RETRY_DELAYS_SECONDS)
+    while True:
         try:
             clear(suffixes)
             return
         except Exception as e:
-            if delay is None or not _snapshot_in_progress(e):
+            if SNAPSHOT_IN_PROGRESS not in str(e):
                 raise
-        (sleep or time.sleep)(delay)
+            delay = min(
+                next(delays, SNAPSHOT_RETRY_DELAYS_SECONDS[-1]), wait.remaining()
+            )
+            if delay <= 0:
+                raise
+            wait.sleep(delay)
 
 
 def clear_extraction_records(vector_indexer: Any, suffixes: list[str]) -> None:
