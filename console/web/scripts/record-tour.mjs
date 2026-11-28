@@ -220,8 +220,17 @@ await idle("evaluate", async () => {
   await visible("table svg.chart");
 });
 await pause(700);
+// The comparison's sheet scrolled to the top, its title (which strategy
+// against which) clear of the sticky top bar.
 await step("comparison", () =>
-  page.locator(".sheet").filter({ has: page.locator("table svg.chart") }).first().evaluate((el) => el.scrollIntoView({ block: "start" })),
+  page
+    .locator(".sheet")
+    .filter({ has: page.locator("table svg.chart") })
+    .first()
+    .evaluate((el) => {
+      const bar = document.querySelector(".nav")?.getBoundingClientRect().height ?? 0;
+      window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - bar - 12 });
+    }),
 );
 await pause(2600);
 
