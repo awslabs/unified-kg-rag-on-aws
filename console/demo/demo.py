@@ -66,15 +66,17 @@ from unified_kg_rag.application.cli.run_console import (  # noqa: E402
 )
 from unified_kg_rag.domain.models import Config  # noqa: E402
 
-# Illustrative prices of the fake models, so the dashboard and the
-# comparison show a cost column in the fake mode. Real runs take the current
-# Amazon Bedrock prices of their region (models.prices).
+# Illustrative prices of the fake models, the embedding one included, so the
+# dashboard and the comparison show a cost column in the fake mode and no
+# model left unpriced. Real runs take the current Amazon Bedrock prices of
+# their region (models.prices).
 FAKE_PRICES = {
     "demo-model": {"input_per_million_tokens": 3.0, "output_per_million_tokens": 15.0},
     "demo-model-fast": {
         "input_per_million_tokens": 0.8,
         "output_per_million_tokens": 4.0,
     },
+    "demo-embed": {"embedding_per_million_tokens": 0.02},
 }
 FAKE_DIMENSIONS = 64
 
