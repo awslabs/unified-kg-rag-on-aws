@@ -33,7 +33,13 @@ def test_each_demo_config_loads_with_local_stores(models: str) -> None:
         assert config.aws.region_name == "eu-west-1"
         assert "anthropic" in config.model_id(ModelRole.ANSWER_GENERATION)
     if models == "fake":
-        assert set(config.models.prices) == {"demo-model", "demo-model-fast"}
+        # Every model the fake mode calls is priced: the dashboard warns of
+        # none left out of its cost.
+        assert set(config.models.prices) == {
+            config.models.default,
+            config.models.fast,
+            config.models.embedding.model_id,
+        }
         assert config.providers.rerank.kind == "none"
 
 
