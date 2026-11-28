@@ -199,7 +199,8 @@ The console prints the same summary.
 - `answer_prompt_style`: per strategy (`auto` aside: an `auto` run reads
   the style of its routes), the answer prompt its answers were written
   with (`concise` or `comprehensive`, `search.answer_prompt_style`
-  resolved); a comparison warns when its runs differ, and names in one
+  resolved); a comparison warns when its runs differ (two `auto` runs
+  unless their whole maps are equal), and names in one
   warning the runs saved before it was recorded (their style unknown). It
   changes no score, and a `--rescore` keeps the answering run's;
 - `retrieval_config_sha256`, a hash of every configuration setting that

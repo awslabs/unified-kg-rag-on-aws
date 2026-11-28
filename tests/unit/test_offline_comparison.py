@@ -1908,9 +1908,17 @@ def test_runs_are_compared_by_their_strategys_citations() -> None:
     # Strategies of one run that differ by default are told apart too.
     (mixed,) = citation_warnings([("local", new), ("global", new)])
     assert "global and drift do not cite by default" in mixed
-    # auto routes among strategies that differ.
+    # auto routes among strategies that differ: its whole map is compared.
     (routed,) = citation_warnings([("auto", new), ("baseline:auto", old)])
-    assert "per strategy: auto" in routed
+    assert "per strategy (local, mix on, else off): auto; on: baseline:auto" in routed
+    # r11diff-3: two auto runs whose maps both differ by strategy, but not
+    # alike, are warned; equal maps are not.
+    assert citation_warnings([("auto", new), ("baseline:auto", new)]) == []
+    (maps,) = citation_warnings([("auto", new), ("baseline:auto", on)])
+    assert (
+        "per strategy (local, mix on, else off): auto; "
+        "per strategy (drift off, else on): baseline:auto" in maps
+    )
     # An uncited run scored no citation metric: its scoring is no warning.
     whole = {"citations": {**new["citations"], "scoring": "whole"}}
     (only,) = citation_warnings([("local", new), ("global", whole)])
@@ -1934,9 +1942,22 @@ def test_runs_are_compared_by_their_strategys_answer_prompt_style() -> None:
     assert answer_style_warnings([("global@concise", concise), ("local", new)]) == []
     (arm,) = answer_style_warnings([("global", new), ("global@concise", concise)])
     assert "comprehensive: global; concise: global@concise" in arm
-    # auto routes among strategies that differ.
+    # auto routes among strategies that differ: its whole map is compared.
     (routed,) = answer_style_warnings([("auto", new), ("baseline:auto", concise)])
-    assert "per strategy: auto; concise: baseline:auto" in routed
+    assert (
+        "per strategy (global comprehensive, else concise): auto; "
+        "concise: baseline:auto" in routed
+    )
+    # r11diff-3: two auto runs whose maps both differ by strategy, but not
+    # alike (the default map is mixed already), are warned; equal maps are
+    # not.
+    assert answer_style_warnings([("auto", new), ("baseline:auto", new)]) == []
+    local = {"answer_prompt_style": {**per, "local": "comprehensive"}}
+    (maps,) = answer_style_warnings([("auto", new), ("baseline:auto", local)])
+    assert (
+        "per strategy (global comprehensive, else concise): auto; "
+        "per strategy (mix concise, else comprehensive): baseline:auto" in maps
+    )
     # Unrecorded: one warning naming every such run, beside matching ones.
     old: dict[str, Any] = {"answer_scoring": None}
     (unknown,) = answer_style_warnings(

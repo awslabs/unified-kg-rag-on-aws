@@ -428,6 +428,9 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   `global` is comprehensive by default, so it warns against the other
   strategies unless the map sets them alike. A run saved before the style
   was recorded is unknown, named in one warning. The scores are unchanged.
+  Both warnings read an `auto` run, whose routes may differ, by its whole
+  map: two `auto` runs warn unless their maps are equal, and the warning
+  names each map (`per strategy (global comprehensive, else concise)`).
 - An arm retrieves on the base runs' query extractions (the translation,
   entities and keywords, one call each per question) when its overlay
   leaves them alone; one

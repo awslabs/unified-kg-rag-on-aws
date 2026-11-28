@@ -348,7 +348,9 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   경고합니다. comprehensive 답변은 여러 문단의 마크다운 답변이고 concise 답변은 직접 답하는 한
   문장입니다. `global`은 기본값이 comprehensive이므로, 맵에서 같게 맞추지 않으면 다른 전략과
   비교할 때 경고합니다. 이 값을 기록하기 전에 저장한 실행은 알 수 없음으로 보고 경고 하나에
-  모아 알립니다. 점수는 바뀌지 않습니다.
+  모아 알립니다. 점수는 바뀌지 않습니다. 두 경고 모두 라우팅 대상마다 값이 다를 수 있는
+  `auto` 실행은 맵 전체로 비교합니다. 두 `auto` 실행은 맵이 같아야 경고하지 않으며, 경고는
+  각 맵을 `per strategy (global comprehensive, else concise)`처럼 보여 줍니다.
 - 오버레이가 질의 추출(질문마다 한 번씩 호출하는 번역, 엔터티, 키워드)을 바꾸지 않으면 비교군은 기본
   실행의 추출 결과로 검색합니다. 추출 모델, 기본 계층의 추론 강도(effort),
   `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, LLM
